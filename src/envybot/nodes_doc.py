@@ -9,13 +9,12 @@ from typing import Any
 
 from ruamel.yaml import YAML
 
-from envybot.position import is_placeholder_gps, load_sites, site_loc
+from envybot.position import load_sites
 
 HEX_PUBKEY_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 UNIT_NUM_RE = re.compile(r"^me(\d+)$", re.I)
 PLACEHOLDER_PW = frozenset({"<mt>", "<bear changed to mt>"})
 MASK_NAME = "Repeater"
-GPS_MATCH_EPS = 0.0001
 
 OBSERVED_KEYS = (
     "status",
@@ -47,13 +46,11 @@ OBSERVED_KEYS = (
 
 NODES_YAML_HEADER = (
     "# MeshEnvy fleet nodes — desired identity (private).\n"
-    "# One entry per physical unit (ME####): identity, credentials, site bind,\n"
-    "# optional public: true, optional lat/lon book override.\n"
+    "# One entry per physical unit (ME####): identity, credentials,\n"
+    "# optional public: true. Location lives only on sites.yaml (loc + node).\n"
     "# Observed last-seen / telemetry live in data/fleet/history.sqlite.\n"
     "# name: book radio name (later a codename). Pushed to the radio only when\n"
     "#   public: true. Default apply SETs Repeater + 0,0 + adverts off.\n"
-    "# site: sites.yaml slug, or null while in the bag / decommissioned.\n"
-    "# lat/lon: book GPS override only. Inherit site loc otherwise.\n"
     "# path_hash_mode / dutycycle: radio prefs (apply default 1 / 100).\n"
     "# trust.companions: companion pubkeys for field ACLs.\n"
     "# admin1_pubkey: optional per-unit extra ACL key.\n"
@@ -158,38 +155,19 @@ def strip_observed(node: dict[str, Any]) -> bool:
     return changed
 
 
-def _coords_match(a: float, b: float) -> bool:
-    return abs(a - b) < GPS_MATCH_EPS
-
-
-def drop_redundant_gps(node: dict[str, Any], sites: dict[str, dict[str, Any]]) -> bool:
-    """Delete node lat/lon when they match the bound site loc."""
-    slug = node.get("site")
-    if not isinstance(slug, str) or not slug:
-        return False
-    loc = site_loc(sites.get(slug))
-    if loc is None:
-        return False
-    lat, lon = node.get("lat"), node.get("lon")
-    if lat is None or lon is None:
-        return False
-    try:
-        la, lo = float(lat), float(lon)
-    except (TypeError, ValueError):
-        return False
-    if is_placeholder_gps(la, lo):
-        node.pop("lat", None)
-        node.pop("lon", None)
-        return True
-    if _coords_match(la, loc[0]) and _coords_match(lo, loc[1]):
-        node.pop("lat", None)
-        node.pop("lon", None)
-        return True
-    return False
+def drop_node_location(node: dict[str, Any]) -> bool:
+    """GPS and site bind live on sites.yaml. Strip leftover node fields."""
+    changed = False
+    for key in ("site", "lat", "lon"):
+        if key in node:
+            node.pop(key, None)
+            changed = True
+    return changed
 
 
 def migrate_desired(doc: dict[str, Any], sites: dict[str, dict[str, Any]]) -> bool:
-    """Strip observed YAML keys and redundant site-copy GPS. Do not stamp public."""
+    """Strip observed YAML keys and leftover node GPS/site. Do not stamp public."""
+    del sites
     changed = False
     nodes = doc.get("nodes") or {}
     if not isinstance(nodes, dict):
@@ -199,7 +177,7 @@ def migrate_desired(doc: dict[str, Any], sites: dict[str, dict[str, Any]]) -> bo
             continue
         if strip_observed(node):
             changed = True
-        if drop_redundant_gps(node, sites):
+        if drop_node_location(node):
             changed = True
         if node.get("name") == MASK_NAME:
             node.pop("name", None)

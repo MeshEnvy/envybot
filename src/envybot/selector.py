@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from envybot.nodes_doc import HEX_PUBKEY_RE, PLACEHOLDER_PW, UNIT_NUM_RE, normalize_fleet_node
+from envybot.position import site_binding
 from envybot.radio import RouterTarget, target_label
 
 ADV_NAME_BRACE_RE = re.compile(r"\{[^}]*\}")
@@ -29,16 +30,21 @@ def normalize_adv_name(name: str) -> str:
     return s
 
 
-def _node_to_target(key: str, node: dict[str, Any]) -> RouterTarget:
+def _node_to_target(
+    key: str,
+    node: dict[str, Any],
+    sites: dict[str, dict[str, Any]] | None = None,
+) -> RouterTarget:
     normalize_fleet_node(node)
     unit_id = str(node.get("unit_id") or key.upper())
     pubkey = str(node["identity_pubkey"]).strip().lower()
     admin_pw = str(node["admin_password"]).strip()
+    bind = site_binding(key, node, sites)
     return RouterTarget(
         key=key,
         unit_id=unit_id,
         name=str(node.get("name") or unit_id),
-        site=node.get("site"),
+        site=bind[0] if bind else None,
         pubkey_hex=pubkey,
         admin_password=admin_pw,
     )
@@ -106,15 +112,20 @@ def _tier_matches(
     eligible: list[tuple[str, dict[str, Any]]],
     *,
     predicate,
+    sites: dict[str, dict[str, Any]] | None = None,
 ) -> list[RouterTarget]:
     hits: list[RouterTarget] = []
     for key, node in eligible:
         if predicate(key, node):
-            hits.append(_node_to_target(key, node))
+            hits.append(_node_to_target(key, node, sites))
     return hits
 
 
-def resolve_selector(doc: dict[str, Any], selector: str) -> ResolveResult:
+def resolve_selector(
+    doc: dict[str, Any],
+    selector: str,
+    sites: dict[str, dict[str, Any]] | None = None,
+) -> ResolveResult:
     sel = selector.strip()
     if not sel or sel == "-":
         return ResolveResult(error="selector required")
@@ -125,11 +136,16 @@ def resolve_selector(doc: dict[str, Any], selector: str) -> ResolveResult:
     tiers: list[list[RouterTarget]] = []
 
     tiers.append(
-        _tier_matches(eligible, predicate=lambda key, _node: key.lower() == sel_lower)
+        _tier_matches(
+            eligible,
+            sites=sites,
+            predicate=lambda key, _node: key.lower() == sel_lower,
+        )
     )
     tiers.append(
         _tier_matches(
             eligible,
+            sites=sites,
             predicate=lambda _key, node: str(node.get("unit_id") or "").lower() == sel_lower,
         )
     )
@@ -138,6 +154,7 @@ def resolve_selector(doc: dict[str, Any], selector: str) -> ResolveResult:
         tiers.append(
             _tier_matches(
                 eligible,
+                sites=sites,
                 predicate=lambda _key, node: str(node["identity_pubkey"]).strip().lower() == sel.lower(),
             )
         )
@@ -146,6 +163,7 @@ def resolve_selector(doc: dict[str, Any], selector: str) -> ResolveResult:
         tiers.append(
             _tier_matches(
                 eligible,
+                sites=sites,
                 predicate=lambda _key, node: str(node["identity_pubkey"]).strip().lower().startswith(prefix),
             )
         )
@@ -153,6 +171,7 @@ def resolve_selector(doc: dict[str, Any], selector: str) -> ResolveResult:
     tiers.append(
         _tier_matches(
             eligible,
+            sites=sites,
             predicate=lambda _key, node: str(node.get("name") or "").lower() == sel.lower(),
         )
     )
@@ -161,6 +180,7 @@ def resolve_selector(doc: dict[str, Any], selector: str) -> ResolveResult:
     tiers.append(
         _tier_matches(
             eligible,
+            sites=sites,
             predicate=lambda _key, node: normalize_adv_name(str(node.get("name") or "")) == norm_sel,
         )
     )
@@ -168,17 +188,17 @@ def resolve_selector(doc: dict[str, Any], selector: str) -> ResolveResult:
     tiers.append(
         _tier_matches(
             eligible,
+            sites=sites,
             predicate=lambda _key, node: normalize_adv_name(str(node.get("name") or "")).startswith(norm_sel)
             and norm_sel,
         )
     )
 
-    tiers.append(
-        _tier_matches(
-            eligible,
-            predicate=lambda _key, node: str(node.get("site") or "").lower() == sel_lower,
-        )
-    )
+    def _site_slug_match(key: str, node: dict[str, Any]) -> bool:
+        bind = site_binding(key, node, sites)
+        return bool(bind and bind[0].lower() == sel_lower)
+
+    tiers.append(_tier_matches(eligible, sites=sites, predicate=_site_slug_match))
 
     for hits in tiers:
         if len(hits) == 1:

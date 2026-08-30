@@ -13,8 +13,8 @@ Default: UI at `http://127.0.0.1:8787/` plus poll due plus apply due.
 
 | Store | Role |
 |-------|------|
-| `nodes.yaml` | Desired identity. Operator / onboard / UI write. Poll does not. |
-| `sites.yaml` | Places. Fleet never writes this. |
+| `nodes.yaml` | Desired identity. Operator / onboard / UI write. Poll does not. No GPS. |
+| `sites.yaml` | Places (`loc`) and the 1:1 `node:` bind. Fleet writes bind only. |
 | `data/fleet/history.sqlite` | Observed last-seen, telemetry, apply log, `cmd` audit |
 
 First run imports leftover `polls.jsonl` (then deletes it) and YAML
@@ -56,10 +56,10 @@ Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
 | `--live` | Periodic GET groups only |
 | `--poll-only` | GET only |
 | `--apply-only` | SET only |
-| `--all-units` | Include bag/bench (`site` null) |
+| `--all-units` | Include bag/bench (no site `node:` bind) |
 
 ## UI
 
-Map pins use **book** position (node override or site loc), never device
-`0,0`. Detail shows book name + site name, a `public` toggle, drift
+Map pins use **book** position (`sites.yaml` loc for the bound unit), never
+device `0,0`. Detail shows book name + site name, a `public` toggle, drift
 (`leak` vs `mismatch`), and battery history.

@@ -60,7 +60,7 @@ def _migrate_book(nodes_path: Path) -> tuple[dict[str, Any], Any]:
     conn = migrate_legacy(nodes_path.parent, nodes)
     if migrate_desired(doc, sites):
         write_nodes_doc(nodes_path, doc)
-        print("Migrated nodes.yaml (stripped observed keys / redundant GPS).")
+        print("Migrated nodes.yaml (stripped observed keys / leftover node GPS).")
     return doc, conn
 
 

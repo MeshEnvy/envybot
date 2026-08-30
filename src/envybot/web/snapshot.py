@@ -9,7 +9,7 @@ from typing import Any
 
 from envybot.history import all_last_seen, latest_neighbors, open_history
 from envybot.nodes_doc import is_public, load_nodes_doc, normalize_fleet_node
-from envybot.position import is_placeholder_gps, load_sites, resolve_book_position
+from envybot.position import is_placeholder_gps, load_sites, resolve_book_position, site_binding
 
 SECRET_KEY_RE = re.compile(r"(password|secret)", re.I)
 PULLED_AT_SUFFIX = "_pulled_at"
@@ -45,7 +45,8 @@ def unit_label(
     sites: dict[str, dict[str, Any]],
 ) -> str:
     book_name = str(node.get("name") or "").strip()
-    site_name = lookup_site_name(node.get("site"), sites)
+    bind = site_binding(key, node, sites)
+    site_name = lookup_site_name(bind[0], sites) if bind else None
     if book_name and site_name:
         return f"{book_name} @ {site_name}"
     if site_name:
@@ -164,8 +165,9 @@ def sanitize_neighbors(
             row["unit_key"] = resolved
             row["unit_id"] = peer.get("unit_id")
             row["name"] = peer.get("name")
-            row["site"] = peer.get("site")
-            row["site_name"] = lookup_site_name(peer.get("site"), sites)
+            peer_bind = site_binding(resolved, peer, sites)
+            row["site"] = peer_bind[0] if peer_bind else None
+            row["site_name"] = lookup_site_name(peer_bind[0], sites) if peer_bind else None
             row["label"] = unit_label(key=resolved, node=peer, sites=sites)
         out.append(row)
     return out
@@ -236,7 +238,9 @@ def sanitize_unit(
     else:
         status = None
     nbs = neighbors_raw if neighbors_raw is not None else node.get("neighbors")
-    site_name = lookup_site_name(node.get("site"), sites)
+    bind = site_binding(key, node, sites)
+    site_slug = bind[0] if bind else None
+    site_name = lookup_site_name(site_slug, sites) if site_slug else None
 
     unit: dict[str, Any] = {
         "key": key,
@@ -244,7 +248,7 @@ def sanitize_unit(
         "name": node.get("name"),
         "label": unit_label(key=key, node=node, sites=sites),
         "owner": node.get("owner"),
-        "site": node.get("site"),
+        "site": site_slug,
         "site_name": site_name,
         "public": is_public(node),
         "hardware": node.get("hardware"),

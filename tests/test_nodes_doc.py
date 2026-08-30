@@ -1,4 +1,4 @@
-"""Desired YAML migrate: strip observed, drop matching GPS, no public stamp."""
+"""Desired YAML migrate: strip observed, drop leftover node GPS/site."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from ruamel.yaml import YAML
 
 
 class MigrateTests(unittest.TestCase):
-    def test_strip_observed_and_matching_gps(self) -> None:
+    def test_strip_observed_and_node_location(self) -> None:
         doc = {
             "next_unit": 2,
             "nodes": {
@@ -33,7 +33,7 @@ class MigrateTests(unittest.TestCase):
                 }
             },
         }
-        sites = {"ophir": {"name": "Ophir", "loc": [39.5, -119.8]}}
+        sites = {"ophir": {"name": "Ophir", "loc": [39.5, -119.8], "node": "me0001"}}
         self.assertTrue(migrate_desired(doc, sites))
         node = doc["nodes"]["me0001"]
         self.assertNotIn("status", node)
@@ -41,11 +41,12 @@ class MigrateTests(unittest.TestCase):
         self.assertNotIn("firmware_pulled_at", node)
         self.assertNotIn("lat", node)
         self.assertNotIn("lon", node)
+        self.assertNotIn("site", node)
         self.assertNotIn("name", node)
         self.assertNotIn("public", node)
         self.assertFalse(is_public(node))
 
-    def test_keeps_offset_gps(self) -> None:
+    def test_strips_offset_gps(self) -> None:
         doc = {
             "next_unit": 2,
             "nodes": {
@@ -54,15 +55,17 @@ class MigrateTests(unittest.TestCase):
                     "site": "ophir",
                     "lat": 39.51,
                     "lon": -119.81,
-                    "name": "SB West",
+                    "name": "Spanish Benchmark East",
                 }
             },
         }
-        sites = {"ophir": {"loc": [39.5, -119.8]}}
+        sites = {"ophir": {"loc": [39.5, -119.8], "node": "me0001"}}
         migrate_desired(doc, sites)
         node = doc["nodes"]["me0001"]
-        self.assertAlmostEqual(node["lat"], 39.51)
-        self.assertEqual(node["name"], "SB West")
+        self.assertNotIn("lat", node)
+        self.assertNotIn("lon", node)
+        self.assertNotIn("site", node)
+        self.assertEqual(node["name"], "Spanish Benchmark East")
 
     def test_write_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -73,6 +76,7 @@ class MigrateTests(unittest.TestCase):
             loaded = yaml.load(path.read_text(encoding="utf-8"))
             self.assertEqual(loaded["next_unit"], 2)
             self.assertIn("desired identity", path.read_text(encoding="utf-8"))
+            self.assertIn("sites.yaml", path.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

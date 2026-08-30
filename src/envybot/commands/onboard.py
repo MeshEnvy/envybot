@@ -145,7 +145,6 @@ def new_node(unit_id: str) -> dict[str, Any]:
     return {
         "unit_id": unit_id,
         "name": ONBOARD_NAME,
-        "site": None,
         "firmware_platform": "meshcore",
         "firmware_version": None,
         "bootloader_version": None,
@@ -742,8 +741,9 @@ def register(nodes_path: Path, result: dict[str, Any], *, unit: str | None) -> t
         node["last_admin_roll"] = now
     if result.get("guest_changed"):
         node["last_guest_roll"] = now
-    if "site" not in node:
-        node["site"] = None
+    node.pop("site", None)
+    node.pop("lat", None)
+    node.pop("lon", None)
     write_nodes_doc(nodes_path, doc)
     conn = open_history(nodes_path.parent)
     record_onboard_heard(

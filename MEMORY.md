@@ -20,7 +20,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/book.py` | Resolve book dir; never write secrets here |
 | `src/envybot/nodes_doc.py` | Desired `nodes.yaml` load/write/migrate |
 | `src/envybot/history.py` | `data/fleet/history.sqlite` |
-| `src/envybot/position.py` | Book GPS (node lat/lon, else site loc) |
+| `src/envybot/position.py` | Book GPS from `sites.yaml` (`node:` bind + `loc`) |
 | `src/envybot/radio.py` | Companion session, login, CLI/binary |
 | `src/envybot/poll.py` | GET cadence → sqlite |
 | `src/envybot/apply.py` | SET mask unless `public: true`; `v1:` profile hash |
@@ -36,8 +36,12 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 - Greenfield: no `monitor` alias, no `polls.jsonl`, no last-seen in YAML.
 - `nodes.yaml` is SoT for **desired** identity. Cite sqlite `last_seen` for
   reachability / fw / battery.
-- GPS is book-canonical (`lat`/`lon` override, else `sites.yaml` loc).
-  Apply SETs `0,0` unless `public: true`. Never GET device coords into YAML.
+- GPS lives only on `sites.yaml` (`loc` + `node: me####`). Nodes have no
+  `site` / `lat` / `lon`. Apply SETs `0,0` unless `public: true`. Never
+  GET device coords into YAML.
+- `trust` imports every pollable MeshCore unit, including bag/bench
+  (no site bind). Contact name is the site `name` (e.g. Ophir), else
+  `unit_id`.
 - Mask name is `Repeater`. Book name stays in YAML.
 - Passwords are unique and strong per unit. Apply/onboard roll blank, weak
   (`m35h3nvy`, placeholders, short), or colliding guests. Admin is never

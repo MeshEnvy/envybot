@@ -80,13 +80,14 @@ class ProfileTests(unittest.TestCase):
         self.assertNotEqual(empty, with_trust)
 
     def test_public_gps_in_parts(self) -> None:
-        node = {**_STRONG, "public": True, "lat": 39.5, "lon": -119.8}
-        parts = profile_parts(node, None)
+        node = {**_STRONG, "public": True, "unit_id": "ME0003"}
+        sites = {"ophir": {"node": "me0003", "loc": [39.5, -119.8]}}
+        parts = profile_parts(node, sites)
         self.assertTrue(parts["public"])
         self.assertEqual(parts["name"], "Ophir")
         self.assertEqual(parts["lat"], 39.5)
         self.assertEqual(parts["lon"], -119.8)
-        self.assertNotEqual(_id(node), _id(_STRONG))
+        self.assertNotEqual(_id(node, sites), _id(_STRONG))
 
     def test_private_mask_in_parts(self) -> None:
         parts = profile_parts(_STRONG, None)

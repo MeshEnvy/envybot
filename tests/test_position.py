@@ -1,10 +1,10 @@
-"""Book-canonical GPS helpers."""
+"""Book-canonical GPS helpers. Location lives on sites.yaml."""
 
 from __future__ import annotations
 
 import unittest
 
-from envybot.position import book_coord, is_placeholder_gps, resolve_book_position
+from envybot.position import book_coord, is_placeholder_gps, resolve_book_position, site_binding
 
 
 class PlaceholderTests(unittest.TestCase):
@@ -16,26 +16,34 @@ class PlaceholderTests(unittest.TestCase):
 
 
 class ResolveTests(unittest.TestCase):
-    def test_node_beats_site(self) -> None:
-        node = {"lat": 39.5, "lon": -119.8, "site": "foo"}
-        sites = {"foo": {"loc": [40.0, -117.0], "name": "Foo"}}
-        pos = resolve_book_position(node, sites)
-        assert pos is not None
-        self.assertEqual(pos["source"], "node")
-        self.assertAlmostEqual(pos["lat"], 39.5)
-        self.assertEqual(book_coord(node, "lon", sites), -119.8)
-
-    def test_site_when_device_zero(self) -> None:
-        node = {"lat": 0.0, "lon": 0.0, "site": "foo"}
-        sites = {"foo": {"loc": [41.0, -119.0], "name": "Foo"}}
+    def test_site_loc_via_node_bind(self) -> None:
+        node = {"unit_id": "ME0003"}
+        sites = {"foo": {"loc": [40.0, -117.0], "name": "Foo", "node": "me0003"}}
         pos = resolve_book_position(node, sites)
         assert pos is not None
         self.assertEqual(pos["source"], "site")
+        self.assertAlmostEqual(pos["lat"], 40.0)
+        self.assertEqual(pos["site"], "foo")
+        self.assertEqual(book_coord(node, "lon", sites), -117.0)
+
+    def test_key_bind(self) -> None:
+        sites = {"ophir": {"loc": [41.0, -119.0], "node": "me0003"}}
+        pos = resolve_book_position({}, sites, key="me0003")
+        assert pos is not None
         self.assertAlmostEqual(pos["lat"], 41.0)
 
+    def test_node_lat_lon_ignored(self) -> None:
+        node = {"unit_id": "ME0003", "lat": 39.5, "lon": -119.8}
+        sites = {"foo": {"loc": [40.0, -117.0], "node": "me0003"}}
+        pos = resolve_book_position(node, sites)
+        assert pos is not None
+        self.assertEqual(pos["source"], "site")
+        self.assertAlmostEqual(pos["lat"], 40.0)
+
     def test_no_position(self) -> None:
-        self.assertIsNone(resolve_book_position({"site": None}, {}))
-        self.assertIsNone(book_coord({"lat": 0, "lon": 0}, "lat", {}))
+        self.assertIsNone(resolve_book_position({"unit_id": "ME0041"}, {}))
+        self.assertIsNone(book_coord({"unit_id": "ME0041"}, "lat", {}))
+        self.assertIsNone(site_binding("me0041", {"unit_id": "ME0041"}, {}))
 
 
 if __name__ == "__main__":

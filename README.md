@@ -22,7 +22,7 @@ export ENVYBOT_HOME=/path/to/book
 | Command | Manual | What it does |
 |---------|--------|--------------|
 | [`fleet`](docs/commands/fleet.md) | [docs/commands/fleet.md](docs/commands/fleet.md) | Map, poll GET → sqlite, apply privacy mask (or `public: true`). |
-| [`trust`](docs/commands/trust.md) | [docs/commands/trust.md](docs/commands/trust.md) | Import book name + loc + pubkey onto a companion. |
+| [`trust`](docs/commands/trust.md) | [docs/commands/trust.md](docs/commands/trust.md) | Import site name + loc + pubkey onto a companion. |
 | [`cmd`](docs/commands/cmd.md) | [docs/commands/cmd.md](docs/commands/cmd.md) | Run remote MeshCore CLI on one unit (one-shot or REPL). |
 | [`onboard`](docs/commands/onboard.md) | [docs/commands/onboard.md](docs/commands/onboard.md) | USB text-CLI onboard of a repeater under test. |
 

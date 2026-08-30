@@ -48,37 +48,26 @@ class GpsTests(unittest.TestCase):
         self.assertTrue(is_placeholder_gps(14.009295, 120.996018))
         self.assertFalse(is_placeholder_gps(39.5, -119.8))
 
-    def test_partial_zero_falls_back_to_site(self) -> None:
-        node = {"lat": 0.0, "lon": -119.02876, "site": "slpt-north"}
-        sites = {"slpt-north": {"name": "SLPT North", "loc": [41.56303, -119.04481]}}
+    def test_site_bind_via_unit_id(self) -> None:
+        node = {"unit_id": "ME0011"}
+        sites = {"slpt-north": {"name": "SLPT North", "loc": [41.56303, -119.04481], "node": "me0011"}}
         pos = resolve_position(node, sites)
         assert pos is not None
         self.assertEqual(pos["source"], "site")
         self.assertAlmostEqual(pos["lat"], 41.56303)
 
-    def test_node_coords_preferred(self) -> None:
-        node = {"lat": 39.5, "lon": -119.8, "site": "foo"}
-        sites = {"foo": {"loc": [40.0, -117.0]}}
-        pos = resolve_position(node, sites)
-        assert pos is not None
-        self.assertEqual(pos["source"], "node")
-        self.assertAlmostEqual(pos["lat"], 39.5)
-
-    def test_site_fallback(self) -> None:
-        node = {"lat": 0, "lon": 0, "site": "foo"}
-        sites = {"foo": {"name": "Foo Peak", "loc": [40.0, -117.0]}}
+    def test_node_coords_ignored(self) -> None:
+        node = {"unit_id": "ME0001", "lat": 39.5, "lon": -119.8}
+        sites = {"foo": {"loc": [40.0, -117.0], "node": "me0001"}}
         pos = resolve_position(node, sites)
         assert pos is not None
         self.assertEqual(pos["source"], "site")
         self.assertAlmostEqual(pos["lat"], 40.0)
 
-    def test_zero_lat_falls_back_to_site(self) -> None:
-        node = {"lat": 0.0, "lon": -119.0, "site": "foo"}
-        sites = {"foo": {"name": "Foo Peak", "loc": [40.0, -117.0]}}
-        pos = resolve_position(node, sites)
-        assert pos is not None
-        self.assertEqual(pos["source"], "site")
-        self.assertAlmostEqual(pos["lat"], 40.0)
+    def test_unbound_has_no_position(self) -> None:
+        node = {"unit_id": "ME0041"}
+        sites = {"foo": {"name": "Foo Peak", "loc": [40.0, -117.0], "node": "me0001"}}
+        self.assertIsNone(resolve_position(node, sites))
 
 
 class SnapshotTests(unittest.TestCase):
@@ -91,7 +80,7 @@ class SnapshotTests(unittest.TestCase):
             yaml.dump(
                 {
                     "sites": {
-                        "test-site": {"name": "Test", "loc": [39.0, -119.0]},
+                        "test-site": {"name": "Test", "loc": [39.0, -119.0], "node": "me0001"},
                     }
                 },
                 sites_path.open("w", encoding="utf-8"),
@@ -103,7 +92,6 @@ class SnapshotTests(unittest.TestCase):
                         "me0001": {
                             "unit_id": "ME0001",
                             "name": "Alpha",
-                            "site": "test-site",
                             "identity_pubkey": "a" * 64,
                             "admin_password": "secret-admin",
                             "guest_password": "secret-guest",
@@ -123,11 +111,8 @@ class SnapshotTests(unittest.TestCase):
                         "me0002": {
                             "unit_id": "ME0002",
                             "name": "Beta",
-                            "site": None,
                             "identity_pubkey": "b" * 64,
                             "admin_password": "other",
-                            "lat": 39.5,
-                            "lon": -119.5,
                             "lat_pulled_at": 1_700_000_000,
                         },
                     },
@@ -149,7 +134,7 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(u1["name"], "Alpha")
             self.assertEqual(u1["label"], "Alpha @ Test")
             u2 = snap["units"]["me0002"]
-            self.assertEqual(u2["position"]["source"], "node")
+            self.assertIsNone(u2["position"])
             self.assertIsNone(u2["site_name"])
             self.assertEqual(u2["label"], "Beta")
             nbs = [n for n in u1["neighbors"] if n.get("unit_key") == "me0002"]
@@ -159,18 +144,18 @@ class SnapshotTests(unittest.TestCase):
 
 class LabelTests(unittest.TestCase):
     def test_bound_uses_site_name(self) -> None:
-        sites = {"ophir-hill": {"name": "Ophir"}}
-        node = {"unit_id": "ME0003", "name": "RAK4631 Repeater", "site": "ophir-hill"}
+        sites = {"ophir-hill": {"name": "Ophir", "node": "me0003"}}
+        node = {"unit_id": "ME0003", "name": "RAK4631 Repeater"}
         self.assertEqual(lookup_site_name("ophir-hill", sites), "Ophir")
         self.assertEqual(unit_label(key="me0003", node=node, sites=sites), "RAK4631 Repeater @ Ophir")
 
-    def test_bound_missing_site_falls_back_to_slug(self) -> None:
-        node = {"unit_id": "ME0003", "name": "RAK4631 Repeater", "site": "ophir-hill"}
+    def test_bound_missing_site_falls_back_to_book_name(self) -> None:
+        node = {"unit_id": "ME0003", "name": "RAK4631 Repeater"}
         self.assertEqual(lookup_site_name("ophir-hill", {}), "ophir-hill")
-        self.assertEqual(unit_label(key="me0003", node=node, sites={}), "RAK4631 Repeater @ ophir-hill")
+        self.assertEqual(unit_label(key="me0003", node=node, sites={}), "RAK4631 Repeater")
 
-    def test_unbound_uses_unit_id(self) -> None:
-        node = {"unit_id": "ME0041", "name": "Bag radio", "site": None}
+    def test_unbound_uses_book_name(self) -> None:
+        node = {"unit_id": "ME0041", "name": "Bag radio"}
         self.assertIsNone(lookup_site_name(None, {}))
         self.assertEqual(unit_label(key="me0041", node=node, sites={}), "Bag radio")
 

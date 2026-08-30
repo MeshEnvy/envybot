@@ -10,8 +10,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 - `./envybot fleet` replaces `monitor`: localhost manager, sqlite history,
   privacy-mask apply unless `public: true`.
-- `./envybot trust` imports book name + resolved loc + pubkey as companion
-  contacts. Optional `--export`.
+- `./envybot trust` imports site name + resolved loc + pubkey as companion
+  contacts (bag/bench included; name is site `name`, else `unit_id`).
+  Optional `--export`.
 - `data/fleet/history.sqlite` is the observed store (last-seen, graphs,
   apply log, `cmd` audit).
 
@@ -22,6 +23,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Book GPS is `sites.yaml` only (`loc` + `node: me####`). `nodes.yaml` no
+  longer has `site`, `lat`, or `lon`. Fleet bind writes the site.
 - Apply `profile_id` is a `v1:` hash of the desired SET payload (name/gps/
   adverts, guest+admin tokens, identity pubkey, path.hash, dutycycle, ACL).
   Editing a hashed field in `nodes.yaml` makes that unit due on the next

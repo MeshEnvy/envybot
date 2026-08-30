@@ -18,33 +18,36 @@ def sample_doc() -> dict:
             "me0016": {
                 "unit_id": "ME0016",
                 "name": "Poito {meshenvy.org}",
-                "site": "poito-peak",
                 "identity_pubkey": FAKE_PUB,
                 "admin_password": "secret-admin",
             },
             "me0035": {
                 "unit_id": "ME0035",
                 "name": "PV South",
-                "site": "pv-south",
                 "identity_pubkey": OTHER_PUB,
                 "admin_password": "other-admin",
             },
             "me0037": {
                 "unit_id": "ME0037",
                 "name": "PV Peak",
-                "site": "pv-peak",
                 "identity_pubkey": "c" * 64,
                 "admin_password": "pv-admin",
             },
             "me0099": {
                 "unit_id": "ME0099",
                 "name": "Meshtastic Tag",
-                "site": None,
                 "identity_pubkey": "d" * 64,
                 "firmware_platform": "meshtastic",
             },
         },
     }
+
+
+SAMPLE_SITES = {
+    "poito-peak": {"node": "me0016", "name": "Poito"},
+    "pv-south": {"node": "me0035", "name": "PV South"},
+    "pv-peak": {"node": "me0037", "name": "PV Peak"},
+}
 
 
 class NormalizeAdvNameTests(unittest.TestCase):
@@ -88,7 +91,7 @@ class ResolveSelectorTests(unittest.TestCase):
         self.assertEqual(len(res.candidates), 2)
 
     def test_unique_site(self) -> None:
-        res = resolve_selector(self.doc, "poito-peak")
+        res = resolve_selector(self.doc, "poito-peak", SAMPLE_SITES)
         self.assertIsNotNone(res.target)
         assert res.target is not None
         self.assertEqual(res.target.key, "me0016")

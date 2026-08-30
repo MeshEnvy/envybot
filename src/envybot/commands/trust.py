@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import book name + resolved loc + pubkey onto a companion as contacts/favorites."""
+"""Import site name + resolved loc + pubkey onto a companion as contacts/favorites."""
 
 from __future__ import annotations
 
@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from envybot.nodes_doc import load_nodes_doc, load_sites_for_book
-from envybot.position import resolve_book_position
+from envybot.position import resolve_book_position, site_binding
+from envybot.web.snapshot import lookup_site_name
 from envybot.radio import (
     CONTACT_FLAG_FAVORITE,
     CONTACT_TYPE_REPEATER,
@@ -33,13 +34,29 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 
+def contact_adv_name(
+    node: dict[str, Any],
+    unit_id: str,
+    sites: dict[str, dict[str, Any]] | None = None,
+    *,
+    key: str | None = None,
+) -> str:
+    """Site name when bound; otherwise unit_id (bench / no site)."""
+    bind = site_binding(key, node, sites)
+    if bind:
+        site_name = lookup_site_name(bind[0], sites or {})
+        if site_name:
+            return site_name[:32]
+    return unit_id[:32]
+
+
 def contact_payload(
     target: RouterTarget,
     node: dict[str, Any],
     sites: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    pos = resolve_book_position(node, sites)
-    name = str(node.get("name") or target.unit_id)[:32]
+    pos = resolve_book_position(node, sites, key=target.key)
+    name = contact_adv_name(node, target.unit_id, sites, key=target.key)
     lat = float(pos["lat"]) if pos else 0.0
     lon = float(pos["lon"]) if pos else 0.0
     return {
@@ -56,6 +73,21 @@ def contact_payload(
         "unit_id": target.unit_id,
         "site": target.site,
     }
+
+
+def build_trust_rows(
+    nodes_path: Path,
+    *,
+    include: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """All pollable MeshCore units, including bag/bench (no site)."""
+    doc = load_nodes_doc(nodes_path)
+    nodes = doc.get("nodes") or {}
+    sites = load_sites_for_book(nodes_path)
+    targets = load_targets(
+        nodes_path, deployed_only=False, include=include, skip=None
+    )
+    return [contact_payload(t, nodes.get(t.key) or {}, sites) for t in targets]
 
 
 def write_export(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -99,14 +131,8 @@ async def push_contacts(
 
 async def run(args: argparse.Namespace) -> int:
     nodes_path: Path = args.nodes
-    doc = load_nodes_doc(nodes_path)
-    nodes = doc.get("nodes") or {}
-    sites = load_sites_for_book(nodes_path)
     include = {u.lower() for u in args.unit} if args.unit else None
-    targets = load_targets(
-        nodes_path, deployed_only=not args.all_units, include=include, skip=None
-    )
-    rows = [contact_payload(t, nodes.get(t.key) or {}, sites) for t in targets]
+    rows = build_trust_rows(nodes_path, include=include)
     if args.export:
         write_export(args.export, rows)
         print(f"wrote {len(rows)} contact(s) to {args.export}")
@@ -131,7 +157,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--nodes", type=Path, default=Path("nodes.yaml"))
     add_companion_args(parser)
     parser.add_argument("--unit", action="append", metavar="me0003")
-    parser.add_argument("--all-units", action="store_true")
     parser.add_argument("--export", type=Path, metavar="FILE", help="Write JSON contact list")
     parser.add_argument(
         "--export-only",

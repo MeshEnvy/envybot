@@ -21,7 +21,7 @@ from envybot.nodes_doc import (
     load_nodes_doc,
     normalize_fleet_node,
 )
-from envybot.position import book_coord, load_sites
+from envybot.position import book_coord, load_sites, site_binding
 
 try:
     from meshcore import EventType, MeshCore
@@ -755,6 +755,7 @@ def load_targets(
 ) -> list[RouterTarget]:
     doc = load_nodes_doc(nodes_path)
     nodes = doc.get("nodes") or {}
+    sites = load_sites(nodes_path.parent / "sites.yaml")
     out: list[RouterTarget] = []
 
     for key, node in nodes.items():
@@ -763,7 +764,8 @@ def load_targets(
         if skip and key in skip:
             continue
         unit_id = str(node.get("unit_id") or key.upper())
-        site = node.get("site")
+        bind = site_binding(key, node, sites)
+        site = bind[0] if bind else None
         if node.get("decommissioned"):
             continue
         if deployed_only and not site:

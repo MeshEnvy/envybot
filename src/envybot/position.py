@@ -1,4 +1,4 @@
-"""Book-canonical GPS. Device coords are never the source of truth."""
+"""Book-canonical GPS. Location lives on sites.yaml only."""
 
 from __future__ import annotations
 
@@ -26,13 +26,88 @@ def is_placeholder_gps(lat: Any, lon: Any) -> bool:
     return False
 
 
-def load_sites(sites_path: Path) -> dict[str, dict[str, Any]]:
+def load_sites_doc(sites_path: Path) -> dict[str, Any]:
     if not sites_path.is_file():
-        return {}
-    yaml = YAML(typ="safe")
+        return {"sites": {}}
+    yaml = YAML()
     doc = yaml.load(sites_path.read_text(encoding="utf-8")) or {}
-    sites = doc.get("sites") or {}
+    if not isinstance(doc, dict):
+        return {"sites": {}}
+    if not isinstance(doc.get("sites"), dict):
+        doc["sites"] = {}
+    return doc
+
+
+def write_sites_doc(sites_path: Path, doc: dict[str, Any]) -> None:
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    yaml.width = 120
+    yaml.indent(mapping=2, sequence=4, offset=2)
+    tmp = sites_path.with_name(sites_path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as fh:
+        yaml.dump(doc, fh)
+    tmp.replace(sites_path)
+
+
+def load_sites(sites_path: Path) -> dict[str, dict[str, Any]]:
+    sites = load_sites_doc(sites_path).get("sites") or {}
     return {str(k): v for k, v in sites.items() if isinstance(v, dict)}
+
+
+def site_node_key(site: dict[str, Any] | None) -> str | None:
+    if not site:
+        return None
+    raw = site.get("node")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    return raw.strip().lower()
+
+
+def index_sites_by_node(sites: dict[str, dict[str, Any]]) -> dict[str, tuple[str, dict[str, Any]]]:
+    """node key (me####) → (slug, site)."""
+    out: dict[str, tuple[str, dict[str, Any]]] = {}
+    for slug, site in sites.items():
+        key = site_node_key(site)
+        if key:
+            out[key] = (slug, site)
+    return out
+
+
+def site_binding(
+    node_key: str | None,
+    node: dict[str, Any] | None,
+    sites: dict[str, dict[str, Any]] | None,
+) -> tuple[str, dict[str, Any]] | None:
+    """The site that points at this unit, if any."""
+    if not sites:
+        return None
+    idx = index_sites_by_node(sites)
+    candidates: list[str] = []
+    if node_key:
+        candidates.append(str(node_key).strip().lower())
+    if node:
+        uid = node.get("unit_id")
+        if isinstance(uid, str) and uid.strip():
+            candidates.append(uid.strip().lower())
+    for cand in candidates:
+        if cand in idx:
+            return idx[cand]
+    return None
+
+
+def bind_node_to_site(
+    sites: dict[str, dict[str, Any]],
+    node_key: str,
+    slug: str | None,
+) -> None:
+    """1:1 bind. Clears any previous site pointing at this unit."""
+    want = node_key.strip().lower()
+    for site in sites.values():
+        if site_node_key(site) == want:
+            site.pop("node", None)
+    if slug:
+        target = sites[slug]
+        target["node"] = want
 
 
 def site_loc(site: dict[str, Any] | None) -> tuple[float, float] | None:
@@ -54,35 +129,35 @@ def site_loc(site: dict[str, Any] | None) -> tuple[float, float] | None:
 def resolve_book_position(
     node: dict[str, Any],
     sites: dict[str, dict[str, Any]] | None = None,
+    *,
+    key: str | None = None,
 ) -> dict[str, Any] | None:
-    """Desired radio position from the book. Node coords beat site loc."""
-    lat = node.get("lat")
-    lon = node.get("lon")
-    if lat is not None and lon is not None and not is_placeholder_gps(lat, lon):
-        try:
-            return {"lat": float(lat), "lon": float(lon), "source": "node"}
-        except (TypeError, ValueError):
-            pass
-    site_slug = node.get("site")
-    if site_slug and isinstance(site_slug, str) and sites:
-        loc = site_loc(sites.get(site_slug))
-        if loc:
-            site = sites.get(site_slug) or {}
-            return {
-                "lat": loc[0],
-                "lon": loc[1],
-                "source": "site",
-                "site_name": site.get("name"),
-            }
-    return None
+    """Desired radio position from the bound site loc. Nodes have no GPS."""
+    bind = site_binding(key, node, sites)
+    if not bind:
+        return None
+    slug, site = bind
+    loc = site_loc(site)
+    if not loc:
+        return None
+    name = site.get("name")
+    return {
+        "lat": loc[0],
+        "lon": loc[1],
+        "source": "site",
+        "site": slug,
+        "site_name": name.strip() if isinstance(name, str) and name.strip() else None,
+    }
 
 
 def book_coord(
     node: dict[str, Any],
     axis: str,
     sites: dict[str, dict[str, Any]] | None = None,
+    *,
+    key: str | None = None,
 ) -> float | None:
-    pos = resolve_book_position(node, sites)
+    pos = resolve_book_position(node, sites, key=key)
     if not pos:
         return None
     return float(pos[axis])

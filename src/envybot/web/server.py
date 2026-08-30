@@ -13,7 +13,7 @@ from aiohttp import web
 
 from envybot.history import history_series, open_history
 from envybot.nodes_doc import is_public, load_nodes_doc, write_nodes_doc
-from envybot.position import is_placeholder_gps, load_sites, site_loc
+from envybot.position import bind_node_to_site, load_sites_doc, write_sites_doc
 from envybot.web.hub import FleetHub
 from envybot.web.snapshot import assert_no_secrets, build_fleet_snapshot, build_neighbor_edges
 
@@ -93,6 +93,10 @@ class MonitorWeb:
         while not self._stop.is_set():
             try:
                 mtime = self.nodes_path.stat().st_mtime
+                try:
+                    mtime = max(mtime, self.sites_path.stat().st_mtime)
+                except OSError:
+                    pass
                 if last_mtime is None or mtime != last_mtime:
                     last_mtime = mtime
                     await self.refresh_snapshot(poll={"phase": "watch"})
@@ -210,36 +214,20 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
             node.pop("public", None)
     if "site" in body:
         site = body["site"]
+        sites_doc = load_sites_doc(web_ctx.sites_path)
+        sites = sites_doc.get("sites") or {}
         if site is None or site == "":
-            node["site"] = None
+            bind_node_to_site(sites, key, None)
+            write_sites_doc(web_ctx.sites_path, sites_doc)
         elif isinstance(site, str):
-            node["site"] = site.strip()
-            sites = load_sites(web_ctx.sites_path)
-            loc = site_loc(sites.get(node["site"]))
-            lat, lon = node.get("lat"), node.get("lon")
-            if loc and lat is not None and lon is not None:
-                try:
-                    if abs(float(lat) - loc[0]) < 0.0001 and abs(float(lon) - loc[1]) < 0.0001:
-                        node.pop("lat", None)
-                        node.pop("lon", None)
-                except (TypeError, ValueError):
-                    pass
-    if "lat" in body or "lon" in body:
-        if body.get("lat") is None and body.get("lon") is None:
-            node.pop("lat", None)
-            node.pop("lon", None)
-        else:
-            try:
-                lat = float(body.get("lat", node.get("lat")))
-                lon = float(body.get("lon", node.get("lon")))
-            except (TypeError, ValueError):
-                return web.json_response({"error": "bad lat/lon"}, status=400)
-            if is_placeholder_gps(lat, lon):
-                node.pop("lat", None)
-                node.pop("lon", None)
-            else:
-                node["lat"] = lat
-                node["lon"] = lon
+            slug = site.strip()
+            if slug not in sites:
+                return web.json_response({"error": f"unknown site {slug}"}, status=400)
+            bind_node_to_site(sites, key, slug)
+            write_sites_doc(web_ctx.sites_path, sites_doc)
+    node.pop("site", None)
+    node.pop("lat", None)
+    node.pop("lon", None)
     write_nodes_doc(web_ctx.nodes_path, doc)
     snap = await web_ctx.refresh_snapshot()
     unit = snap["units"].get(key) or {}
