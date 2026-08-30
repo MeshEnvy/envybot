@@ -31,6 +31,8 @@ Public fleet CLI. Book (identity, creds, last-seen) is private and outside this 
 - `nodes.yaml` is SoT for last-seen / fw / battery. Cite `*_pulled_at`.
 - GPS is book-canonical (`lat`/`lon`, else `sites.yaml` loc). `monitor` SETs
   the radio. Never GET device coords into the book.
+- Duty-cycle policy is 100%. `set dutycycle` needs MeshCore 1.15+; older
+  1.x uses `set af 0` and still stamps `dutycycle`.
 - Do not copy passwords or keypairs into this repo.
 - Not mesh-api. Not the sidecar mux (`mesh-sidecar-daemon`).
 - Daemon (`envybot serve`, N-radio mux) is later. `mcmt-gateway` stays the burn bridge.
@@ -44,4 +46,4 @@ BLE companion for `monitor`. USB DUT for `onboard`. Separate USB OTA repeater fo
   live SSE). `--web-only` to browse the book without a radio. `--no-web` for
   headless poll. Never expose secrets to the browser.
 
-Last updated: 2026-08-29
+Last updated: 2026-08-30

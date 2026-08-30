@@ -17,8 +17,8 @@ Idempotent on identity, creds, radio, name, and GPS:
 2. Match an existing book row by pubkey, or `--unit`, or allocate the next
    `ME####` from `next_unit` (never reuse).
 3. GET then SET. Reuse stored admin/guest passwords on re-run.
-4. Set USA/Canada radio (`910.525`, BW 62.5, SF7, CR 4/5), dutycycle 100%,
-   advert 0 / flood advert 0.
+4. Set USA/Canada radio (`910.525`, BW 62.5, SF7, CR 4/5), dutycycle 100%
+   (`set af 0` on MeshCore before 1.15), advert 0 / flood advert 0.
 5. Placeholder name `Repeater` and GPS `14.009295, 120.996018` unless already
    set.
 6. Read public + secret keys. Set host clock.

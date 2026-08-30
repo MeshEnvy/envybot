@@ -6,7 +6,9 @@ Full poll flow: admin login (RTC from ``LOGIN_SUCCESS``) → binary status → a
 CLI/binary queries as due (name, advert, flood_advert, path_hash,
 dutycycle, firmware, bootloader, telemetry, neighbors, acl). Clock sync via
 mesh CLI when skew exceeds threshold. path_hash / dutycycle / lat / lon are SET
-to book policy; an OK reply stamps them. GPS is never pulled from the radio.
+to book policy; an OK reply stamps them. Pre-1.15 MeshCore has no
+``set dutycycle``; monitor uses ``set af 0`` (same 100% policy). GPS is never
+pulled from the radio.
 
 ``nodes.yaml`` holds last-known state as flat fields with a ``*_pulled_at``
 timestamp per query. Mesh ``name`` overwrites the registry ``name`` on pull.
@@ -107,7 +109,7 @@ NODES_YAML_HEADER = (
     "# Monitor policy (envybot monitor): one stamp per query; inventory once unless\n"
     "# --force/--group; status, telemetry, neighbors, acl periodic (--min-interval, default 24h).\n"
     "# Radio policy: path.hash.mode=1 (2-byte), dutycycle=100, lat/lon from book.\n"
-    "#   Monitor SETs; OK stamps.\n"
+    "#   Monitor SETs; OK stamps. MeshCore <1.15: set af 0 (dutycycle CLI added 1.15).\n"
     "# Login: always send admin login (live RTC + path). STATUS is uptime, not clock.\n"
     "# firmware_platform: meshcore | meshtastic (no admin_password => meshtastic).\n"
     "# site: sites.yaml slug, or null while in the bag / decommissioned.\n"
@@ -131,6 +133,8 @@ FLEET_PATH_HASH_MODE = 1  # 2-byte advert path hashes
 FLEET_DUTYCYCLE_PCT = 100.0
 DUTYCYCLE_MATCH_EPS = 0.5
 DUTYCYCLE_PCT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+FIRMWARE_CORE_RE = re.compile(r"v?(\d+(?:\.\d+)*)", re.I)
+DUTYCYCLE_CLI_SINCE = (1, 15)
 
 # Decision notes (do not reintroduce the opposite without updating this):
 # - Always login. STATUS (GET_STATUS) is uptime/packets/RSSI, not wall-clock RTC.
@@ -157,7 +161,7 @@ DUTYCYCLE_PCT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 # - Radio policy (US field repeaters): path.hash.mode=1 (2-byte advert
 #   hashes; firmware sendFlood uses mode+1), dutycycle=100, and GPS from
 #   the book. SET only; stamp on OK. Never GET lat/lon into nodes.yaml.
-#   Unknown CLI (pre-1.14 / no dutycycle) is a gap, not a stamp.
+#   MeshCore <1.15 has no set dutycycle; use set af 0 (100% = af 0) and stamp.
 # - --unit filters targets only; it does not imply --force.
 
 
@@ -959,6 +963,44 @@ def load_targets(
     return out
 
 
+def parse_firmware_core(version: str | None) -> tuple[int, ...] | None:
+    """Leading dotted ints from ``v1.14.1-467959c`` / ``1.16.0.1`` / ``v0.1.3``."""
+    if not version:
+        return None
+    match = FIRMWARE_CORE_RE.search(str(version).strip())
+    if not match:
+        return None
+    try:
+        return tuple(int(part) for part in match.group(1).split("."))
+    except ValueError:
+        return None
+
+
+def _version_at_least(have: tuple[int, ...], need: tuple[int, ...]) -> bool:
+    width = max(len(have), len(need))
+    padded_have = have + (0,) * (width - len(have))
+    padded_need = need + (0,) * (width - len(need))
+    return padded_have >= padded_need
+
+
+def firmware_has_dutycycle_cli(version: str | None) -> bool | None:
+    """True if ``set dutycycle`` exists. False if MeshCore 1.x before 1.15. None if unknown.
+
+    EnvyOS ``0.x`` already has the command. Unparseable strings (``ShortTurbo``) are unknown.
+    """
+    core = parse_firmware_core(version)
+    if core is None:
+        return None
+    if core[0] == 0:
+        return True
+    return _version_at_least(core, DUTYCYCLE_CLI_SINCE)
+
+
+def airtime_factor_for_dutycycle(pct: float) -> float:
+    """MeshCore ``af = (100 / dutycycle) - 1``. ``100%`` → ``0``."""
+    return (100.0 / pct) - 1.0
+
+
 def parse_firmware(text: str) -> tuple[str | None, str | None]:
     text = text.strip()
     m = VER_RE.match(text)
@@ -1219,32 +1261,57 @@ async def set_dutycycle_policy(
     attempts: int,
     log: PollLog,
     session: FleetSession | None = None,
+    firmware_version: str | None = None,
 ) -> float | None:
-    """``set dutycycle 100``. Stamp on ``OK - 100.0%``."""
+    """``set dutycycle 100``, or ``set af 0`` on MeshCore <1.15. Stamp on OK."""
     want = int(FLEET_DUTYCYCLE_PCT)
+    af = airtime_factor_for_dutycycle(FLEET_DUTYCYCLE_PCT)
+    try_native = firmware_has_dutycycle_cli(firmware_version) is not False
+    if try_native:
+        raw = await send_cmd_sync(
+            client,
+            target,
+            f"set dutycycle {want}",
+            timeout=cmd_timeout,
+            attempts=attempts,
+            log=log,
+            session=session,
+        )
+        if raw is None:
+            log.step("dutycycle: no response")
+            return None
+        if not cli_unknown_reply(raw):
+            if cli_error_reply(raw) or not cli_set_ok(raw):
+                log.step(f"dutycycle: set failed ({raw.strip()[:40]})")
+                return None
+            confirmed = parse_dutycycle(raw)
+            if confirmed is not None:
+                log.step(f"dutycycle set OK ({confirmed:g}%)")
+                return confirmed
+            log.step(f"dutycycle set OK ({want}%)")
+            return FLEET_DUTYCYCLE_PCT
+        log.step("dutycycle: unsupported, using af")
+    else:
+        log.step("dutycycle: pre-1.15, using af")
     raw = await send_cmd_sync(
         client,
         target,
-        f"set dutycycle {want}",
+        f"set af {af:g}",
         timeout=cmd_timeout,
         attempts=attempts,
         log=log,
         session=session,
     )
     if raw is None:
-        log.step("dutycycle: no response")
+        log.step("dutycycle af: no response")
         return None
     if cli_unknown_reply(raw):
-        log.step("dutycycle: unsupported")
+        log.step("dutycycle af: unsupported")
         return None
     if cli_error_reply(raw) or not cli_set_ok(raw):
-        log.step(f"dutycycle: set failed ({raw.strip()[:40]})")
+        log.step(f"dutycycle af: set failed ({raw.strip()[:40]})")
         return None
-    confirmed = parse_dutycycle(raw)
-    if confirmed is not None:
-        log.step(f"dutycycle set OK ({confirmed:g}%)")
-        return confirmed
-    log.step(f"dutycycle set OK ({want}%)")
+    log.step(f"dutycycle set OK ({want}% via af {af:g})")
     return FLEET_DUTYCYCLE_PCT
 
 
@@ -2281,6 +2348,7 @@ async def poll_one(
                 attempts=attempts,
                 log=log,
                 session=session,
+                firmware_version=fw or node.get("firmware_version"),
             )
             if dutycycle is None:
                 stat_errors.append("dutycycle: no response")

@@ -22,7 +22,9 @@ That is [`onboard`](onboard.md).
 5. Periodic groups (status, telemetry, neighbors, acl) re-run when older than
    `--min-interval` (default 24h).
 6. Radio policy: SET `path.hash.mode 1`, `dutycycle 100`, and book `lat`/`lon`.
-   Stamp only on OK. Position is never read from the radio.
+   Stamp only on OK. Position is never read from the radio. MeshCore before
+   1.15 has no `set dutycycle`; monitor uses `set af 0` (same 100% policy)
+   and still stamps `dutycycle: 100`.
 7. Clock: if live login RTC is unset or behind the host, SET
    `time <host epoch>`. Does not run `clock sync`.
 

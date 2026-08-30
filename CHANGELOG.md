@@ -6,6 +6,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Changed
+
+- `set dutycycle` is MeshCore 1.15+. On older firmware (e.g. `v1.14.1`),
+  monitor and onboard use `set af 0` for the same 100% policy and stamp
+  `dutycycle: 100` so the group does not stay due forever.
+
 ### Added
 
 - **Monitor web UI** — default local map at `http://127.0.0.1:8787/` (ESM +

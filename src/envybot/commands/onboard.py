@@ -32,7 +32,9 @@ except ImportError as exc:  # pragma: no cover
 
 from envybot.commands.monitor import (
     PLACEHOLDER_PW,
+    airtime_factor_for_dutycycle,
     allocate_unit_id,
+    firmware_has_dutycycle_cli,
     load_nodes_doc,
     parse_bootloader,
     parse_coord,
@@ -513,6 +515,40 @@ def apply_if_needed(
     return True
 
 
+def apply_dutycycle_policy(cli: RepeaterSerial, fw: str | None, *, force: bool) -> bool:
+    """``set dutycycle 100``, or ``set af 0`` on MeshCore <1.15."""
+    af = airtime_factor_for_dutycycle(DUTYCYCLE_PCT)
+    use_af = firmware_has_dutycycle_cli(fw) is False
+    if not use_af:
+        dc = parse_dutycycle(cli.cmd("get dutycycle"))
+        if dc is not None or firmware_has_dutycycle_cli(fw) is True:
+            return apply_if_needed(
+                cli,
+                step="set dutycycle",
+                already=dc is not None and abs(dc - DUTYCYCLE_PCT) <= 0.5,
+                setter=f"set dutycycle {DUTYCYCLE_PCT}",
+                verify=lambda: (
+                    (got := parse_dutycycle(cli.cmd("get dutycycle"))) is not None
+                    and abs(got - DUTYCYCLE_PCT) <= 0.5
+                ),
+                ok_label=f"{DUTYCYCLE_PCT:g}%",
+                force=force,
+            )
+    got_af = parse_coord(cli.cmd("get af"))
+    return apply_if_needed(
+        cli,
+        step="set af",
+        already=got_af is not None and abs(got_af - af) < 0.05,
+        setter=f"set af {af:g}",
+        verify=lambda: (
+            (got := parse_coord(cli.cmd("get af"))) is not None
+            and abs(got - af) < 0.05
+        ),
+        ok_label=f"{DUTYCYCLE_PCT:g}% (af {af:g})",
+        force=force,
+    )
+
+
 def onboard(
     cli: RepeaterSerial,
     *,
@@ -555,19 +591,7 @@ def onboard(
         print("   (reboot to apply)")
 
     print("2. dutycycle 100% …")
-    dc = parse_dutycycle(cli.cmd("get dutycycle"))
-    apply_if_needed(
-        cli,
-        step="set dutycycle",
-        already=dc is not None and abs(dc - DUTYCYCLE_PCT) <= 0.5,
-        setter=f"set dutycycle {DUTYCYCLE_PCT}",
-        verify=lambda: (
-            (got := parse_dutycycle(cli.cmd("get dutycycle"))) is not None
-            and abs(got - DUTYCYCLE_PCT) <= 0.5
-        ),
-        ok_label=f"{DUTYCYCLE_PCT:g}%",
-        force=force,
-    )
+    apply_dutycycle_policy(cli, fw, force=force)
 
     print("3. adverts 0/0 …")
     adv = parse_int_get_value(cli.cmd("get advert.interval"))
