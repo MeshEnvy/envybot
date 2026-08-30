@@ -16,7 +16,8 @@ Idempotent on identity, creds, radio, name, and GPS:
 1. Open the DUT USB modem (path or autodetection).
 2. Match an existing book row by pubkey, or `--unit`, or allocate the next
    `ME####` from `next_unit` (never reuse).
-3. GET then SET. Reuse stored admin/guest passwords on re-run.
+3. GET then SET. Reuse stored admin/guest passwords on re-run when they are
+   unique and strong. Weak or colliding book/device passwords are replaced.
 4. Set USA/Canada radio (`910.525`, BW 62.5, SF7, CR 4/5), dutycycle 100%
    (`set af 0` on MeshCore before 1.15), advert 0 / flood advert 0.
 5. Device mask: name `Repeater` and GPS `0,0`. Book `name` is not set to

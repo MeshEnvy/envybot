@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import argparse
 import re
-import secrets
-import string
 import sys
 import time
 from pathlib import Path
@@ -32,11 +30,15 @@ except ImportError as exc:  # pragma: no cover
 
 from envybot.history import open_history, record_onboard_heard
 from envybot.nodes_doc import (
-    PLACEHOLDER_PW,
     allocate_unit_id,
     load_nodes_doc,
     remember_unit_id,
     write_nodes_doc,
+)
+from envybot.passwords import (
+    gen_unique_password,
+    password_collides,
+    password_is_strong,
 )
 from envybot.radio import (
     airtime_factor_for_dutycycle,
@@ -72,8 +74,6 @@ DISCOVER_ROUNDS = 3
 DISCOVER_WAIT_S = 12.0
 REBOOT_SETTLE_S = 4.0
 RECONNECT_TIMEOUT_S = 25.0
-PW_LEN = 14
-PW_ALPHABET = string.ascii_letters + string.digits + "%&@#*^$!"
 PUB_HEX_LEN = 64
 PRV_HEX_LEN = 128
 HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
@@ -82,12 +82,6 @@ NEIGH_RE = re.compile(r"^([0-9a-fA-F]{8}):(\d+):(-?\d+)$")
 
 class CliError(RuntimeError):
     pass
-
-
-def gen_password(length: int = PW_LEN) -> str:
-    chars = [secrets.choice(string.ascii_letters)]
-    chars.extend(secrets.choice(PW_ALPHABET) for _ in range(length - 1))
-    return "".join(chars)
 
 
 def resolve_port_arg(arg: str) -> str | None:
@@ -119,12 +113,9 @@ def stored_admin_password(node: dict[str, Any] | None) -> str | None:
     if not node:
         return None
     val = node.get("admin_password")
-    if not val or not isinstance(val, str):
+    if not password_is_strong(val):
         return None
-    val = val.strip()
-    if not val or val in PLACEHOLDER_PW:
-        return None
-    return val
+    return str(val).strip()
 
 
 def stored_guest_password(node: dict[str, Any] | None) -> str | None:
@@ -471,29 +462,42 @@ def resolve_passwords(
     *,
     admin_pw: str | None,
     guest_pw: str | None,
+    doc: dict[str, Any] | None = None,
+    key: str = "",
 ) -> tuple[str, str, str, str]:
     """Return (admin, guest, admin_source, guest_source). Sources: cli / yaml / device / new."""
+    book = doc or {}
     stored_admin = stored_admin_password(node)
     if admin_pw is not None:
         admin, admin_src = admin_pw, "cli"
-    elif stored_admin:
+    elif stored_admin and not password_collides(
+        stored_admin, book, key, field="admin_password"
+    ):
         admin, admin_src = stored_admin, "yaml"
     else:
-        admin, admin_src = gen_password(), "new"
+        admin, admin_src = gen_unique_password(book, key, field="admin_password"), "new"
     if not admin:
         raise CliError("admin password cannot be empty")
 
     stored_guest = stored_guest_password(node)
     if guest_pw is not None:
         guest, guest_src = guest_pw, "cli"
-    elif stored_guest is not None:
-        guest, guest_src = stored_guest, "yaml"
+    elif (
+        stored_guest
+        and password_is_strong(stored_guest)
+        and not password_collides(stored_guest, book, key, field="guest_password")
+    ):
+        guest, guest_src = stored_guest.strip(), "yaml"
     else:
         device_guest = parse_get_value(cli.cmd("get guest.password"))
-        if device_guest:
+        if (
+            device_guest
+            and password_is_strong(device_guest)
+            and not password_collides(device_guest, book, key, field="guest_password")
+        ):
             guest, guest_src = device_guest, "device"
         else:
-            guest, guest_src = gen_password(), "new"
+            guest, guest_src = gen_unique_password(book, key, field="guest_password"), "new"
     return admin, guest, admin_src, guest_src
 
 
@@ -791,7 +795,12 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print("unit (new)")
         admin_pw, guest_pw, admin_src, guest_src = resolve_passwords(
-            cli, existing, admin_pw=args.admin_pw, guest_pw=args.guest_pw
+            cli,
+            existing,
+            admin_pw=args.admin_pw,
+            guest_pw=args.guest_pw,
+            doc=_doc,
+            key=unit_key or "",
         )
         print(f"admin {admin_pw}  ({admin_src})")
         print(f"guest {guest_pw or '(blank)'}  ({guest_src})")
