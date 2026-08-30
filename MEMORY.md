@@ -23,7 +23,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/position.py` | Book GPS (node lat/lon, else site loc) |
 | `src/envybot/radio.py` | Companion session, login, CLI/binary |
 | `src/envybot/poll.py` | GET cadence → sqlite |
-| `src/envybot/apply.py` | SET mask unless `public: true` |
+| `src/envybot/apply.py` | SET mask unless `public: true`; `v1:` profile hash |
+| `src/envybot/passwords.py` | Password strength + uniqueness (no shared defaults) |
 | `src/envybot/commands/fleet.py` | Localhost manager |
 | `src/envybot/commands/trust.py` | Companion contact import |
 | `src/envybot/commands/cmd.py` | Remote MeshCore CLI |
@@ -38,8 +39,17 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 - GPS is book-canonical (`lat`/`lon` override, else `sites.yaml` loc).
   Apply SETs `0,0` unless `public: true`. Never GET device coords into YAML.
 - Mask name is `Repeater`. Book name stays in YAML.
-- Duty-cycle policy is 100%. `set dutycycle` needs MeshCore 1.15+; older
-  1.x uses `set af 0`.
+- Passwords are unique and strong per unit. Apply/onboard roll blank, weak
+  (`m35h3nvy`, placeholders, short), or colliding guests. Admin is never
+  invented by apply. Apply SETs book admin (`password`) after ACL/login.
+- Apply due = `profile_id` (`v1:` hash of desired SET payload) vs last
+  ok apply stamp. Payload: name/gps/adverts, guest+admin tokens, identity
+  pubkey, path.hash, dutycycle, ACL. Identity secret is `roll`, not apply.
+- Skip password login when the companion is on that unit's book ACL.
+  Live RTC is `clock` CLI (or login timestamp). Out of sync: drop the
+  companion from the ACL so the next run logs in.
+- Duty-cycle default is 100% (`nodes.yaml` `dutycycle` overrides).
+  `set dutycycle` needs MeshCore 1.15+; older 1.x uses `set af`.
 - Do not copy passwords or keypairs into this repo.
 - Not mesh-api. Not the sidecar mux (`mesh-sidecar-daemon`).
 - Daemon (`envybot serve`, N-radio mux) is later.

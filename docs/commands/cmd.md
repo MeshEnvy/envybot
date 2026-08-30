@@ -1,7 +1,8 @@
 # `envybot cmd`
 
 Run one MeshCore CLI command on a remote repeater over the companion link.
-Admin login always. No clock sync, radio policy SET, or `nodes.yaml` writes.
+Login only if the companion is not already on the book's ACL for that
+unit. No clock sync, radio policy SET, or `nodes.yaml` writes.
 
 Uses a **companion** radio (BLE first). Same desk radio as [`fleet`](fleet.md).
 Not USB repeater text CLI ([`onboard`](onboard.md)).
@@ -14,7 +15,9 @@ Not USB repeater text CLI ([`onboard`](onboard.md)).
 
 1. Resolve `<selector>` against the book (unit key, `ME####`, pubkey prefix,
    name, normalized name, unique site slug).
-2. Connect a companion and admin-login the target.
+2. Connect a companion. Skip password login when that companion is already
+   on the unit's book ACL (`trust.companions` / `admin1_pubkey`). Drop it
+   from the ACL to force login if things are out of sync.
 3. Send the CLI string and print the reply body on **stdout**.
 4. Progress (`login OK`, retries) goes to **stderr**.
 5. Write an audit row to `data/fleet/history.sqlite` (`commands`).

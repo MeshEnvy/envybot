@@ -22,6 +22,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Apply `profile_id` is a `v1:` hash of the desired SET payload (name/gps/
+  adverts, guest+admin tokens, identity pubkey, path.hash, dutycycle, ACL).
+  Editing a hashed field in `nodes.yaml` makes that unit due on the next
+  fleet start. Apply now SETs book admin after login. Identity secret
+  rotation stays `roll`.
+- Fleet and `cmd` skip password login when the companion is already on
+  that unit's book ACL. Clock comes from the `clock` CLI. Remove the
+  companion from the ACL to force login if the radio drifted.
+- Guest/admin doctrine: every password is unique and strong. Privacy apply
+  and onboard refuse the shared `m35h3nvy` default (and other weak/colliding
+  values) and generate a new 14-char password into the book.
 - `nodes.yaml` is desired identity only. Poll does not write last-seen.
 - Default apply SETs `Repeater`, `0,0`, adverts off, guest password, ACL
   allowlist. Book GPS is SET only when `public: true`.

@@ -54,12 +54,16 @@ NODES_YAML_HEADER = (
     "#   public: true. Default apply SETs Repeater + 0,0 + adverts off.\n"
     "# site: sites.yaml slug, or null while in the bag / decommissioned.\n"
     "# lat/lon: book GPS override only. Inherit site loc otherwise.\n"
-    "# path_hash_mode / dutycycle: radio prefs (apply still enforces 1 / 100).\n"
+    "# path_hash_mode / dutycycle: radio prefs (apply default 1 / 100).\n"
     "# trust.companions: companion pubkeys for field ACLs.\n"
     "# admin1_pubkey: optional per-unit extra ACL key.\n"
     "# firmware_platform: meshcore | meshtastic.\n"
     "# decommissioned: unix epoch when pulled from service.\n"
     "# next_unit: next free ME number (never reuse).\n"
+    "# admin_password / guest_password: unique + strong per unit. Privacy apply\n"
+    "#   rolls blank, weak, or colliding guest passwords (never reuse m35h3nvy).\n"
+    "# Apply due = v1 hash of desired SET payload (name/gps/adverts/guest/admin/\n"
+    "#   identity pubkey/path.hash/dutycycle/acl). Identity secret is roll, not apply.\n"
     "# Tool: envybot. Fleet: ./envybot fleet. Trust: ./envybot trust.\n"
     "# Never copy secrets (passwords, keypairs) into public trees.\n"
 )
@@ -241,6 +245,24 @@ def desired_acl_pubkeys(doc: dict[str, Any], node: dict[str, Any]) -> list[str]:
             seen.add(pk)
             ordered.append(pk)
     return ordered
+
+
+def companion_in_desired_acl(
+    doc: dict[str, Any],
+    node: dict[str, Any],
+    companion: str | None,
+) -> bool:
+    """True when the live companion is already on this unit's book ACL."""
+    if not companion:
+        return False
+    want = companion.strip().lower()
+    if len(want) < 12:
+        return False
+    prefix = want[:12]
+    for pk in desired_acl_pubkeys(doc, node):
+        if pk.startswith(prefix) or want.startswith(pk[:12]):
+            return True
+    return False
 
 
 def load_sites_for_book(nodes_path: Path) -> dict[str, dict[str, Any]]:

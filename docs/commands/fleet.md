@@ -23,15 +23,24 @@ First run imports leftover `polls.jsonl` (then deletes it) and YAML
 ## Apply
 
 Nodes without `public: true` get the privacy mask: name `Repeater`, lat/lon
-`0,0`, adverts off, guest password set, ACL = book allowlist.
+`0,0`, adverts off, a unique strong guest password, ACL = book allowlist.
+Blank, weak, or colliding guests are rolled and written back to the book.
 `public: true` pushes book name + resolved GPS.
 
-Always also SETs `path.hash.mode=1`, `dutycycle=100`, and clock if unset
-or behind.
+Always also SETs `path.hash.mode` (default 1 = 2-byte), `dutycycle`
+(default 100), a strong book admin via `password`, and clock if unset
+or behind. Password login is skipped when the companion is already on
+the book's ACL for that unit. Live clock then comes from the `clock`
+CLI. Drop the companion from the ACL to force login if that belief is
+wrong.
 
-Apply is due when the radio does not match that profile, not on a 24h
-clock. First radio session after this ships masks every reachable private
-node.
+Apply is due when `profile_id` (`v1:` + hash of the desired SET payload)
+does not match the last successful apply stamp, or a private node is
+leaking identity. Edit a hashed field in `nodes.yaml` and restart fleet.
+
+Hashed: public/name/gps/adverts, guest + admin (tokens), identity pubkey,
+path.hash, dutycycle, ACL allowlist. Not hashed / not pushed here:
+identity secret (`roll`), radio preset (onboard), clock.
 
 ## Flags
 

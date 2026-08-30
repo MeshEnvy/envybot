@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from envybot.apply import apply_is_due, profile_id
+from envybot.apply import apply_is_due, profile_id, profile_parts
 from envybot.history import insert_apply, open_history, record_poll
 from envybot.radio import format_book_coord
 
@@ -29,13 +29,73 @@ class _Res:
         self.polled_groups = kwargs.get("polled_groups", frozenset({"name", "lat", "lon"}))
 
 
-class ProfileTests(unittest.TestCase):
-    def test_private_id(self) -> None:
-        self.assertEqual(profile_id({"name": "Ophir"}, None), "private")
+_STRONG = {
+    "name": "Ophir",
+    "guest_password": "GuestOneStrong1",
+    "admin_password": "AdminOneStrong1",
+    "identity_pubkey": "aa" * 32,
+}
 
-    def test_public_id_includes_name_and_gps(self) -> None:
-        node = {"public": True, "name": "Ophir", "lat": 39.5, "lon": -119.8}
-        self.assertIn("public:Ophir:39.50000", profile_id(node, None))
+
+def _id(node, sites=None, doc=None):
+    return profile_id(node, sites, doc=doc)
+
+
+class ProfileTests(unittest.TestCase):
+    def test_id_is_versioned_hash(self) -> None:
+        pid = _id({"name": "Ophir"})
+        self.assertTrue(pid.startswith("v1:"))
+        self.assertEqual(len(pid), 19)
+
+    def test_guest_change_changes_hash(self) -> None:
+        a = {**_STRONG}
+        b = {**_STRONG, "guest_password": "GuestTwoStrong2"}
+        self.assertNotEqual(_id(a), _id(b))
+
+    def test_admin_change_changes_hash(self) -> None:
+        a = {**_STRONG}
+        b = {**_STRONG, "admin_password": "AdminTwoStrong2"}
+        self.assertNotEqual(_id(a), _id(b))
+
+    def test_identity_change_changes_hash(self) -> None:
+        a = {**_STRONG}
+        b = {**_STRONG, "identity_pubkey": "bb" * 32}
+        self.assertNotEqual(_id(a), _id(b))
+
+    def test_dutycycle_and_path_hash_change_hash(self) -> None:
+        a = {**_STRONG}
+        self.assertNotEqual(_id(a), _id({**_STRONG, "dutycycle": 50}))
+        self.assertNotEqual(_id(a), _id({**_STRONG, "path_hash_mode": 0}))
+
+    def test_acl_change_changes_hash(self) -> None:
+        node = {**_STRONG, "admin1_pubkey": "cc" * 32}
+        empty = _id(node, doc={"nodes": {"me0001": node}})
+        with_trust = _id(
+            node,
+            doc={
+                "nodes": {"me0001": node},
+                "trust": {"companions": [{"pubkey": "dd" * 32}]},
+            },
+        )
+        self.assertNotEqual(empty, with_trust)
+
+    def test_public_gps_in_parts(self) -> None:
+        node = {**_STRONG, "public": True, "lat": 39.5, "lon": -119.8}
+        parts = profile_parts(node, None)
+        self.assertTrue(parts["public"])
+        self.assertEqual(parts["name"], "Ophir")
+        self.assertEqual(parts["lat"], 39.5)
+        self.assertEqual(parts["lon"], -119.8)
+        self.assertNotEqual(_id(node), _id(_STRONG))
+
+    def test_private_mask_in_parts(self) -> None:
+        parts = profile_parts(_STRONG, None)
+        self.assertFalse(parts["public"])
+        self.assertEqual(parts["name"], "Repeater")
+        self.assertEqual(parts["lat"], 0.0)
+        self.assertEqual(parts["advert"], 0)
+        self.assertEqual(parts["path_hash"], 1)
+        self.assertEqual(parts["dutycycle"], 100)
 
 
 class DueTests(unittest.TestCase):
@@ -44,18 +104,33 @@ class DueTests(unittest.TestCase):
             conn = open_history(Path(tmp))
             self.assertTrue(apply_is_due(conn, "me0001", {"name": "Ophir"}, None))
 
+    def test_weak_guest_is_due_after_ok_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            node = {"name": "Ophir", "guest_password": "m35h3nvy"}
+            insert_apply(conn, unit="me0001", field="profile", desired=_id(node), ok=True)
+            self.assertTrue(apply_is_due(conn, "me0001", node, None))
+
     def test_after_ok_private_not_due_unless_leak(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             book = Path(tmp)
             conn = open_history(book)
-            insert_apply(conn, unit="me0001", field="profile", desired="private", ok=True)
-            self.assertFalse(apply_is_due(conn, "me0001", {"name": "Ophir"}, None))
+            desired = _id(_STRONG)
+            insert_apply(conn, unit="me0001", field="profile", desired=desired, ok=True)
+            self.assertFalse(apply_is_due(conn, "me0001", _STRONG, None))
             record_poll(
                 conn,
                 unit="me0001",
                 res=_Res(name="Ophir Hill", lat=39.5, lon=-119.8),
             )
-            self.assertTrue(apply_is_due(conn, "me0001", {"name": "Ophir"}, None))
+            self.assertTrue(apply_is_due(conn, "me0001", _STRONG, None))
+
+    def test_yaml_edit_is_due(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            insert_apply(conn, unit="me0001", field="profile", desired=_id(_STRONG), ok=True)
+            edited = {**_STRONG, "guest_password": "GuestTwoStrong2"}
+            self.assertTrue(apply_is_due(conn, "me0001", edited, None))
 
     def test_force(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

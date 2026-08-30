@@ -124,7 +124,9 @@ async def run(args: argparse.Namespace) -> int:
     apply_due = [
         t
         for t in all_targets
-        if do_apply and apply_is_due(conn, t.key, nodes.get(t.key) or {}, sites, force=args.force)
+        if do_apply and apply_is_due(
+            conn, t.key, nodes.get(t.key) or {}, sites, force=args.force, doc=doc
+        )
     ]
     apply_keys = {t.key for t in apply_due}
     if skipped and not args.quiet and do_poll:
@@ -192,7 +194,7 @@ async def run(args: argparse.Namespace) -> int:
                 prefix = f"[{n}] " if retry_mode and n > 1 else ""
                 print(f"{prefix}{target_label(target)} …", flush=True)
                 node_record = nodes.get(target.key) or {}
-                had_guest = bool(str(node_record.get("guest_password") or "").strip())
+                guest_before = str(node_record.get("guest_password") or "")
                 session_states[target.key] = {
                     "state": "polling",
                     "due_groups": list(target.due_groups),
@@ -222,6 +224,7 @@ async def run(args: argparse.Namespace) -> int:
                         session=session,
                         log=log,
                         sites=sites,
+                        doc=doc,
                     )
                     if not res.ok:
                         session_states[target.key] = {
@@ -267,7 +270,7 @@ async def run(args: argparse.Namespace) -> int:
                         firmware_version=fw,
                         login_clock=login_clock,
                     )
-                    if not had_guest and str(node_record.get("guest_password") or "").strip():
+                    if str(node_record.get("guest_password") or "") != guest_before:
                         yaml_dirty = True
                     if apply_ok:
                         apply_keys.discard(target.key)

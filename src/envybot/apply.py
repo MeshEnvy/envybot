@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import secrets
+import hashlib
+import json
 import sqlite3
-import string
-import time
 from typing import Any
 
 from envybot.history import get_last_seen, insert_apply, last_ok_apply
@@ -15,8 +14,17 @@ from envybot.nodes_doc import (
     is_public,
     write_nodes_doc,
 )
+from envybot.passwords import (
+    assign_guest_password,
+    guest_needs_assign,
+    normalize_password,
+    password_is_strong,
+    password_token,
+)
 from envybot.position import is_placeholder_gps, resolve_book_position
 from envybot.radio import (
+    FLEET_DUTYCYCLE_PCT,
+    FLEET_PATH_HASH_MODE,
     FleetSession,
     PollLog,
     RouterTarget,
@@ -35,27 +43,83 @@ except ImportError:  # pragma: no cover
     MeshCore = Any  # type: ignore[misc,assignment]
 
 PERM_ACL_ADMIN = 3
-PW_LEN = 14
-PW_ALPHABET = string.ascii_letters + string.digits + "%&@#*^$!"
+PROFILE_ID_VERSION = 1
 
 
-def gen_password(length: int = PW_LEN) -> str:
-    chars = [secrets.choice(string.ascii_letters)]
-    chars.extend(secrets.choice(PW_ALPHABET) for _ in range(length - 1))
-    return "".join(chars)
+def desired_path_hash_mode(node: dict[str, Any]) -> int:
+    val = node.get("path_hash_mode")
+    if val is None or val == "":
+        return FLEET_PATH_HASH_MODE
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return FLEET_PATH_HASH_MODE
+
+
+def desired_dutycycle(node: dict[str, Any]) -> int:
+    val = node.get("dutycycle")
+    if val is None or val == "":
+        return int(FLEET_DUTYCYCLE_PCT)
+    try:
+        return int(round(float(val)))
+    except (TypeError, ValueError):
+        return int(FLEET_DUTYCYCLE_PCT)
+
+
+def _opt_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def profile_parts(
+    node: dict[str, Any],
+    sites: dict[str, dict[str, Any]] | None,
+    *,
+    doc: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Canonical desired SET payload. Secrets are tokens, not plaintext."""
+    public = is_public(node)
+    if public:
+        name = str(node.get("name") or "").strip() or MASK_NAME
+        pos = resolve_book_position(node, sites)
+        lat = round(float(pos["lat"]), 6) if pos else None
+        lon = round(float(pos["lon"]), 6) if pos else None
+        advert = _opt_int(node.get("advert_interval_min"))
+        flood = _opt_int(node.get("flood_advert_interval_h"))
+    else:
+        name = MASK_NAME
+        lat, lon = 0.0, 0.0
+        advert, flood = 0, 0
+    pk = str(node.get("identity_pubkey") or "").strip().lower()
+    return {
+        "acl": desired_acl_pubkeys(doc or {}, node),
+        "admin": password_token(node.get("admin_password")),
+        "advert": advert,
+        "dutycycle": desired_dutycycle(node),
+        "flood": flood,
+        "guest": password_token(node.get("guest_password")),
+        "identity": pk or None,
+        "lat": lat,
+        "lon": lon,
+        "name": name,
+        "path_hash": desired_path_hash_mode(node),
+        "public": public,
+    }
 
 
 def profile_id(
     node: dict[str, Any],
     sites: dict[str, dict[str, Any]] | None,
+    *,
+    doc: dict[str, Any] | None = None,
 ) -> str:
-    if not is_public(node):
-        return "private"
-    name = str(node.get("name") or "").strip() or MASK_NAME
-    pos = resolve_book_position(node, sites)
-    if pos:
-        return f"public:{name}:{pos['lat']:.5f}:{pos['lon']:.5f}"
-    return f"public:{name}"
+    raw = json.dumps(profile_parts(node, sites, doc=doc), sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(raw.encode()).hexdigest()[:16]
+    return f"v{PROFILE_ID_VERSION}:{digest}"
 
 
 def _heard_leaks_private(seen: dict[str, Any] | None) -> bool:
@@ -84,11 +148,14 @@ def apply_is_due(
     sites: dict[str, dict[str, Any]] | None,
     *,
     force: bool = False,
+    doc: dict[str, Any] | None = None,
 ) -> bool:
     if force:
         return True
-    desired = profile_id(node, sites)
+    desired = profile_id(node, sites, doc=doc)
     if last_ok_apply(conn, unit, "profile") != desired:
+        return True
+    if not is_public(node) and guest_needs_assign(node, doc or {}, unit):
         return True
     seen = get_last_seen(conn, unit)
     if is_public(node):
@@ -128,13 +195,8 @@ async def _set_cli(
     return True
 
 
-def _ensure_guest_password(node: dict[str, Any]) -> str:
-    existing = node.get("guest_password")
-    if isinstance(existing, str) and existing.strip():
-        return existing.strip()
-    pw = gen_password()
-    node["guest_password"] = pw
-    return pw
+def _ensure_guest_password(node: dict[str, Any], doc: dict[str, Any], key: str) -> str:
+    return assign_guest_password(node, doc, key)
 
 
 async def _apply_acl(
@@ -205,7 +267,6 @@ async def apply_one(
     """SET mask or book identity plus shared radio policy. Returns True if profile OK."""
     ok = True
     public = is_public(node)
-    desired = profile_id(node, sites)
 
     if public:
         name = str(node.get("name") or "").strip() or target.unit_id
@@ -245,7 +306,8 @@ async def apply_one(
             ):
                 ok = False
         guest = node.get("guest_password")
-        if isinstance(guest, str) and guest:
+        if isinstance(guest, str) and guest.strip():
+            guest = _ensure_guest_password(node, doc, target.key)
             if not await _set_cli(
                 client, target, f"set guest.password {guest}",
                 cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session, field="guest",
@@ -277,20 +339,30 @@ async def apply_one(
             cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session, field="flood_advert",
         ):
             ok = False
-        guest = _ensure_guest_password(node)
+        guest = _ensure_guest_password(node, doc, target.key)
         if not await _set_cli(
             client, target, f"set guest.password {guest}",
             cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session, field="guest",
         ):
             ok = False
 
+    admin = node.get("admin_password")
+    if password_is_strong(admin):
+        if not await _set_cli(
+            client, target, f"password {normalize_password(admin)}",
+            cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session, field="admin",
+        ):
+            ok = False
+
     if await set_path_hash_policy(
         client, target, cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session,
+        mode=desired_path_hash_mode(node),
     ) is None:
         ok = False
     if await set_dutycycle_policy(
         client, target, cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session,
         firmware_version=firmware_version or node.get("firmware_version"),
+        pct=float(desired_dutycycle(node)),
     ) is None:
         ok = False
 
@@ -322,6 +394,7 @@ async def apply_one(
         ):
             ok = False
 
+    desired = profile_id(node, sites, doc=doc)
     insert_apply(conn, unit=target.key, field="profile", desired=desired, ok=ok)
     log.step(f"profile {'OK' if ok else 'partial'} ({desired})")
     return ok

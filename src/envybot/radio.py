@@ -17,6 +17,7 @@ from envybot.nodes_doc import (
     HEX_PUBKEY_RE,
     PLACEHOLDER_PW,
     UNIT_NUM_RE,
+    companion_in_desired_acl,
     load_nodes_doc,
     normalize_fleet_node,
 )
@@ -35,6 +36,9 @@ except ImportError as exc:  # pragma: no cover
 VER_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)*)\s*\(Build:", re.I)
 BL_RE = re.compile(r"^>\s*(.+)$")
 VERSION_POLL_NOTE_RE = re.compile(r"(?:\s*[—–-]\s*)?version poll (\d{4}-\d{2}-\d{2})", re.I)
+CLOCK_CLI_RE = re.compile(
+    r"(\d{1,2}):(\d{2})\s*-\s*(\d{1,2})/(\d{1,2})/(\d{4})\s*UTC", re.I
+)
 
 DEFAULT_MIN_POLL_INTERVAL = 86400.0  # 24h
 DEFAULT_MESH_ATTEMPTS = 10
@@ -47,12 +51,15 @@ FIRMWARE_CORE_RE = re.compile(r"v?(\d+(?:\.\d+)*)", re.I)
 DUTYCYCLE_CLI_SINCE = (1, 15)
 
 # Decision notes (do not reintroduce the opposite without updating this):
-# - Always login. STATUS (GET_STATUS) is uptime/packets/RSSI, not wall-clock RTC.
-#   Login is the cheap live clock and path refresh. ACL-skip saved a packet but
-#   made node_clock a snapshot; comparing that to host time false-triggered sync.
+# - Skip login when the companion is already on the book's ACL for that unit
+#   (trust.companions / admin1). ACL-admin can send CLI without a password.
+#   Out of sync: drop the companion from that ACL so the next run logs in.
+#   Live RTC is ``clock`` CLI (or LOGIN_SUCCESS timestamp). STATUS is uptime,
+#   not wall clock.
 # - Clock set is one CLI: ``time <host epoch>``. Drift is vs host, so set from
-#   host, not companion RTC (``clock sync``). Only from a live login timestamp,
-#   or stored clock that is unset (0 / pre-2020). Log drift before sending.
+#   host, not companion RTC (``clock sync``). Only from a live clock
+#   (login timestamp or ``clock``), or stored clock that is unset (0 / pre-2020).
+#   Log drift before sending.
 #   If the node is ahead, skip: firmware will not set backwards. A
 #   "cannot go backwards" reply is a valid heard result, not a gap.
 # - One retry cap for every send that expects a reply (login, CLI, binary,
@@ -988,8 +995,23 @@ def node_clock_needs_sync(node_clock: int | None, *, now: int | None = None) -> 
     return abs(node_clock - now) > CLOCK_SKEW_MAX
 
 
+def parse_clock_cli(text: str | None) -> int | None:
+    """Parse CommonCLI ``clock`` (``HH:MM - D/M/Y UTC``) to epoch seconds."""
+    if not text:
+        return None
+    match = CLOCK_CLI_RE.search(text)
+    if not match:
+        return None
+    hour, minute, day, month, year = (int(p) for p in match.groups())
+    try:
+        dt = datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return int(dt.timestamp())
+
+
 def format_clock_drift(node_clock: int, *, now: int) -> str:
-    """Login RTC minus host. Positive = node ahead."""
+    """Live RTC minus host. Positive = node ahead."""
     drift = node_clock - now
     sign = "+" if drift > 0 else ""
     abs_d = abs(drift)
@@ -1054,12 +1076,14 @@ async def set_path_hash_policy(
     attempts: int,
     log: PollLog,
     session: FleetSession | None = None,
+    mode: int | None = None,
 ) -> int | None:
-    """``set path.hash.mode 1`` (2-byte). Stamp on OK."""
+    """``set path.hash.mode`` (default 1 = 2-byte). Stamp on OK."""
+    want = FLEET_PATH_HASH_MODE if mode is None else int(mode)
     raw = await send_cmd_sync(
         client,
         target,
-        f"set path.hash.mode {FLEET_PATH_HASH_MODE}",
+        f"set path.hash.mode {want}",
         timeout=cmd_timeout,
         attempts=attempts,
         log=log,
@@ -1074,8 +1098,8 @@ async def set_path_hash_policy(
     if cli_error_reply(raw) or not cli_set_ok(raw):
         log.step(f"path.hash: set failed ({raw.strip()[:40]})")
         return None
-    log.step(f"path.hash set OK ({FLEET_PATH_HASH_MODE} = 2-byte)")
-    return FLEET_PATH_HASH_MODE
+    log.step(f"path.hash set OK ({want} = {want + 1}-byte)")
+    return want
 
 
 async def set_dutycycle_policy(
@@ -1087,10 +1111,12 @@ async def set_dutycycle_policy(
     log: PollLog,
     session: FleetSession | None = None,
     firmware_version: str | None = None,
+    pct: float | None = None,
 ) -> float | None:
-    """``set dutycycle 100``, or ``set af 0`` on MeshCore <1.15. Stamp on OK."""
-    want = int(FLEET_DUTYCYCLE_PCT)
-    af = airtime_factor_for_dutycycle(FLEET_DUTYCYCLE_PCT)
+    """``set dutycycle``, or ``set af`` on MeshCore <1.15. Stamp on OK."""
+    want_pct = FLEET_DUTYCYCLE_PCT if pct is None else float(pct)
+    want = int(round(want_pct))
+    af = airtime_factor_for_dutycycle(want_pct)
     try_native = firmware_has_dutycycle_cli(firmware_version) is not False
     if try_native:
         raw = await send_cmd_sync(
@@ -1114,7 +1140,7 @@ async def set_dutycycle_policy(
                 log.step(f"dutycycle set OK ({confirmed:g}%)")
                 return confirmed
             log.step(f"dutycycle set OK ({want}%)")
-            return FLEET_DUTYCYCLE_PCT
+            return float(want)
         log.step("dutycycle: unsupported, using af")
     else:
         log.step("dutycycle: pre-1.15, using af")
@@ -1137,7 +1163,7 @@ async def set_dutycycle_policy(
         log.step(f"dutycycle af: set failed ({raw.strip()[:40]})")
         return None
     log.step(f"dutycycle set OK ({want}% via af {af:g})")
-    return FLEET_DUTYCYCLE_PCT
+    return float(want)
 
 
 def format_book_coord(value: float) -> str:
@@ -1223,10 +1249,10 @@ async def maybe_sync_repeater_clock(
     log: PollLog,
     session: FleetSession | None = None,
 ) -> int | None:
-    """Sync from a live login timestamp, or when stored RTC is unset (0 / pre-2020).
+    """Sync from a live clock (login timestamp or ``clock`` CLI), or unset stored RTC.
 
-    Login is required for a live clock (STATUS has uptime only). Stored
-    ``node_clock`` is a last-pull snapshot: do not treat its age vs host as skew.
+    STATUS has uptime only. Stored ``node_clock`` is a last-pull snapshot:
+    do not treat its age vs host as skew.
     """
     now_ts = int(time.time())
     if login_clock is not None:
@@ -1574,7 +1600,7 @@ async def admin_login(
     session: FleetSession | None = None,
     log: PollLog | None = None,
 ) -> tuple[bool, str | None, int | None]:
-    """Always login. Live RTC is only on LOGIN_SUCCESS (STATUS has uptime, not clock)."""
+    """Password login. Skip this when ``companion_in_desired_acl`` is true."""
     log = log or PollLog()
 
     dst = target.pubkey_hex
@@ -1645,6 +1671,74 @@ async def admin_login(
         log.step(f"login {n_of}: timeout after {wait_s:.0f}s, retrying …")
 
     return False, f"login failed after {attempts} attempts", None
+
+
+async def fetch_repeater_clock(
+    client: MeshCore,
+    target: RouterTarget,
+    *,
+    cmd_timeout: float,
+    attempts: int,
+    log: PollLog,
+    session: FleetSession | None = None,
+) -> int | None:
+    raw = await send_cmd_sync(
+        client,
+        target,
+        "clock",
+        timeout=cmd_timeout,
+        attempts=attempts,
+        log=log,
+        session=session,
+    )
+    ts = parse_clock_cli(raw)
+    if ts is not None:
+        log.step(f"clock {ts}")
+    elif raw:
+        log.step(f"clock: unparsed ({raw.strip()[:40]})")
+    return ts
+
+
+async def maybe_admin_access(
+    client: MeshCore,
+    target: RouterTarget,
+    *,
+    node: dict[str, Any],
+    doc: dict[str, Any] | None,
+    login_timeout: float,
+    cmd_timeout: float,
+    attempts: int,
+    session: FleetSession | None,
+    log: PollLog,
+    fetch_clock: bool = True,
+) -> tuple[bool, str | None, int | None]:
+    """Skip password login when the companion is already on the book ACL."""
+    companion = companion_identity(client)
+    if companion is None and session is not None:
+        companion = session.companion_id
+    if companion_in_desired_acl(doc or {}, node, companion):
+        log.step("skip login (companion in book ACL)")
+        if session is not None:
+            session.mark_authed(target.key)
+        if not fetch_clock:
+            return True, None, None
+        clock = await fetch_repeater_clock(
+            client,
+            target,
+            cmd_timeout=cmd_timeout,
+            attempts=attempts,
+            log=log,
+            session=session,
+        )
+        return True, None, clock
+    return await admin_login(
+        client,
+        target,
+        login_timeout=login_timeout,
+        attempts=attempts,
+        session=session,
+        log=log,
+    )
 
 
 async def refresh_contact_from_device(
@@ -1868,6 +1962,7 @@ async def poll_one(
     session: FleetSession | None = None,
     log: PollLog | None = None,
     sites: dict[str, dict[str, Any]] | None = None,
+    doc: dict[str, Any] | None = None,
 ) -> PollResult:
     log = log or PollLog()
     stat_errors: list[str] = []
@@ -1891,10 +1986,13 @@ async def poll_one(
     acl: list[dict[str, Any]] | None = None
     neighbors: list[dict[str, Any]] | None = None
     try:
-        ok, err, login_clock = await admin_login(
+        ok, err, login_clock = await maybe_admin_access(
             client,
             target,
+            node=node,
+            doc=doc,
             login_timeout=login_timeout,
+            cmd_timeout=cmd_timeout,
             attempts=attempts,
             session=session,
             log=log,

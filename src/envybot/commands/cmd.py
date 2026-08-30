@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Run one MeshCore CLI command on a remote repeater over the companion link.
 
-Admin login always. No clock sync, radio policy SET, or nodes.yaml writes.
+Login only if the companion is not already on the book's ACL.
+No clock sync, radio policy SET, or nodes.yaml writes.
 Stdout is the reply body only; progress goes to stderr.
 
 Examples:
@@ -35,9 +36,9 @@ from envybot.radio import (
     FleetSession,
     RouterTarget,
     add_companion_args,
-    admin_login,
     cli_suggests_auth_failure,
     connect,
+    maybe_admin_access,
     send_cmd_sync,
     sync_fleet_contacts,
 )
@@ -197,13 +198,18 @@ async def run(args: argparse.Namespace) -> int:
     try:
         await sync_fleet_contacts(client, [target], log=log)  # type: ignore[arg-type]
 
-        ok, err, _clock = await admin_login(
+        node = (doc.get("nodes") or {}).get(target.key) or {}
+        ok, err, _clock = await maybe_admin_access(
             client,
             target,
+            node=node if isinstance(node, dict) else {},
+            doc=doc,
             login_timeout=args.login_timeout,
+            cmd_timeout=args.timeout,
             attempts=args.attempts,
             session=session,
             log=log,  # type: ignore[arg-type]
+            fetch_clock=False,
         )
         if not ok:
             print(err or "admin login failed", file=sys.stderr)
