@@ -7,6 +7,7 @@ from pathlib import Path
 
 ENV_HOME = "ENVYBOT_HOME"
 NODES_NAME = "nodes.yaml"
+SITES_NAME = "sites.yaml"
 POLL_LOG = Path("data/fleet/polls.jsonl")
 
 
@@ -57,3 +58,7 @@ def nodes_path(book: Path) -> Path:
 
 def poll_log_path(book: Path) -> Path:
     return book / POLL_LOG
+
+
+def sites_path(book: Path) -> Path:
+    return book / SITES_NAME

@@ -6,6 +6,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Added
+
+- **Monitor web UI** — default local map at `http://127.0.0.1:8787/` (ESM +
+  MapLibre, SSE live updates). `--no-web`, `--web-only`, `--bind`, `--port`,
+  `--open`. Sanitized snapshot only (no passwords or secret keys in the browser).
+
 ## [0.2.0] - 2026-08-29
 
 ### Added

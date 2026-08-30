@@ -2767,7 +2767,41 @@ def target_label(target: RouterTarget) -> str:
     return f"{target.unit_id} {target.name}{site}"
 
 
+async def _serve_web_until_stop(web_ctx: Any, poll_exit: int) -> int:
+    print(f"Monitor UI still running at {web_ctx.url} (Ctrl+C to exit).")
+    await web_ctx.start_yaml_watch()
+    try:
+        await web_ctx.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        await web_ctx.shutdown()
+    return poll_exit
+
+
 async def run(args: argparse.Namespace) -> int:
+    web_ctx: Any | None = None
+    session_states: dict[str, dict[str, Any]] = {}
+    use_web = not args.no_web
+
+    if use_web:
+        from envybot.web.server import start_monitor_web
+
+        web_ctx = await start_monitor_web(
+            nodes_path=args.nodes,
+            host=args.bind,
+            port=args.port,
+            stale_secs=args.min_interval,
+            open_browser=args.open,
+        )
+
+    if args.web_only:
+        if web_ctx is None:
+            print("envybot monitor: --web-only conflicts with --no-web", file=sys.stderr)
+            return 2
+        print("Web-only mode — watching nodes.yaml. Ctrl+C to exit.")
+        return await _serve_web_until_stop(web_ctx, 0)
+
     include = {u.lower() for u in args.unit} if args.unit else None
     skip = {u.lower() for u in args.skip} if args.skip else None
     all_targets = load_targets(
@@ -2777,6 +2811,9 @@ async def run(args: argparse.Namespace) -> int:
         print(f"Excluding {len(skip)} unit(s): {', '.join(sorted(skip))}")
     if not all_targets:
         print("No pollable routers matched filters.", file=sys.stderr)
+        if web_ctx:
+            await web_ctx.refresh_snapshot(poll={"phase": "idle", "error": "no targets"})
+            return await _serve_web_until_stop(web_ctx, 1)
         return 1
 
     policy = PullPolicy(
@@ -2800,8 +2837,27 @@ async def run(args: argparse.Namespace) -> int:
         )
         for target in skipped:
             print(f"  skip {target_label(target)}")
+    for target in targets:
+        session_states[target.key] = {
+            "state": "queued",
+            "due_groups": list(target.due_groups),
+        }
+    if web_ctx:
+        await web_ctx.refresh_snapshot(
+            session_states=session_states,
+            poll={
+                "phase": "starting",
+                "pending": len(targets),
+                "total": len(all_targets),
+            },
+        )
     if not targets:
         print(f"All {len(all_targets)} router(s) up to date.")
+        if web_ctx:
+            await web_ctx.publish_session(
+                {"phase": "done", "pending": 0, "ok": 0, "total": len(all_targets)}
+            )
+            return await _serve_web_until_stop(web_ctx, 0)
         return 0
 
     retry_mode = not args.once
@@ -2812,6 +2868,8 @@ async def run(args: argparse.Namespace) -> int:
     log = PollLog(progress=not args.quiet, verbose=args.verbose)
     session = FleetSession()
     client = await connect(args)
+    companion_label = companion_identity(client)
+    companion_short = companion_label[:12] if companion_label else None
     session.bind_companion(client)
     session.attach_orphan_watch(client, log)
     await sync_fleet_contacts(client, targets, log=log)
@@ -2821,6 +2879,13 @@ async def run(args: argparse.Namespace) -> int:
     round_num = 0
     interrupted = False
 
+    if web_ctx:
+        await web_ctx.refresh_snapshot(
+            session_states=session_states,
+            companion=companion_short,
+            poll={"phase": "polling", "round": 0, "pending": len(pending)},
+        )
+
     try:
         while pending:
             round_num += 1
@@ -2828,6 +2893,15 @@ async def run(args: argparse.Namespace) -> int:
                 break
             if retry_mode and round_num > 1:
                 print(f"\n--- round {round_num}: {len(pending)} still pending ---")
+            if web_ctx:
+                await web_ctx.publish_session(
+                    {
+                        "phase": "polling",
+                        "round": round_num,
+                        "pending": len(pending),
+                        "companion": companion_short,
+                    }
+                )
             next_pending: list[RouterTarget] = []
             for target in pending:
                 attempt_counts[target.key] = attempt_counts.get(target.key, 0) + 1
@@ -2839,15 +2913,32 @@ async def run(args: argparse.Namespace) -> int:
                 print(f"{prefix}{target_label(target)} …", flush=True)
                 node_record = nodes.get(target.key) or {}
                 if n == 1:
-                    need, skip = format_pull_plan(
+                    need, skip_plan = format_pull_plan(
                         node_record,
                         target.due_groups,
                         policy=policy,
                         now=int(time.time()),
                     )
                     print(f"  need: {need}")
-                    print(f"  skip: {skip}")
+                    print(f"  skip: {skip_plan}")
                     print("  login: always (live clock + path)")
+                session_states[target.key] = {
+                    "state": "polling",
+                    "due_groups": list(target.due_groups),
+                }
+                if web_ctx:
+                    await web_ctx.publish_unit(
+                        target.key,
+                        session=session_states[target.key],
+                        session_states=session_states,
+                        companion=companion_short,
+                        poll={
+                            "phase": "polling",
+                            "round": round_num,
+                            "pending": len(pending),
+                            "unit": target.key,
+                        },
+                    )
                 res = await poll_one(
                     client,
                     target,
@@ -2878,12 +2969,34 @@ async def run(args: argparse.Namespace) -> int:
                         )
                     if res.name:
                         target.name = res.name
+                    session_states[target.key] = {
+                        "state": "ok",
+                        "due_groups": list(target.due_groups),
+                    }
                     print(f"  OK {poll_summary(res)}")
                 else:
+                    session_states[target.key] = {
+                        "state": "unreachable",
+                        "error": res.error,
+                        "due_groups": list(target.due_groups),
+                    }
                     print(f"  unreachable: {res.error}")
                     next_pending.append(target)
                     if args.retry_delay > 0:
                         await asyncio.sleep(args.retry_delay)
+                if web_ctx:
+                    await web_ctx.publish_unit(
+                        target.key,
+                        session=session_states[target.key],
+                        session_states=session_states,
+                        companion=companion_short,
+                        poll={
+                            "phase": "polling",
+                            "round": round_num,
+                            "pending": len(next_pending) + len(pending) - 1,
+                            "unit": target.key,
+                        },
+                    )
             pending = sorted(next_pending, key=poll_staleness_key)
             if not pending or args.once:
                 break
@@ -2908,9 +3021,20 @@ async def run(args: argparse.Namespace) -> int:
     if pending:
         names = ", ".join(t.unit_id for t in pending)
         print(f"Still pending ({len(pending)}): {names}")
-    if interrupted:
-        return 130
-    return 0 if not pending else 2
+    poll_exit = 130 if interrupted else (0 if not pending else 2)
+    if web_ctx:
+        await web_ctx.publish_session(
+            {
+                "phase": "done",
+                "ok": ok_count,
+                "pending": len(pending),
+                "total": total,
+                "round": round_num,
+                "companion": companion_short,
+            }
+        )
+        return await _serve_web_until_stop(web_ctx, poll_exit)
+    return poll_exit
 
 
 def add_companion_args(parser: argparse.ArgumentParser) -> None:
@@ -3051,6 +3175,32 @@ def main(argv: list[str] | None = None) -> int:
         "--quiet",
         action="store_true",
         help="No per-step progress (only node lines and OK/unreachable)",
+    )
+    parser.add_argument(
+        "--no-web",
+        action="store_true",
+        help="Disable local web UI (poll and exit)",
+    )
+    parser.add_argument(
+        "--web-only",
+        action="store_true",
+        help="Serve book UI without polling radios",
+    )
+    parser.add_argument(
+        "--bind",
+        default="127.0.0.1",
+        help="Web UI bind address (default: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8787,
+        help="Web UI port (default: 8787)",
+    )
+    parser.add_argument(
+        "--open",
+        action="store_true",
+        help="Open browser to the web UI on start",
     )
     args = parser.parse_args(argv)
 

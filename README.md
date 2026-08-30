@@ -9,7 +9,8 @@ already contains `nodes.yaml`, that is used.
 ```bash
 uv sync
 export ENVYBOT_HOME=/path/to/book
-./envybot monitor
+./envybot monitor          # poll + live map at http://127.0.0.1:8787/
+./envybot monitor --web-only
 ./envybot cmd me0016 ver
 ./envybot onboard
 ```
@@ -18,7 +19,7 @@ export ENVYBOT_HOME=/path/to/book
 
 | Command | Manual | What it does |
 |---------|--------|--------------|
-| [`monitor`](docs/commands/monitor.md) | [docs/commands/monitor.md](docs/commands/monitor.md) | Poll deployed MeshCore units over LoRa. Write last-seen into the book. |
+| [`monitor`](docs/commands/monitor.md) | [docs/commands/monitor.md](docs/commands/monitor.md) | Poll deployed MeshCore units over LoRa. Live map UI at `:8787` by default. |
 | [`cmd`](docs/commands/cmd.md) | [docs/commands/cmd.md](docs/commands/cmd.md) | Run remote MeshCore CLI on one unit (one-shot or REPL). |
 | [`onboard`](docs/commands/onboard.md) | [docs/commands/onboard.md](docs/commands/onboard.md) | USB text-CLI onboard of a repeater under test. |
 

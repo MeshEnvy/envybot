@@ -6,6 +6,7 @@ Fleet CLI for MeshEnvy radios. Read [`MEMORY.md`](MEMORY.md) first.
 uv sync
 export ENVYBOT_HOME=/path/to/book
 ./envybot monitor
+./envybot monitor --web-only   # browse book without radio
 ./envybot onboard
 ```
 

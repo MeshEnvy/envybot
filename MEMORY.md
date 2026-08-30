@@ -22,6 +22,7 @@ Public fleet CLI. Book (identity, creds, last-seen) is private and outside this 
 | `src/envybot/selector.py` | Book selector resolution for `cmd` |
 | `docs/commands/` | Per-command manuals |
 | `src/envybot/commands/onboard.py` | USB repeater text CLI onboard |
+| `src/envybot/web/` | Monitor localhost UI (`snapshot`, `hub`, `server`, ESM static) |
 
 ## Contract
 
@@ -35,5 +36,9 @@ Public fleet CLI. Book (identity, creds, last-seen) is private and outside this 
 ## Desk radios
 
 BLE companion for `monitor`. USB DUT for `onboard`. Separate USB OTA repeater for `motatool serve`. No combined hub firmware.
+
+- **Monitor UI:** `./envybot monitor` serves `127.0.0.1:8787` by default (map +
+  live SSE). `--web-only` to browse the book without a radio. `--no-web` for
+  headless poll. Never expose secrets to the browser.
 
 Last updated: 2026-08-29

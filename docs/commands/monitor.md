@@ -30,6 +30,23 @@ reachability as unknown when a successful stamp exists.
 
 Retries unreachable units until every target succeeds, or you hit Ctrl+C.
 
+By default, monitor also serves a **local web UI** at `http://127.0.0.1:8787/`
+with a live map and unit list (SSE updates as polls land). The UI stays up
+after polling until Ctrl+C. Secrets never leave the book. Use `--no-web` for
+CLI-only poll-and-exit.
+
+## Web UI flags
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--no-web` | off | Poll and exit (no local UI) |
+| `--web-only` | off | Serve book UI without polling radios |
+| `--bind HOST` | `127.0.0.1` | Web bind address |
+| `--port N` | `8787` | Web port |
+| `--open` | off | Open browser on start |
+
+`--web-only` watches `nodes.yaml` and refreshes the map when the file changes.
+
 ## Eligibility
 
 Skips decommissioned, retired, missing pubkey, missing admin password, and
@@ -90,6 +107,8 @@ need a different file.
 
 ```bash
 ./envybot monitor
+./envybot monitor --web-only
+./envybot monitor --no-web
 ./envybot monitor --probe
 ./envybot monitor --transport ble
 ./envybot monitor --unit me0016 --force
