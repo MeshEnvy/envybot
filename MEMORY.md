@@ -17,6 +17,7 @@ Public fleet CLI. Book (identity, creds, last-seen) is private and outside this 
 | `./envybot` | Root shim (reexec `.venv`) |
 | `src/envybot/cli.py` | Dispatcher; `COMMANDS` registry |
 | `src/envybot/book.py` | Resolve book dir; never write secrets here |
+| `src/envybot/position.py` | Book GPS (node lat/lon, else site loc). Not device. |
 | `src/envybot/commands/monitor.py` | Companion LoRa poll → `nodes.yaml` |
 | `src/envybot/commands/cmd.py` | Remote MeshCore CLI over companion |
 | `src/envybot/selector.py` | Book selector resolution for `cmd` |
@@ -28,6 +29,8 @@ Public fleet CLI. Book (identity, creds, last-seen) is private and outside this 
 
 - Greenfield: no `./fleet` shim, no push stub, no dual config.
 - `nodes.yaml` is SoT for last-seen / fw / battery. Cite `*_pulled_at`.
+- GPS is book-canonical (`lat`/`lon`, else `sites.yaml` loc). `monitor` SETs
+  the radio. Never GET device coords into the book.
 - Do not copy passwords or keypairs into this repo.
 - Not mesh-api. Not the sidecar mux (`mesh-sidecar-daemon`).
 - Daemon (`envybot serve`, N-radio mux) is later. `mcmt-gateway` stays the burn bridge.

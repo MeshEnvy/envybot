@@ -21,12 +21,15 @@ That is [`onboard`](onboard.md).
    path hash, dutycycle) run once unless `--force` or `--group`.
 5. Periodic groups (status, telemetry, neighbors, acl) re-run when older than
    `--min-interval` (default 24h).
-6. Radio policy: SET `path.hash.mode 1` and `dutycycle 100`. Stamp only on OK.
+6. Radio policy: SET `path.hash.mode 1`, `dutycycle 100`, and book `lat`/`lon`.
+   Stamp only on OK. Position is never read from the radio.
 7. Clock: if live login RTC is unset or behind the host, SET
    `time <host epoch>`. Does not run `clock sync`.
 
-`nodes.yaml` is the last-known SoT. Cite `*_pulled_at`. Do not treat
-reachability as unknown when a successful stamp exists.
+`nodes.yaml` is the last-known SoT for pulled state. Cite `*_pulled_at`.
+GPS is book-canonical (`lat`/`lon`, else the node's `site` loc). Monitor
+pushes those coords. Do not treat reachability as unknown when a successful
+stamp exists.
 
 Retries unreachable units until every target succeeds, or you hit Ctrl+C.
 
@@ -78,7 +81,7 @@ Meshtastic rows (no admin password) are not polled.
 | `--min-interval SEC` | `86400` | Periodic group freshness |
 | `--force` | | Every group on every matching unit |
 | `--live` | | Periodic groups only (plus incomplete inventory) |
-| `--group NAME` | | Force one query (repeatable). Names: `firmware`, `bootloader`, `name`, `lat`, `lon`, `advert`, `flood_advert`, `path_hash`, `dutycycle`, `acl`, `status`, `telemetry`, `neighbors` |
+| `--group NAME` | | Force one query (repeatable). `lat`/`lon` SET book coords. Names: `firmware`, `bootloader`, `name`, `lat`, `lon`, `advert`, `flood_advert`, `path_hash`, `dutycycle`, `acl`, `status`, `telemetry`, `neighbors` |
 | `--unit KEY` | | Only this book key (repeatable) |
 | `--skip KEY` | | Exclude this key (repeatable) |
 | `--all-units` | | Include `site: null` |
@@ -119,7 +122,8 @@ need a different file.
 
 ## Writes
 
-- `nodes.yaml` last-seen fields + `*_pulled_at` (unless `--dry-run`)
+- `nodes.yaml` last-seen fields + `*_pulled_at` (unless `--dry-run`).
+  `lat`/`lon` are book values that were SET, not device reads.
 - `data/fleet/polls.jsonl` line with `event: monitor`
 
 Does not run ad-hoc remote CLI. Use [`cmd`](cmd.md).

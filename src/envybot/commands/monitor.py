@@ -3,10 +3,10 @@
 
 Requires a local MeshCore companion (BLE, USB serial, or TCP) with mesh reach to targets.
 Full poll flow: admin login (RTC from ``LOGIN_SUCCESS``) → binary status → authed
-CLI/binary queries as due (name, lat, lon, advert, flood_advert, path_hash,
+CLI/binary queries as due (name, advert, flood_advert, path_hash,
 dutycycle, firmware, bootloader, telemetry, neighbors, acl). Clock sync via
-mesh CLI when skew exceeds threshold. path_hash / dutycycle are SET to fleet
-radio policy (2-byte, 100%); an OK reply stamps them.
+mesh CLI when skew exceeds threshold. path_hash / dutycycle / lat / lon are SET
+to book policy; an OK reply stamps them. GPS is never pulled from the radio.
 
 ``nodes.yaml`` holds last-known state as flat fields with a ``*_pulled_at``
 timestamp per query. Mesh ``name`` overwrites the registry ``name`` on pull.
@@ -22,13 +22,13 @@ All fleet queries run post-login over authed CLI or binary requests. Anonymous
 requests are not used.
 
 By default, inventory queries (firmware, bootloader, name, lat, lon, advert,
-flood_advert, path_hash, dutycycle) are pulled once and then skipped; periodic
+flood_advert, path_hash, dutycycle) run once and then skip; periodic
 queries (status, telemetry, neighbors, acl) re-pull when older than
-``--min-interval`` (default 24h). ``path_hash`` and ``dutycycle`` stay due until
-``set path.hash.mode 1`` and ``set dutycycle 100`` return OK. Use ``--force``
-for everything, ``--live`` for periodic only, ``--group NAME`` to refresh
-specific queries. ``--unit`` filters targets only (does not imply ``--force``).
-Each query has its own ``*_pulled_at``.
+``--min-interval`` (default 24h). ``path_hash``, ``dutycycle``, ``lat``, and
+``lon`` stay due until SET returns OK. Book lat/lon (else site loc) is the
+position SoT. Use ``--force`` for everything, ``--live`` for periodic only,
+``--group NAME`` to refresh specific queries. ``--unit`` filters targets only
+(does not imply ``--force``). Each query has its own ``*_pulled_at``.
 
 Login: always send admin login (guest-or-admin ACL session). Do not skip because
 the companion is already in stored ACL. Binary STATUS has uptime, not wall clock.
@@ -70,6 +70,8 @@ from pathlib import Path
 
 from ruamel.yaml import YAML
 
+from envybot.position import book_coord, load_sites
+
 try:
     from meshcore import EventType, MeshCore
     from meshcore.parsing import parse_acl
@@ -92,7 +94,8 @@ NODES_YAML_HEADER = (
     "# One entry per physical unit (ME####): identity, credentials, deployment site,\n"
     "# and last-known mesh state (flat fields + per-query *_pulled_at unix epochs).\n"
     "# name: on-device adv name (overwritten by envybot monitor). owner: owner.info string.\n"
-    "# lat/lon, node_clock, status, telemetry: last successful monitor values.\n"
+    "# lat/lon: book-canonical GPS (from sites.yaml / onX). Monitor SETs the radio;\n"
+    "#   never overwrites these from a GET. node_clock, status, telemetry: last pull.\n"
     "# advert_interval_min, flood_advert_interval_h: local (minutes) and flood (hours) cadence.\n"
     "# path_hash_mode: MeshCore advert path hash (0=1-byte, 1=2-byte, 2=3-byte).\n"
     "# dutycycle: transmit duty cycle percent (100 = no airtime cap).\n"
@@ -103,12 +106,15 @@ NODES_YAML_HEADER = (
     "# neighbors_pulled_at.\n"
     "# Monitor policy (envybot monitor): one stamp per query; inventory once unless\n"
     "# --force/--group; status, telemetry, neighbors, acl periodic (--min-interval, default 24h).\n"
-    "# Radio policy: path.hash.mode=1 (2-byte) and dutycycle=100. Monitor SETs; OK stamps.\n"
+    "# Radio policy: path.hash.mode=1 (2-byte), dutycycle=100, lat/lon from book.\n"
+    "#   Monitor SETs; OK stamps.\n"
     "# Login: always send admin login (live RTC + path). STATUS is uptime, not clock.\n"
     "# firmware_platform: meshcore | meshtastic (no admin_password => meshtastic).\n"
     "# site: sites.yaml slug, or null while in the bag / decommissioned.\n"
     "# decommissioned: unix epoch when unit was pulled from service (null = active inventory).\n"
-    "# SoT for last-known reachability / fw / battery / GPS: cite *_pulled_at.\n"
+    "# SoT for last-known reachability / fw / battery: cite *_pulled_at.\n"
+    "# GPS SoT is the book lat/lon (or site loc). lat_pulled_at / lon_pulled_at =\n"
+    "#   last successful SET, not a device read.\n"
     "# Stale stamp = refresh via ./envybot monitor. Never copy secrets\n"
     "# (passwords, keypairs) into this repo or other public trees.\n"
     "# next_unit: next free ME number (never reuse; onboard allocates and bumps).\n"
@@ -149,9 +155,9 @@ DUTYCYCLE_PCT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 # - One query, one stamp. Do not bundle independent CLI/binary sends
 #   (ver vs bootloader.ver, lat vs lon, advert vs flood advert).
 # - Radio policy (US field repeaters): path.hash.mode=1 (2-byte advert
-#   hashes; firmware sendFlood uses mode+1) and dutycycle=100. SET only;
-#   stamp on OK (dutycycle reply includes the percent). Unknown CLI
-#   (pre-1.14 / no dutycycle) is a gap, not a stamp.
+#   hashes; firmware sendFlood uses mode+1), dutycycle=100, and GPS from
+#   the book. SET only; stamp on OK. Never GET lat/lon into nodes.yaml.
+#   Unknown CLI (pre-1.14 / no dutycycle) is a gap, not a stamp.
 # - --unit filters targets only; it does not imply --force.
 
 
@@ -645,7 +651,11 @@ def _stamp_and_value(node: dict[str, Any], stamp_key: str, value_key: str) -> bo
     return node.get(stamp_key) is not None and node.get(value_key) is not None
 
 
-def fleet_group_complete(node: dict[str, Any], group: str) -> bool:
+def fleet_group_complete(
+    node: dict[str, Any],
+    group: str,
+    sites: dict[str, dict[str, Any]] | None = None,
+) -> bool:
     if group == "firmware":
         return _firmware_pulled_at(node) is not None and bool(node.get("firmware_version"))
     if group == "bootloader":
@@ -653,9 +663,13 @@ def fleet_group_complete(node: dict[str, Any], group: str) -> bool:
     if group == "name":
         return node.get("name_pulled_at") is not None
     if group == "lat":
-        return _stamp_and_value(node, "lat_pulled_at", "lat")
+        if book_coord(node, "lat", sites) is None:
+            return True
+        return node.get("lat_pulled_at") is not None
     if group == "lon":
-        return _stamp_and_value(node, "lon_pulled_at", "lon")
+        if book_coord(node, "lon", sites) is None:
+            return True
+        return node.get("lon_pulled_at") is not None
     if group == "telemetry":
         return _stamp_and_value(node, "telemetry_pulled_at", "telemetry")
     if group == "status":
@@ -691,13 +705,16 @@ def fleet_group_is_due(
     *,
     policy: PullPolicy,
     now: int,
+    sites: dict[str, dict[str, Any]] | None = None,
 ) -> bool:
     spec = PULL_GROUPS[group]
+    if group in ("lat", "lon") and book_coord(node, group, sites) is None:
+        return False
     if policy.force or group in policy.force_groups:
         return True
     if policy.live_only and spec.mode != "periodic":
         return False
-    if not fleet_group_complete(node, group):
+    if not fleet_group_complete(node, group, sites):
         return True
     if spec.mode == "inventory":
         return False
@@ -710,22 +727,33 @@ def fleet_group_is_due(
     return (now - int(stamp)) >= interval
 
 
-def fleet_due_groups(node: dict[str, Any], *, policy: PullPolicy, now: int) -> list[str]:
+def fleet_due_groups(
+    node: dict[str, Any],
+    *,
+    policy: PullPolicy,
+    now: int,
+    sites: dict[str, dict[str, Any]] | None = None,
+) -> list[str]:
     due = [
         group
         for group in PULL_GROUP_ORDER
-        if fleet_group_is_due(node, group, policy=policy, now=now)
+        if fleet_group_is_due(node, group, policy=policy, now=now, sites=sites)
     ]
     return due
 
 
-def _group_need_note(node: dict[str, Any], group: str) -> str:
-    if fleet_group_complete(node, group):
+def _group_need_note(
+    node: dict[str, Any],
+    group: str,
+    sites: dict[str, dict[str, Any]] | None = None,
+) -> str:
+    if fleet_group_complete(node, group, sites):
         return "refresh"
-    if group == "lat" and node.get("lat") is not None and float(node["lat"]) == 0.0:
-        return "GPS 0"
-    if group == "lon" and node.get("lon") is not None and float(node["lon"]) == 0.0:
-        return "GPS 0"
+    if group in ("lat", "lon"):
+        want = book_coord(node, group, sites)
+        if want is None:
+            return "no book position"
+        return f"push {want:.5f}"
     if group == "path_hash" and node.get("path_hash_mode") is not None:
         return f"mode {node['path_hash_mode']} (want {FLEET_PATH_HASH_MODE})"
     if group == "dutycycle" and node.get("dutycycle") is not None:
@@ -739,9 +767,10 @@ def format_pull_plan(
     *,
     policy: PullPolicy,
     now: int,
+    sites: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[str, str]:
     """Human plan for one unit: what this session will fetch vs skip."""
-    need = ", ".join(f"{g} ({_group_need_note(node, g)})" for g in due_groups) or "none"
+    need = ", ".join(f"{g} ({_group_need_note(node, g, sites)})" for g in due_groups) or "none"
     skip_inv: list[str] = []
     skip_fresh: list[str] = []
     for group in PULL_GROUP_ORDER:
@@ -761,9 +790,12 @@ def format_pull_plan(
     return need, skip
 
 
-def fleet_incomplete_groups(node: dict[str, Any]) -> list[str]:
+def fleet_incomplete_groups(
+    node: dict[str, Any],
+    sites: dict[str, dict[str, Any]] | None = None,
+) -> list[str]:
     """Groups missing data regardless of pull policy."""
-    return [group for group in PULL_GROUP_ORDER if not fleet_group_complete(node, group)]
+    return [group for group in PULL_GROUP_ORDER if not fleet_group_complete(node, group, sites)]
 
 
 def gaps_from_poll_result(res: PollResult) -> list[str]:
@@ -803,12 +835,13 @@ def partition_due_targets(
     *,
     policy: PullPolicy,
     now: int,
+    sites: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[RouterTarget], list[RouterTarget]]:
     due: list[RouterTarget] = []
     skipped: list[RouterTarget] = []
     for target in targets:
         node = nodes.get(target.key) or {}
-        target.due_groups = fleet_due_groups(node, policy=policy, now=now)
+        target.due_groups = fleet_due_groups(node, policy=policy, now=now, sites=sites)
         if target.due_groups:
             due.append(target)
         else:
@@ -1213,6 +1246,44 @@ async def set_dutycycle_policy(
         return confirmed
     log.step(f"dutycycle set OK ({want}%)")
     return FLEET_DUTYCYCLE_PCT
+
+
+def format_book_coord(value: float) -> str:
+    return f"{value:.6f}"
+
+
+async def set_book_coord(
+    client: MeshCore,
+    target: RouterTarget,
+    axis: str,
+    want: float,
+    *,
+    cmd_timeout: float,
+    attempts: int,
+    log: PollLog,
+    session: FleetSession | None = None,
+) -> float | None:
+    """``set lat|lon <book>``. Stamp on OK. Never GET."""
+    raw = await send_cmd_sync(
+        client,
+        target,
+        f"set {axis} {format_book_coord(want)}",
+        timeout=cmd_timeout,
+        attempts=attempts,
+        log=log,
+        session=session,
+    )
+    if raw is None:
+        log.step(f"{axis}: no response")
+        return None
+    if cli_unknown_reply(raw):
+        log.step(f"{axis}: unsupported")
+        return None
+    if cli_error_reply(raw) or not cli_set_ok(raw):
+        log.step(f"{axis}: set failed ({raw.strip()[:40]})")
+        return None
+    log.step(f"{axis} set OK ({want:.5f})")
+    return want
 
 
 async def pull_repeater_status(
@@ -1904,6 +1975,7 @@ async def poll_one(
     attempts: int = DEFAULT_MESH_ATTEMPTS,
     session: FleetSession | None = None,
     log: PollLog | None = None,
+    sites: dict[str, dict[str, Any]] | None = None,
 ) -> PollResult:
     log = log or PollLog()
     stat_errors: list[str] = []
@@ -2108,32 +2180,40 @@ async def poll_one(
                     log.step(f"bootloader unknown ({raw_bl.strip()[:60]})")
 
         if "lat" in polled:
-            raw_lat = await send_cmd_sync(
-                client, target, "get lat", timeout=cmd_timeout, attempts=attempts, log=log, session=session
-            )
-            lat = parse_coord(raw_lat)
-            if raw_lat is None:
-                stat_errors.append("lat: no response")
-                log.step("lat: no response")
-            elif lat is None:
-                stat_errors.append("lat: unparsed")
-                log.step(f"lat: unparsed {raw_lat.strip()[:40]!r}")
+            want_lat = book_coord(node, "lat", sites)
+            if want_lat is None:
+                log.step("lat: skipped (no book position)")
             else:
-                log.step(f"lat OK ({lat:.5f})")
+                lat = await set_book_coord(
+                    client,
+                    target,
+                    "lat",
+                    want_lat,
+                    cmd_timeout=cmd_timeout,
+                    attempts=attempts,
+                    log=log,
+                    session=session,
+                )
+                if lat is None:
+                    stat_errors.append("lat: set failed")
 
         if "lon" in polled:
-            raw_lon = await send_cmd_sync(
-                client, target, "get lon", timeout=cmd_timeout, attempts=attempts, log=log, session=session
-            )
-            lon = parse_coord(raw_lon)
-            if raw_lon is None:
-                stat_errors.append("lon: no response")
-                log.step("lon: no response")
-            elif lon is None:
-                stat_errors.append("lon: unparsed")
-                log.step(f"lon: unparsed {raw_lon.strip()[:40]!r}")
+            want_lon = book_coord(node, "lon", sites)
+            if want_lon is None:
+                log.step("lon: skipped (no book position)")
             else:
-                log.step(f"lon OK ({lon:.5f})")
+                lon = await set_book_coord(
+                    client,
+                    target,
+                    "lon",
+                    want_lon,
+                    cmd_timeout=cmd_timeout,
+                    attempts=attempts,
+                    log=log,
+                    session=session,
+                )
+                if lon is None:
+                    stat_errors.append("lon: set failed")
 
         if "advert" in polled:
             raw_advert = await send_cmd_sync(
@@ -2824,9 +2904,10 @@ async def run(args: argparse.Namespace) -> int:
     )
     nodes_doc = load_nodes_doc(args.nodes)
     nodes = nodes_doc.get("nodes") or {}
+    sites = load_sites(Path(args.nodes).parent / "sites.yaml")
     now = int(time.time())
     targets, skipped = partition_due_targets(
-        all_targets, nodes, policy=policy, now=now
+        all_targets, nodes, policy=policy, now=now, sites=sites
     )
     if skipped and not args.quiet:
         interval_label = format_interval(policy.min_interval)
@@ -2918,6 +2999,7 @@ async def run(args: argparse.Namespace) -> int:
                         target.due_groups,
                         policy=policy,
                         now=int(time.time()),
+                        sites=sites,
                     )
                     print(f"  need: {need}")
                     print(f"  skip: {skip_plan}")
@@ -2949,6 +3031,7 @@ async def run(args: argparse.Namespace) -> int:
                     attempts=args.attempts,
                     session=session,
                     log=log,
+                    sites=sites,
                 )
                 if res.ok:
                     succeeded[target.key] = res
@@ -2965,7 +3048,7 @@ async def run(args: argparse.Namespace) -> int:
                         next_pending.append(target)
                     else:
                         target.due_groups = fleet_due_groups(
-                            fresh_node, policy=policy, now=int(time.time())
+                            fresh_node, policy=policy, now=int(time.time()), sites=sites
                         )
                     if res.name:
                         target.name = res.name
@@ -3167,7 +3250,7 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         choices=PULL_GROUP_ORDER,
         metavar="GROUP",
-        help="Force refresh this query (repeatable: firmware, bootloader, name, lat, lon, advert, flood_advert, path_hash, dutycycle, acl, status, telemetry, neighbors)",
+        help="Force this query (repeatable). lat/lon SET book coords; path_hash/dutycycle SET policy",
     )
     parser.add_argument("--dry-run", action="store_true", help="Poll but do not write nodes.yaml")
     parser.add_argument(

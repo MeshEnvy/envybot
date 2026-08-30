@@ -7,15 +7,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ruamel.yaml import YAML
-
 from envybot.commands.monitor import load_nodes_doc, normalize_fleet_node
+from envybot.position import load_sites, resolve_book_position
 
 SECRET_KEY_RE = re.compile(r"(password|secret)", re.I)
 PULLED_AT_SUFFIX = "_pulled_at"
-
-ONBOARD_LAT = 14.009295
-ONBOARD_LON = 120.996018
 
 DEFAULT_STALE_SECS = 86400.0
 
@@ -26,29 +22,31 @@ def is_secret_key(key: str) -> bool:
     return bool(SECRET_KEY_RE.search(key))
 
 
-def is_placeholder_gps(lat: Any, lon: Any) -> bool:
-    if lat is None or lon is None:
-        return False
-    try:
-        la = float(lat)
-        lo = float(lon)
-    except (TypeError, ValueError):
-        return False
-    # Device often reports 0,0 or a zero component when GPS is unset.
-    if la == 0.0 or lo == 0.0:
-        return True
-    if abs(la - ONBOARD_LAT) < 0.001 and abs(lo - ONBOARD_LON) < 0.001:
-        return True
-    return False
+def lookup_site_name(
+    site_slug: Any,
+    sites: dict[str, dict[str, Any]],
+) -> str | None:
+    """Pretty site name when the node is bound. Slug if the site has no name."""
+    if not isinstance(site_slug, str) or not site_slug.strip():
+        return None
+    site = sites.get(site_slug)
+    if isinstance(site, dict):
+        name = site.get("name")
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return site_slug
 
 
-def load_sites(sites_path: Path) -> dict[str, dict[str, Any]]:
-    if not sites_path.is_file():
-        return {}
-    yaml = YAML(typ="safe")
-    doc = yaml.load(sites_path.read_text(encoding="utf-8")) or {}
-    sites = doc.get("sites") or {}
-    return {str(k): v for k, v in sites.items() if isinstance(v, dict)}
+def unit_label(
+    *,
+    key: str,
+    node: dict[str, Any],
+    sites: dict[str, dict[str, Any]],
+) -> str:
+    site_name = lookup_site_name(node.get("site"), sites)
+    if site_name:
+        return site_name
+    return str(node.get("unit_id") or key.upper())
 
 
 def last_heard(node: dict[str, Any]) -> int | None:
@@ -99,29 +97,7 @@ def resolve_position(
     node: dict[str, Any],
     sites: dict[str, dict[str, Any]],
 ) -> dict[str, Any] | None:
-    lat = node.get("lat")
-    lon = node.get("lon")
-    if lat is not None and lon is not None and not is_placeholder_gps(lat, lon):
-        try:
-            return {"lat": float(lat), "lon": float(lon), "source": "node"}
-        except (TypeError, ValueError):
-            pass
-    site_slug = node.get("site")
-    if site_slug and isinstance(site_slug, str):
-        site = sites.get(site_slug)
-        if site:
-            loc = site.get("loc")
-            if isinstance(loc, (list, tuple)) and len(loc) >= 2:
-                try:
-                    return {
-                        "lat": float(loc[0]),
-                        "lon": float(loc[1]),
-                        "source": "site",
-                        "site_name": site.get("name"),
-                    }
-                except (TypeError, ValueError):
-                    pass
-    return None
+    return resolve_book_position(node, sites)
 
 
 def build_pubkey_index(nodes: dict[str, Any]) -> dict[str, str]:
@@ -143,6 +119,7 @@ def sanitize_neighbors(
     *,
     pubkey_index: dict[str, str],
     nodes: dict[str, Any],
+    sites: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
@@ -165,6 +142,9 @@ def sanitize_neighbors(
             row["unit_key"] = resolved
             row["unit_id"] = peer.get("unit_id")
             row["name"] = peer.get("name")
+            row["site"] = peer.get("site")
+            row["site_name"] = lookup_site_name(peer.get("site"), sites)
+            row["label"] = unit_label(key=resolved, node=peer, sites=sites)
         out.append(row)
     return out
 
@@ -192,13 +172,16 @@ def sanitize_unit(
     status = node.get("status") if isinstance(node.get("status"), dict) else None
     acl = node.get("acl")
     acl_count = len(acl) if isinstance(acl, list) else None
+    site_name = lookup_site_name(node.get("site"), sites)
 
     unit: dict[str, Any] = {
         "key": key,
         "unit_id": node.get("unit_id") or key.upper(),
         "name": node.get("name"),
+        "label": unit_label(key=key, node=node, sites=sites),
         "owner": node.get("owner"),
         "site": node.get("site"),
+        "site_name": site_name,
         "hardware": node.get("hardware"),
         "notes": node.get("notes"),
         "decommissioned": node.get("decommissioned"),
@@ -216,6 +199,7 @@ def sanitize_unit(
             node.get("neighbors"),
             pubkey_index=pubkey_index,
             nodes=nodes,
+            sites=sites,
         ),
         "neighbor_count": len(node.get("neighbors") or []) if isinstance(node.get("neighbors"), list) else 0,
         "acl_count": acl_count,
