@@ -37,8 +37,8 @@ _STRONG = {
 }
 
 
-def _id(node, sites=None, doc=None):
-    return profile_id(node, sites, doc=doc)
+def _id(node, sites=None, doc=None, keys=None):
+    return profile_id(node, sites, doc=doc, keys=keys)
 
 
 class ProfileTests(unittest.TestCase):
@@ -68,16 +68,20 @@ class ProfileTests(unittest.TestCase):
         self.assertNotEqual(_id(a), _id({**_STRONG, "path_hash_mode": 0}))
 
     def test_acl_change_changes_hash(self) -> None:
-        node = {**_STRONG, "admin1_pubkey": "cc" * 32}
-        empty = _id(node, doc={"nodes": {"me0001": node}})
+        node = {**_STRONG}
+        empty = _id(node, doc={"nodes": {"me0001": node}}, keys={})
         with_trust = _id(
             node,
-            doc={
-                "nodes": {"me0001": node},
-                "trust": {"companions": [{"pubkey": "dd" * 32}]},
-            },
+            doc={"nodes": {"me0001": node}, "trust": {"admin": ["ben"]}},
+            keys={"ben": ["dd" * 32]},
         )
         self.assertNotEqual(empty, with_trust)
+
+    def test_admin1_does_not_change_hash(self) -> None:
+        node = {**_STRONG, "admin1_pubkey": "cc" * 32}
+        a = _id(node, doc={"trust": {"admin": ["ben"]}}, keys={"ben": ["aa" * 32]})
+        b = _id(_STRONG, doc={"trust": {"admin": ["ben"]}}, keys={"ben": ["aa" * 32]})
+        self.assertEqual(a, b)
 
     def test_public_gps_in_parts(self) -> None:
         node = {**_STRONG, "public": True, "unit_id": "ME0003"}

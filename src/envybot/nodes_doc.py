@@ -52,8 +52,8 @@ NODES_YAML_HEADER = (
     "# name: book radio name (later a codename). Pushed to the radio only when\n"
     "#   public: true. Default apply SETs Repeater + 0,0 + adverts off.\n"
     "# path_hash_mode / dutycycle: radio prefs (apply default 1 / 100).\n"
-    "# trust.companions: companion pubkeys for field ACLs.\n"
-    "# admin1_pubkey: optional per-unit extra ACL key.\n"
+    "# trust.admin / trust.guest: people from keys.yaml (MeshCore ACL).\n"
+    "# admin1_pubkey / admin1_secret: Meshtastic remote-admin. Not MC ACL.\n"
     "# firmware_platform: meshcore | meshtastic.\n"
     "# decommissioned: unix epoch when pulled from service.\n"
     "# next_unit: next free ME number (never reuse).\n"
@@ -183,64 +183,6 @@ def migrate_desired(doc: dict[str, Any], sites: dict[str, dict[str, Any]]) -> bo
             node.pop("name", None)
             changed = True
     return changed
-
-
-def book_companion_pubkeys(doc: dict[str, Any]) -> list[str]:
-    """Companion pubkeys from the book-level trust allowlist."""
-    trust = doc.get("trust")
-    raw: list[Any] = []
-    if isinstance(trust, dict):
-        raw = trust.get("companions") or []
-    elif isinstance(doc.get("authorized"), list):
-        raw = doc["authorized"]
-    out: list[str] = []
-    for item in raw:
-        if isinstance(item, str):
-            pk = item.strip().lower()
-        elif isinstance(item, dict):
-            pk = str(item.get("pubkey") or item.get("identity_pubkey") or "").strip().lower()
-        else:
-            continue
-        if HEX_PUBKEY_RE.match(pk):
-            out.append(pk)
-    return out
-
-
-def extra_admin_pubkeys(node: dict[str, Any]) -> list[str]:
-    out: list[str] = []
-    for key in ("admin1_pubkey", "admin_pubkey"):
-        val = node.get(key)
-        if isinstance(val, str) and HEX_PUBKEY_RE.match(val.strip()):
-            out.append(val.strip().lower())
-    return out
-
-
-def desired_acl_pubkeys(doc: dict[str, Any], node: dict[str, Any]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for pk in book_companion_pubkeys(doc) + extra_admin_pubkeys(node):
-        if pk not in seen:
-            seen.add(pk)
-            ordered.append(pk)
-    return ordered
-
-
-def companion_in_desired_acl(
-    doc: dict[str, Any],
-    node: dict[str, Any],
-    companion: str | None,
-) -> bool:
-    """True when the live companion is already on this unit's book ACL."""
-    if not companion:
-        return False
-    want = companion.strip().lower()
-    if len(want) < 12:
-        return False
-    prefix = want[:12]
-    for pk in desired_acl_pubkeys(doc, node):
-        if pk.startswith(prefix) or want.startswith(pk[:12]):
-            return True
-    return False
 
 
 def load_sites_for_book(nodes_path: Path) -> dict[str, dict[str, Any]]:

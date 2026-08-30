@@ -12,7 +12,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   privacy-mask apply unless `public: true`.
 - `./envybot trust` imports site name + resolved loc + pubkey as companion
   contacts (bag/bench included; name is site `name`, else `unit_id`).
-  Optional `--export`.
+  Stale last-heard advert names are removed and re-added. Optional
+  `--export`. `trust ben` / `bill:guest` writes `keys.yaml` and book
+  `trust` roles. Admin tags password-login the fleet (`--unit` to
+  scope a sealed box).
+- Book `keys.yaml` maps people to companion pubkeys. Fleet apply and
+  USB onboard reconcile MeshCore ACL from `trust.admin` (perm 3) and
+  `trust.guest` (perm 1), and drop unknown heard keys.
 - `data/fleet/history.sqlite` is the observed store (last-seen, graphs,
   apply log, `cmd` audit).
 

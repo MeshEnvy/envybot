@@ -8,6 +8,7 @@ from pathlib import Path
 ENV_HOME = "ENVYBOT_HOME"
 NODES_NAME = "nodes.yaml"
 SITES_NAME = "sites.yaml"
+KEYS_NAME = "keys.yaml"
 
 
 class BookError(SystemExit):
@@ -57,3 +58,7 @@ def nodes_path(book: Path) -> Path:
 
 def sites_path(book: Path) -> Path:
     return book / SITES_NAME
+
+
+def keys_path(book: Path) -> Path:
+    return book / KEYS_NAME

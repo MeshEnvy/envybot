@@ -8,9 +8,14 @@ import sqlite3
 from typing import Any
 
 from envybot.history import get_last_seen, insert_apply, last_ok_apply
+from envybot.keys_doc import (
+    UnknownPerson,
+    grants_payload,
+    plan_acl_ops,
+    resolve_node_acl,
+)
 from envybot.nodes_doc import (
     MASK_NAME,
-    desired_acl_pubkeys,
     is_public,
     write_nodes_doc,
 )
@@ -31,6 +36,10 @@ from envybot.radio import (
     cli_error_reply,
     cli_set_ok,
     maybe_sync_repeater_clock,
+    mesh_wait_seconds,
+    normalize_acl_payload,
+    reset_to_flood,
+    retry_binary_req,
     send_cmd_sync,
     set_book_coord,
     set_dutycycle_policy,
@@ -42,7 +51,6 @@ try:
 except ImportError:  # pragma: no cover
     MeshCore = Any  # type: ignore[misc,assignment]
 
-PERM_ACL_ADMIN = 3
 PROFILE_ID_VERSION = 1
 
 
@@ -80,6 +88,7 @@ def profile_parts(
     sites: dict[str, dict[str, Any]] | None,
     *,
     doc: dict[str, Any] | None = None,
+    keys: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """Canonical desired SET payload. Secrets are tokens, not plaintext."""
     public = is_public(node)
@@ -95,8 +104,12 @@ def profile_parts(
         lat, lon = 0.0, 0.0
         advert, flood = 0, 0
     pk = str(node.get("identity_pubkey") or "").strip().lower()
+    try:
+        grants = resolve_node_acl(doc or {}, node, keys or {})
+    except UnknownPerson:
+        grants = []
     return {
-        "acl": desired_acl_pubkeys(doc or {}, node),
+        "acl": grants_payload(grants),
         "admin": password_token(node.get("admin_password")),
         "advert": advert,
         "dutycycle": desired_dutycycle(node),
@@ -116,8 +129,13 @@ def profile_id(
     sites: dict[str, dict[str, Any]] | None,
     *,
     doc: dict[str, Any] | None = None,
+    keys: dict[str, list[str]] | None = None,
 ) -> str:
-    raw = json.dumps(profile_parts(node, sites, doc=doc), sort_keys=True, separators=(",", ":"))
+    raw = json.dumps(
+        profile_parts(node, sites, doc=doc, keys=keys),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     digest = hashlib.sha256(raw.encode()).hexdigest()[:16]
     return f"v{PROFILE_ID_VERSION}:{digest}"
 
@@ -149,10 +167,11 @@ def apply_is_due(
     *,
     force: bool = False,
     doc: dict[str, Any] | None = None,
+    keys: dict[str, list[str]] | None = None,
 ) -> bool:
     if force:
         return True
-    desired = profile_id(node, sites, doc=doc)
+    desired = profile_id(node, sites, doc=doc, keys=keys)
     if last_ok_apply(conn, unit, "profile") != desired:
         return True
     if not is_public(node) and guest_needs_assign(node, doc or {}, unit):
@@ -202,7 +221,7 @@ def _ensure_guest_password(node: dict[str, Any], doc: dict[str, Any], key: str) 
 async def _apply_acl(
     client: MeshCore,
     target: RouterTarget,
-    want: list[str],
+    want: list[Any],
     heard: list[dict[str, Any]] | None,
     *,
     cmd_timeout: float,
@@ -211,38 +230,16 @@ async def _apply_acl(
     session: FleetSession | None,
 ) -> bool:
     ok = True
-    want_l = [p.lower() for p in want]
-    want_prefixes = {p[:12] for p in want_l if len(p) >= 12}
-    for pk in want_l:
+    for op in plan_acl_ops(want, heard):
         if not await _set_cli(
             client,
             target,
-            f"setperm {pk} {PERM_ACL_ADMIN}",
+            f"setperm {op.key} {op.perm}",
             cmd_timeout=cmd_timeout,
             attempts=attempts,
             log=log,
             session=session,
-            field=f"acl {pk[:8]}",
-        ):
-            ok = False
-    if not heard:
-        return ok
-    for entry in heard:
-        key = str(entry.get("key") or "").strip().lower()
-        if not key:
-            continue
-        prefix = key[:12] if len(key) >= 12 else key
-        if prefix in want_prefixes or key in want_l:
-            continue
-        if not await _set_cli(
-            client,
-            target,
-            f"setperm {key} 0",
-            cmd_timeout=cmd_timeout,
-            attempts=attempts,
-            log=log,
-            session=session,
-            field=f"acl drop {prefix}",
+            field=op.label,
         ):
             ok = False
     return ok
@@ -263,6 +260,7 @@ async def apply_one(
     heard_acl: list[dict[str, Any]] | None = None,
     firmware_version: str | None = None,
     login_clock: int | None = None,
+    keys: dict[str, list[str]] | None = None,
 ) -> bool:
     """SET mask or book identity plus shared radio policy. Returns True if profile OK."""
     ok = True
@@ -381,20 +379,40 @@ async def apply_one(
         session=session,
     )
 
-    want_acl = desired_acl_pubkeys(doc, node)
-    if session is not None and session.companion_acl_prefix:
-        prefix = session.companion_acl_prefix.lower()
-        if not any(pk.startswith(prefix) for pk in want_acl):
-            # Live companion may only be a 12-char prefix; still grant if we have full key later.
-            pass
+    try:
+        want_acl = resolve_node_acl(doc, node, keys or {})
+    except UnknownPerson as exc:
+        log.step(f"acl: unknown person {exc}")
+        want_acl = []
+        ok = False
     if want_acl:
+        if heard_acl is None:
+            wait_cap = mesh_wait_seconds(6000, cap=cmd_timeout)
+
+            async def flood_on_retry(_attempt: int) -> None:
+                await reset_to_flood(client, target, log=log)
+
+            acl_raw = await retry_binary_req(
+                "GET_ACL",
+                lambda dest_wait: client.commands.req_acl_sync(
+                    target.pubkey_hex, timeout=dest_wait, min_timeout=8
+                ),
+                attempts=attempts,
+                log=log,
+                on_retry=flood_on_retry,
+                session=session,
+                target=target,
+                wait_s=wait_cap,
+                cap=cmd_timeout,
+            )
+            heard_acl = normalize_acl_payload(acl_raw)
         if not await _apply_acl(
             client, target, want_acl, heard_acl,
             cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session,
         ):
             ok = False
 
-    desired = profile_id(node, sites, doc=doc)
+    desired = profile_id(node, sites, doc=doc, keys=keys)
     insert_apply(conn, unit=target.key, field="profile", desired=desired, ok=ok)
     log.step(f"profile {'OK' if ok else 'partial'} ({desired})")
     return ok

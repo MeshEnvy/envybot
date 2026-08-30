@@ -12,6 +12,7 @@ from typing import Any
 
 from envybot.apply import apply_is_due, apply_one, persist_guest_if_new
 from envybot.history import migrate_legacy, record_poll
+from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import load_nodes_doc, load_sites_for_book, migrate_desired, write_nodes_doc
 from envybot.poll import (
     GET_GROUP_ORDER,
@@ -69,6 +70,7 @@ async def run(args: argparse.Namespace) -> int:
     doc, conn = _migrate_book(nodes_path)
     nodes = doc.get("nodes") or {}
     sites = load_sites_for_book(nodes_path)
+    keys = load_keys(keys_path(nodes_path))
 
     web_ctx: Any | None = None
     session_states: dict[str, dict[str, Any]] = {}
@@ -125,7 +127,7 @@ async def run(args: argparse.Namespace) -> int:
         t
         for t in all_targets
         if do_apply and apply_is_due(
-            conn, t.key, nodes.get(t.key) or {}, sites, force=args.force, doc=doc
+            conn, t.key, nodes.get(t.key) or {}, sites, force=args.force, doc=doc, keys=keys
         )
     ]
     apply_keys = {t.key for t in apply_due}
@@ -225,6 +227,7 @@ async def run(args: argparse.Namespace) -> int:
                         log=log,
                         sites=sites,
                         doc=doc,
+                        keys=keys,
                     )
                     if not res.ok:
                         session_states[target.key] = {
@@ -269,6 +272,7 @@ async def run(args: argparse.Namespace) -> int:
                         heard_acl=heard_acl,
                         firmware_version=fw,
                         login_clock=login_clock,
+                        keys=keys,
                     )
                     if str(node_record.get("guest_password") or "") != guest_before:
                         yaml_dirty = True

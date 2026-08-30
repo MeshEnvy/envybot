@@ -47,7 +47,7 @@ def cmd_cmd(book: Path, argv: list[str]) -> int:
 
 COMMANDS: dict[str, tuple[str, Command]] = {
     "fleet": ("Localhost fleet manager (map, poll, apply)", cmd_fleet),
-    "trust": ("Import book contacts onto a companion", cmd_trust),
+    "trust": ("Companion contacts and keys.yaml ACL grant", cmd_trust),
     "onboard": ("USB-serial onboard a repeater (idempotent)", cmd_onboard),
     "cmd": ("Run remote MeshCore CLI on one unit", cmd_cmd),
 }

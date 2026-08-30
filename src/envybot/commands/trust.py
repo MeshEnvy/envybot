@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import site name + resolved loc + pubkey onto a companion as contacts/favorites."""
+"""Import book contacts onto a companion and record this tag in keys.yaml."""
 
 from __future__ import annotations
 
@@ -7,22 +7,41 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
-from envybot.nodes_doc import load_nodes_doc, load_sites_for_book
+from envybot.keys_doc import (
+    HEX_PUBKEY_RE,
+    TrustError,
+    TrustPolicy,
+    add_book_role,
+    apply_node_override,
+    keys_path,
+    load_keys,
+    parse_trust_policy,
+    person_has_key,
+    remember_person_key,
+    write_keys,
+)
+from envybot.nodes_doc import UNIT_NUM_RE, load_nodes_doc, load_sites_for_book, write_nodes_doc
 from envybot.position import resolve_book_position, site_binding
-from envybot.web.snapshot import lookup_site_name
 from envybot.radio import (
     CONTACT_FLAG_FAVORITE,
     CONTACT_TYPE_REPEATER,
+    FleetSession,
     PollLog,
     RouterTarget,
     add_companion_args,
+    admin_login,
+    companion_identity,
     connect,
+    ensure_companion_identity,
     ensure_contact_favorited,
     load_targets,
 )
+from envybot.selector import format_candidates, normalize_adv_name, resolve_selector
+from envybot.web.snapshot import lookup_site_name
 
 try:
     from meshcore import EventType, MeshCore
@@ -94,33 +113,82 @@ def write_export(path: Path, rows: list[dict[str, Any]]) -> None:
     path.write_text(json.dumps(rows, indent=2) + "\n", encoding="utf-8")
 
 
+def _coord(value: Any) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def contact_needs_replace(existing: dict[str, Any], stub: dict[str, Any]) -> bool:
+    """True when the stored advert name or loc is not the book value."""
+    if normalize_adv_name(str(existing.get("adv_name") or "")) != normalize_adv_name(
+        str(stub.get("adv_name") or "")
+    ):
+        return True
+    if abs(_coord(existing.get("adv_lat")) - _coord(stub.get("adv_lat"))) > 1e-4:
+        return True
+    if abs(_coord(existing.get("adv_lon")) - _coord(stub.get("adv_lon"))) > 1e-4:
+        return True
+    return False
+
+
+async def _forget_contact(client: MeshCore, pubkey: str, *, log: PollLog, unit_id: str) -> bool:
+    res = await client.commands.remove_contact(pubkey)
+    if res.type == EventType.ERROR:
+        log.step(f"{unit_id}: remove failed ({res.payload})")
+        return False
+    client.contacts.pop(pubkey.lower(), None)
+    return True
+
+
 async def push_contacts(
     client: MeshCore,
     rows: list[dict[str, Any]],
     *,
     log: PollLog,
 ) -> int:
-    ok = 0
+    prev_auto = client.auto_update_contacts
+    client.auto_update_contacts = False
     await client.ensure_contacts(follow=True)
+    now = int(time.time())
+    try:
+        return await _push_contact_rows(client, rows, log=log, now=now)
+    finally:
+        client.auto_update_contacts = prev_auto
+
+
+async def _push_contact_rows(
+    client: MeshCore,
+    rows: list[dict[str, Any]],
+    *,
+    log: PollLog,
+    now: int,
+) -> int:
+    ok = 0
     for row in rows:
         stub = {k: v for k, v in row.items() if k not in ("unit_id", "site")}
+        stub["last_advert"] = now
         existing = client.get_contact_by_key_prefix(row["public_key"][:12])
-        if existing:
-            updated = dict(existing)
-            updated["adv_name"] = stub["adv_name"]
-            updated["adv_lat"] = stub["adv_lat"]
-            updated["adv_lon"] = stub["adv_lon"]
-            updated["flags"] = existing.get("flags", 0) | CONTACT_FLAG_FAVORITE
-            res = await client.commands.add_contact(updated)
-            if res.type == EventType.ERROR:
-                log.step(f"{row['unit_id']}: update failed ({res.payload})")
-                continue
-            await ensure_contact_favorited(client, updated, log=log)
-        else:
-            res = await client.commands.add_contact(stub)
-            if res.type == EventType.ERROR:
-                log.step(f"{row['unit_id']}: add failed ({res.payload})")
-                continue
+        if existing and not contact_needs_replace(existing, stub):
+            await ensure_contact_favorited(client, existing, log=log)
+            log.step(
+                f"{row['unit_id']} {row.get('adv_name')} "
+                f"{row['adv_lat']:.5f},{row['adv_lon']:.5f}"
+            )
+            ok += 1
+            continue
+        if existing and not await _forget_contact(
+            client, row["public_key"], log=log, unit_id=row["unit_id"]
+        ):
+            continue
+        res = await client.commands.add_contact(stub)
+        if res.type == EventType.ERROR:
+            log.step(f"{row['unit_id']}: add failed ({res.payload})")
+            continue
+        pk = row["public_key"].lower()
+        client.contacts[pk] = stub
+        await ensure_contact_favorited(client, stub, log=log)
         log.step(
             f"{row['unit_id']} {row.get('adv_name')} "
             f"{row['adv_lat']:.5f},{row['adv_lon']:.5f}"
@@ -129,10 +197,71 @@ async def push_contacts(
     return ok
 
 
+def persist_trust_policy(
+    nodes_path: Path,
+    policy: TrustPolicy,
+    pubkey: str,
+) -> tuple[bool, bool]:
+    """Write keys.yaml + book/node trust. Returns (key_added, yaml_changed)."""
+    kpath = keys_path(nodes_path)
+    keys = load_keys(kpath)
+    key_added = remember_person_key(keys, policy.person, pubkey)
+    write_keys(kpath, keys)
+    doc = load_nodes_doc(nodes_path)
+    changed = add_book_role(doc, policy.person, policy.fleet_role)
+    sites = load_sites_for_book(nodes_path)
+    for selector, role in policy.overrides:
+        resolved = resolve_selector(doc, selector, sites)
+        if resolved.error or resolved.target is None:
+            extra = ""
+            if resolved.candidates:
+                extra = "\n" + format_candidates(resolved.candidates)
+            raise TrustError((resolved.error or f"unknown selector {selector!r}") + extra)
+        node = (doc.get("nodes") or {}).get(resolved.target.key)
+        if not isinstance(node, dict):
+            raise TrustError(f"unknown unit {resolved.target.key}")
+        if apply_node_override(doc, node, policy.person, role):
+            changed = True
+    if changed:
+        write_nodes_doc(nodes_path, doc)
+    return key_added, key_added or changed
+
+
+async def grant_companion_acl(
+    client: MeshCore,
+    targets: list[RouterTarget],
+    *,
+    login_timeout: float,
+    attempts: int,
+    log: PollLog,
+) -> tuple[int, int]:
+    session = FleetSession()
+    session.bind_companion(client)
+    session.attach_orphan_watch(client, log)
+    ok = 0
+    fail = 0
+    for target in targets:
+        print(f"{target.unit_id} …", flush=True)
+        logged, err, _clock = await admin_login(
+            client,
+            target,
+            login_timeout=login_timeout,
+            attempts=attempts,
+            session=session,
+            log=log,
+        )
+        if logged:
+            ok += 1
+        else:
+            fail += 1
+            log.step(err or "login failed")
+    return ok, fail
+
+
 async def run(args: argparse.Namespace) -> int:
     nodes_path: Path = args.nodes
-    include = {u.lower() for u in args.unit} if args.unit else None
-    rows = build_trust_rows(nodes_path, include=include)
+    grant_include = {u.lower() for u in args.unit} if args.unit else None
+    rows = build_trust_rows(nodes_path)
     if args.export:
         write_export(args.export, rows)
         print(f"wrote {len(rows)} contact(s) to {args.export}")
@@ -141,12 +270,76 @@ async def run(args: argparse.Namespace) -> int:
     if not rows:
         print("No pollable MeshCore units.", file=sys.stderr)
         return 1
+    policy: TrustPolicy | None = None
+    if args.policy:
+        try:
+            policy = parse_trust_policy(args.policy)
+        except TrustError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        if UNIT_NUM_RE.match(policy.person):
+            print(
+                f"person name {policy.person!r} looks like a unit key. "
+                "Use --unit me0041 to scope the mesh grant.",
+                file=sys.stderr,
+            )
+            return 1
+
     log = PollLog(progress=not args.quiet, verbose=args.verbose)
     client = await connect(args)
     try:
         n = await push_contacts(client, rows, log=log)
         print(f"trusted {n}/{len(rows)} contact(s) on companion")
-        return 0 if n == len(rows) else 2
+        contact_ok = n == len(rows)
+        if policy is None:
+            return 0 if contact_ok else 2
+
+        await ensure_companion_identity(client)
+        pubkey = companion_identity(client)
+        if not pubkey or not HEX_PUBKEY_RE.match(pubkey.strip().lower()):
+            print(
+                "Companion SELF_INFO missing 64-hex public_key; "
+                "wrote contacts only.",
+                file=sys.stderr,
+            )
+            return 2
+        pubkey = pubkey.strip().lower()
+        keys_before = load_keys(keys_path(nodes_path))
+        already = person_has_key(keys_before, policy.person, pubkey)
+        try:
+            persist_trust_policy(nodes_path, policy, pubkey)
+        except TrustError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print(f"keys.yaml {policy.person} {pubkey[:12]}…")
+
+        do_login = policy.fleet_role == "admin" and (
+            args.force or not already or bool(args.unit)
+        )
+        if not do_login:
+            if policy.fleet_role != "admin":
+                print("skip ACL login (guest grant; run fleet apply from an admin tag)")
+            else:
+                print("skip ACL login (key already in keys.yaml)")
+            return 0 if contact_ok else 2
+
+        grant_targets = load_targets(
+            nodes_path, deployed_only=False, include=grant_include, skip=None
+        )
+        if not grant_targets:
+            print("No pollable MeshCore units for ACL login.", file=sys.stderr)
+            return 2
+        acl_ok, acl_fail = await grant_companion_acl(
+            client,
+            grant_targets,
+            login_timeout=args.login_timeout,
+            attempts=args.attempts,
+            log=log,
+        )
+        print(f"acl {acl_ok}/{acl_ok + acl_fail} login(s)")
+        if acl_fail or not contact_ok:
+            return 2
+        return 0
     finally:
         await client.stop_auto_message_fetching()
         await client.disconnect()
@@ -156,7 +349,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--nodes", type=Path, default=Path("nodes.yaml"))
     add_companion_args(parser)
-    parser.add_argument("--unit", action="append", metavar="me0003")
+    parser.add_argument(
+        "policy",
+        nargs="*",
+        help="person[:role] and selector:role (omit for contacts only)",
+    )
+    parser.add_argument(
+        "--unit",
+        action="append",
+        metavar="me0003",
+        help="Scope ACL login only (contacts still import the full book)",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Password-login even if this key is already in keys.yaml",
+    )
     parser.add_argument("--export", type=Path, metavar="FILE", help="Write JSON contact list")
     parser.add_argument(
         "--export-only",

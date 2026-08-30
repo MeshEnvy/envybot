@@ -13,11 +13,11 @@ from typing import Any, Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
+from envybot.keys_doc import companion_in_desired_acl
 from envybot.nodes_doc import (
     HEX_PUBKEY_RE,
     PLACEHOLDER_PW,
     UNIT_NUM_RE,
-    companion_in_desired_acl,
     load_nodes_doc,
     normalize_fleet_node,
 )
@@ -52,7 +52,7 @@ DUTYCYCLE_CLI_SINCE = (1, 15)
 
 # Decision notes (do not reintroduce the opposite without updating this):
 # - Skip login when the companion is already on the book's ACL for that unit
-#   (trust.companions / admin1). ACL-admin can send CLI without a password.
+#   (keys.yaml + trust.admin). ACL-admin can send CLI without a password.
 #   Out of sync: drop the companion from that ACL so the next run logs in.
 #   Live RTC is ``clock`` CLI (or LOGIN_SUCCESS timestamp). STATUS is uptime,
 #   not wall clock.
@@ -1713,12 +1713,13 @@ async def maybe_admin_access(
     session: FleetSession | None,
     log: PollLog,
     fetch_clock: bool = True,
+    keys: dict[str, list[str]] | None = None,
 ) -> tuple[bool, str | None, int | None]:
     """Skip password login when the companion is already on the book ACL."""
     companion = companion_identity(client)
     if companion is None and session is not None:
         companion = session.companion_id
-    if companion_in_desired_acl(doc or {}, node, companion):
+    if companion_in_desired_acl(doc or {}, node, companion, keys):
         log.step("skip login (companion in book ACL)")
         if session is not None:
             session.mark_authed(target.key)
@@ -1965,6 +1966,7 @@ async def poll_one(
     log: PollLog | None = None,
     sites: dict[str, dict[str, Any]] | None = None,
     doc: dict[str, Any] | None = None,
+    keys: dict[str, list[str]] | None = None,
 ) -> PollResult:
     log = log or PollLog()
     stat_errors: list[str] = []
@@ -1998,6 +2000,7 @@ async def poll_one(
             attempts=attempts,
             session=session,
             log=log,
+            keys=keys,
         )
         if not ok:
             return PollResult(target.key, ok=False, error=err or "admin login failed", polled_groups=polled)

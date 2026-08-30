@@ -9,7 +9,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | Version | 0.1.0 |
 | Tooling | `uv` + `pyproject.toml` |
 | Commands | `fleet`, `trust`, `cmd`, `onboard` |
-| Book | `--book` / `ENVYBOT_HOME` / cwd with `nodes.yaml` |
+| Book | `--book` / `ENVYBOT_HOME` / cwd with `nodes.yaml` (+ `keys.yaml`) |
 
 ## Layout
 
@@ -18,6 +18,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `./envybot` | Root shim (reexec `.venv`) |
 | `src/envybot/cli.py` | Dispatcher; `COMMANDS` registry |
 | `src/envybot/book.py` | Resolve book dir; never write secrets here |
+| `src/envybot/keys_doc.py` | `keys.yaml` people + `trust` role resolve |
 | `src/envybot/nodes_doc.py` | Desired `nodes.yaml` load/write/migrate |
 | `src/envybot/history.py` | `data/fleet/history.sqlite` |
 | `src/envybot/position.py` | Book GPS from `sites.yaml` (`node:` bind + `loc`) |
@@ -26,7 +27,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/apply.py` | SET mask unless `public: true`; `v1:` profile hash |
 | `src/envybot/passwords.py` | Password strength + uniqueness (no shared defaults) |
 | `src/envybot/commands/fleet.py` | Localhost manager |
-| `src/envybot/commands/trust.py` | Companion contact import |
+| `src/envybot/commands/trust.py` | Contacts + keys.yaml / ACL login |
 | `src/envybot/commands/cmd.py` | Remote MeshCore CLI |
 | `src/envybot/commands/onboard.py` | USB repeater text CLI onboard |
 | `src/envybot/web/` | Fleet UI (`:8787`) |
@@ -41,7 +42,13 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   GET device coords into YAML.
 - `trust` imports every pollable MeshCore unit, including bag/bench
   (no site bind). Contact name is the site `name` (e.g. Ophir), else
-  `unit_id`.
+  `unit_id`. Stale advert names are removed and re-added. `trust ben`
+  records the live tag in `keys.yaml` and
+  password-logins MeshCore units (`--unit` scopes login only; contacts
+  still import the full book). Guest grants do
+  not login. Book `trust.admin` / `trust.guest` name people. Apply
+  `setperm`s those keys (admin 3, guest 1) and drops extras.
+  `admin1_*` is Meshtastic, not MC ACL.
 - Mask name is `Repeater`. Book name stays in YAML.
 - Passwords are unique and strong per unit. Apply/onboard roll blank, weak
   (`m35h3nvy`, placeholders, short), or colliding guests. Admin is never
@@ -49,7 +56,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 - Apply due = `profile_id` (`v1:` hash of desired SET payload) vs last
   ok apply stamp. Payload: name/gps/adverts, guest+admin tokens, identity
   pubkey, path.hash, dutycycle, ACL. Identity secret is `roll`, not apply.
-- Skip password login when the companion is on that unit's book ACL.
+- Skip password login when the companion is a resolved **admin** key.
   Live RTC is `clock` CLI (or login timestamp). Out of sync: drop the
   companion from the ACL so the next run logs in.
 - Duty-cycle default is 100% (`nodes.yaml` `dutycycle` overrides).

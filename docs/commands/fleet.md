@@ -13,7 +13,8 @@ Default: UI at `http://127.0.0.1:8787/` plus poll due plus apply due.
 
 | Store | Role |
 |-------|------|
-| `nodes.yaml` | Desired identity. Operator / onboard / UI write. Poll does not. No GPS. |
+| `nodes.yaml` | Desired identity + `trust.admin` / `trust.guest`. Poll does not write. No GPS. |
+| `keys.yaml` | Person → MeshCore companion pubkeys. Apply resolves names to ACL. |
 | `sites.yaml` | Places (`loc`) and the 1:1 `node:` bind. Fleet writes bind only. |
 | `data/fleet/history.sqlite` | Observed last-seen, telemetry, apply log, `cmd` audit |
 
@@ -23,14 +24,17 @@ First run imports leftover `polls.jsonl` (then deletes it) and YAML
 ## Apply
 
 Nodes without `public: true` get the privacy mask: name `Repeater`, lat/lon
-`0,0`, adverts off, a unique strong guest password, ACL = book allowlist.
-Blank, weak, or colliding guests are rolled and written back to the book.
-`public: true` pushes book name + resolved GPS.
+`0,0`, adverts off, a unique strong guest password. ACL is resolved from
+`keys.yaml` + `trust.admin` (perm 3) / `trust.guest` (perm 1). Heard keys
+that are not in that list are dropped (`setperm 0`). `admin1_*` is
+Meshtastic and is not applied. Blank, weak, or colliding guests are
+rolled and written back to the book. `public: true` pushes book name +
+resolved GPS.
 
 Always also SETs `path.hash.mode` (default 1 = 2-byte), `dutycycle`
 (default 100), a strong book admin via `password`, and clock if unset
-or behind. Password login is skipped when the companion is already on
-the book's ACL for that unit. Live clock then comes from the `clock`
+or behind. Password login is skipped when the companion is a resolved
+**admin** key for that unit. Live clock then comes from the `clock`
 CLI. Drop the companion from the ACL to force login if that belief is
 wrong.
 
@@ -39,7 +43,7 @@ does not match the last successful apply stamp, or a private node is
 leaking identity. Edit a hashed field in `nodes.yaml` and restart fleet.
 
 Hashed: public/name/gps/adverts, guest + admin (tokens), identity pubkey,
-path.hash, dutycycle, ACL allowlist. Not hashed / not pushed here:
+path.hash, dutycycle, resolved ACL (pubkey + perm). Not hashed / not pushed here:
 identity secret (`roll`), radio preset (onboard), clock.
 
 ## Flags

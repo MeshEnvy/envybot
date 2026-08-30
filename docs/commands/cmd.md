@@ -16,7 +16,7 @@ Not USB repeater text CLI ([`onboard`](onboard.md)).
 1. Resolve `<selector>` against the book (unit key, `ME####`, pubkey prefix,
    name, normalized name, unique site slug).
 2. Connect a companion. Skip password login when that companion is already
-   on the unit's book ACL (`trust.companions` / `admin1_pubkey`). Drop it
+   on the unit's resolved admin ACL (`keys.yaml` + `trust.admin`). Drop it
    from the ACL to force login if things are out of sync.
 3. Send the CLI string and print the reply body on **stdout**.
 4. Progress (`login OK`, retries) goes to **stderr**.

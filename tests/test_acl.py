@@ -5,27 +5,29 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timezone
 
-from envybot.nodes_doc import companion_in_desired_acl
+from envybot.keys_doc import companion_in_desired_acl
 from envybot.radio import parse_clock_cli
 
 
 class AclSkipTests(unittest.TestCase):
-    def test_companion_on_trust_list(self) -> None:
+    def test_companion_on_trust_admin(self) -> None:
         pk = "aa" * 32
-        doc = {"trust": {"companions": [{"pubkey": pk}]}}
-        self.assertTrue(companion_in_desired_acl(doc, {}, pk))
-        self.assertTrue(companion_in_desired_acl(doc, {}, pk[:12]))
+        doc = {"trust": {"admin": ["ben"]}}
+        keys = {"ben": [pk]}
+        self.assertTrue(companion_in_desired_acl(doc, {}, pk, keys))
+        self.assertTrue(companion_in_desired_acl(doc, {}, pk[:12], keys))
 
-    def test_companion_on_admin1(self) -> None:
+    def test_admin1_not_mc_acl(self) -> None:
         pk = "bb" * 32
         node = {"admin1_pubkey": pk}
-        self.assertTrue(companion_in_desired_acl({}, node, pk))
+        self.assertFalse(companion_in_desired_acl({}, node, pk, {}))
 
     def test_unknown_companion(self) -> None:
-        doc = {"trust": {"companions": [{"pubkey": "aa" * 32}]}}
-        self.assertFalse(companion_in_desired_acl(doc, {}, "cc" * 32))
-        self.assertFalse(companion_in_desired_acl(doc, {}, None))
-        self.assertFalse(companion_in_desired_acl({}, {}, "aa" * 32))
+        doc = {"trust": {"admin": ["ben"]}}
+        keys = {"ben": ["aa" * 32]}
+        self.assertFalse(companion_in_desired_acl(doc, {}, "cc" * 32, keys))
+        self.assertFalse(companion_in_desired_acl(doc, {}, None, keys))
+        self.assertFalse(companion_in_desired_acl({}, {}, "aa" * 32, {}))
 
 
 class ClockParseTests(unittest.TestCase):

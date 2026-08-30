@@ -22,9 +22,11 @@ Idempotent on identity, creds, radio, name, and GPS:
    (`set af 0` on MeshCore before 1.15), advert 0 / flood advert 0.
 5. Device mask: name `Repeater` and GPS `0,0`. Book `name` is not set to
    `Repeater`. No `public` key (private default).
-6. Read public + secret keys. Set host clock.
-7. Neighbor discover/fetch (default 3 rounds). Always re-runs.
-8. Reboot only if radio prefs changed (unless `--no-reboot` / `--force`).
+6. Stamp resolved fleet ACL from `keys.yaml` + book/node `trust` (`get acl`
+   + `setperm`). Skip if there are no named people yet.
+7. Read public + secret keys. Set host clock.
+8. Neighbor discover/fetch (default 3 rounds). Always re-runs.
+9. Reboot only if radio prefs changed (unless `--no-reboot` / `--force`).
 
 `site` stays null. This unit is bag/bench until you stake it.
 
@@ -75,4 +77,5 @@ Not the USB OTA seeder used by `motatool serve`.
 - `next_unit` bump when a new `ME####` is allocated
 
 Does not poll the mesh. After the unit is deployed, run
-[`fleet`](fleet.md).
+[`fleet`](fleet.md). A sealed unit that needs a new companion key uses
+[`trust ben --unit me0041`](trust.md), not this command.

@@ -31,6 +31,7 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 from envybot.history import insert_command, open_history
+from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import load_nodes_doc, load_sites_for_book
 from envybot.radio import (
     FleetSession,
@@ -181,6 +182,7 @@ async def run_repl(
 
 async def run(args: argparse.Namespace) -> int:
     doc = load_nodes_doc(args.nodes)
+    keys = load_keys(keys_path(args.nodes))
     resolved = resolve_selector(doc, args.selector, load_sites_for_book(args.nodes))
     if resolved.error or resolved.target is None:
         print(resolved.error or "unknown selector", file=sys.stderr)
@@ -210,6 +212,7 @@ async def run(args: argparse.Namespace) -> int:
             session=session,
             log=log,  # type: ignore[arg-type]
             fetch_clock=False,
+            keys=keys,
         )
         if not ok:
             print(err or "admin login failed", file=sys.stderr)

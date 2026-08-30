@@ -29,6 +29,14 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 from envybot.history import open_history, record_onboard_heard
+from envybot.keys_doc import (
+    UnknownPerson,
+    keys_path,
+    load_keys,
+    parse_serial_acl,
+    plan_acl_ops,
+    resolve_node_acl,
+)
 from envybot.nodes_doc import (
     allocate_unit_id,
     load_nodes_doc,
@@ -323,6 +331,35 @@ def pick_port(arg: str | None, *, baud: int, timeout: float, verbose: bool) -> s
         )
     listed = "\n".join(f"  {p}  ({v})" for p, v in hits)
     raise SystemExit(f"Multiple repeaters on USB. Pass one path:\n{listed}")
+
+
+def apply_serial_acl(
+    cli: RepeaterSerial,
+    doc: dict[str, Any],
+    node: dict[str, Any],
+    keys: dict[str, list[str]],
+    *,
+    force: bool,
+) -> str:
+    """Stamp resolved fleet ACL on the USB DUT. Returns skipped / ok / empty."""
+    try:
+        grants = resolve_node_acl(doc, node, keys)
+    except UnknownPerson as exc:
+        raise CliError(f"acl: unknown person {exc}") from exc
+    if not grants:
+        print("ACL skipped (no keys.yaml / trust names)")
+        return "skipped"
+    raw = cli.cmd("get acl")
+    heard = parse_serial_acl(raw)
+    ops = plan_acl_ops(grants, None if force else heard)
+    if not ops:
+        print(f"ACL already ({len(grants)} grant(s))")
+        return "ok"
+    for op in ops:
+        require_ok(op.label, cli.cmd(f"setperm {op.key} {op.perm}"))
+        print(f"   {op.label}")
+    print(f"ACL set ({len(ops)} change(s))")
+    return "ok"
 
 
 def require_ok(step: str, reply: str) -> str:
@@ -813,6 +850,14 @@ def main(argv: list[str] | None = None) -> int:
             guest_src=guest_src,
             force=args.force,
             pubkey=pub,
+        )
+        print("ACL …")
+        apply_serial_acl(
+            cli,
+            _doc,
+            existing or {},
+            load_keys(keys_path(args.nodes)),
+            force=args.force,
         )
         if not args.no_write:
             unit_key, created = register(args.nodes, result, unit=unit_key or args.unit)
