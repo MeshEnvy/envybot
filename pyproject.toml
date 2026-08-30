@@ -1,6 +1,6 @@
 [project]
 name = "envybot"
-version = "0.2.0"
+version = "0.1.0"
 description = "MeshEnvy fleet CLI — companion monitor and USB repeater onboard"
 readme = "README.md"
 license = "MIT"
@@ -24,6 +24,3 @@ packages = ["src/envybot"]
 
 [tool.hatch.build.targets.wheel.sources]
 "src/envybot" = "envybot"
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/envybot/web/static" = "envybot/web/static"

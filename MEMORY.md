@@ -5,7 +5,7 @@ Public fleet CLI. Book (identity, creds, last-seen) is private and outside this 
 | | |
 |---|---|
 | Repo | [MeshEnvy/envybot](https://github.com/MeshEnvy/envybot) |
-| Version | 0.2.0 |
+| Version | 0.1.0 |
 | Tooling | `uv` + `pyproject.toml` |
 | Commands | `monitor`, `cmd`, `onboard` |
 | Book | `--book` / `ENVYBOT_HOME` / cwd with `nodes.yaml` |
@@ -36,7 +36,7 @@ Public fleet CLI. Book (identity, creds, last-seen) is private and outside this 
 - Do not copy passwords or keypairs into this repo.
 - Not mesh-api. Not the sidecar mux (`mesh-sidecar-daemon`).
 - Daemon (`envybot serve`, N-radio mux) is later. `mcmt-gateway` stays the burn bridge.
-- **EnvyOS package (native):** pinned `0.1.0` in `releases.next`. Artifact is `envybot-<ver>-py3-none-any.whl`. Book stays private.
+- **EnvyOS package (native):** pinned `0.1.0` in `releases.next` (unpublished). Artifact is `envybot-<ver>-py3-none-any.whl`. Book stays private.
 
 ## Desk radios
 
