@@ -1,13 +1,15 @@
 import { createApp, computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { connectEvents, fetchFleet } from './api.js'
+import { connectEvents, fetchFleet, fetchHistory, patchUnit } from './api.js'
 import {
   formatBattery,
   formatRelative,
   formatSite,
   formatTemp,
   formatUptime,
+  unitLabel,
+  unitTitle,
 } from './format.js'
-import { createMapController, unitStatus } from './map.js?v=9'
+import { createMapController, unitStatus } from './map.js?v=11'
 
 const SESSION_RANK = {
   polling: 0,
@@ -77,7 +79,10 @@ const App = {
       let units = Object.values(fleet.units || {})
       if (q) {
         units = units.filter((u) => {
-          const hay = [u.key, u.unit_id, u.name, u.site].filter(Boolean).join(' ').toLowerCase()
+          const hay = [u.key, u.unit_id, u.name, u.site, u.site_name, u.label]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
           return hay.includes(q)
         })
       }
@@ -88,7 +93,7 @@ const App = {
         const ha = a.last_heard ?? 0
         const hb = b.last_heard ?? 0
         if (ha !== hb) return hb - ha
-        return String(a.unit_id || a.key).localeCompare(String(b.unit_id || b.key))
+        return unitLabel(a).localeCompare(unitLabel(b))
       })
     })
 
@@ -124,18 +129,44 @@ const App = {
       selectedKey.value = key
       mapCtrl?.flyTo(key, fleet)
       mapCtrl?.sync(fleet, key)
+      await loadHistory(fleet.units[key])
       await nextTick()
       syncDetailPopup()
     }
 
     function cardMeta(unit) {
-      const parts = [formatSite(unit.site)]
+      const parts = unit.site_name ? [unit.unit_id || unit.key] : [formatSite(unit.site)]
       if (unit.firmware_version) parts.push(`fw ${unit.firmware_version}`)
       const bat = unit.status?.battery_mv
       if (bat != null) parts.push(formatBattery(bat))
       parts.push(formatRelative(unit.last_heard))
       if (!unit.mapped) parts.push('no map pin')
       return parts.join(' · ')
+    }
+
+    const historyPoints = ref([])
+
+    async function togglePublic(unit, ev) {
+      try {
+        const updated = await patchUnit(unit.key, { public: ev.target.checked })
+        applyUnit(updated)
+        pushMap()
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
+    async function loadHistory(unit) {
+      if (!unit?.key) {
+        historyPoints.value = []
+        return
+      }
+      try {
+        const data = await fetchHistory(unit.key, 'battery_mv')
+        historyPoints.value = data.points || []
+      } catch (err) {
+        historyPoints.value = []
+      }
     }
 
     function pushMap() {
@@ -199,12 +230,16 @@ const App = {
       formatBattery,
       formatTemp,
       formatUptime,
+      unitLabel,
+      unitTitle,
+      togglePublic,
+      historyPoints,
     }
   },
   template: `
     <header id="header">
       <div class="brand">
-        <h1>EnvyBot Monitor</h1>
+        <h1>EnvyBot Fleet</h1>
         <p id="poll-line">{{ pollLine }}</p>
       </div>
       <div id="stats" class="stats">
@@ -215,7 +250,7 @@ const App = {
         <span class="stat"><strong>{{ fleet.counts?.never ?? 0 }}</strong> never</span>
       </div>
       <div class="search-wrap">
-        <input v-model="search" type="search" placeholder="Search unit, name, site…" autocomplete="off" />
+        <input v-model="search" type="search" placeholder="Search site, unit, name…" autocomplete="off" />
       </div>
     </header>
     <div id="layout">
@@ -228,14 +263,26 @@ const App = {
           class="detail"
         >
           <div class="detail-head">
-            <h2>{{ selectedUnit.unit_id }} {{ selectedUnit.name || '' }}</h2>
+            <h2>{{ unitTitle(selectedUnit) }}</h2>
             <button type="button" class="detail-close" aria-label="Close" @click="clearSelection">×</button>
           </div>
           <p class="sub">
-            {{ formatSite(selectedUnit.site) }} · {{ unitStatus(selectedUnit) }} ·
-            {{ formatRelative(selectedUnit.last_heard) }}
+            {{ selectedUnit.unit_id }}
+            · {{ selectedUnit.public ? 'public' : 'private' }}
+            · {{ unitStatus(selectedUnit) }}
+            · {{ formatRelative(selectedUnit.last_heard) }}
+            <span v-if="selectedUnit.drift"> · {{ selectedUnit.drift }}</span>
           </p>
+          <p class="sub" v-if="selectedUnit.name_heard">heard {{ selectedUnit.name_heard }}</p>
+          <label class="public-toggle">
+            <input type="checkbox" :checked="!!selectedUnit.public" @change="togglePublic(selectedUnit, $event)" />
+            public (push book name + GPS)
+          </label>
           <dl>
+            <dt>Book name</dt>
+            <dd>{{ selectedUnit.name || '—' }}</dd>
+            <dt>Site</dt>
+            <dd>{{ selectedUnit.site_name || formatSite(selectedUnit.site) }}</dd>
             <dt>Firmware</dt>
             <dd>{{ selectedUnit.firmware_version || '—' }} ({{ selectedUnit.firmware_platform || '?' }})</dd>
             <dt>Bootloader</dt>
@@ -255,6 +302,12 @@ const App = {
             <dt>Uptime</dt>
             <dd>{{ formatUptime(selectedUnit.status?.uptime_secs) }}</dd>
           </dl>
+          <section v-if="historyPoints.length" class="history">
+            <h3>Battery</h3>
+            <div class="spark">
+              <span v-for="(pt, i) in historyPoints" :key="i">{{ pt.value }}</span>
+            </div>
+          </section>
           <section v-if="selectedUnit.neighbors?.length">
             <h3>Neighbors ({{ selectedUnit.neighbors.filter(n => n.unit_key).length }} in book)</h3>
             <div
@@ -262,7 +315,7 @@ const App = {
               :key="i"
               class="neighbor-row"
             >
-              {{ nb.unit_id || nb.pubkey_prefix }} · {{ nb.snr ?? '?' }} dB · {{ nb.secs_ago ?? '?' }}s
+              {{ nb.label || nb.unit_id || nb.pubkey_prefix }} · {{ nb.snr ?? '?' }} dB · {{ nb.secs_ago ?? '?' }}s
             </div>
           </section>
         </div>
@@ -277,8 +330,8 @@ const App = {
             @click="selectUnit(unit.key)"
           >
             <div class="unit-top">
-              <span class="unit-id">{{ unit.unit_id || unit.key }}</span>
-              <span class="unit-name">{{ unit.name || '' }}</span>
+              <span v-if="!unit.site_name" class="unit-id">{{ unit.unit_id || unit.key }}</span>
+              <span class="unit-name">{{ unit.site_name || unit.name || unitLabel(unit) }}</span>
               <span class="badge" :class="'badge-' + unitStatus(unit)">{{ unitStatus(unit) }}</span>
             </div>
             <div class="unit-meta">{{ cardMeta(unit) }}</div>

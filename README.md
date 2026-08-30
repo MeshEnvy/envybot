@@ -1,16 +1,18 @@
 # EnvyBot
 
-MeshEnvy fleet CLI. Companion monitor and USB repeater onboard.
+MeshEnvy fleet CLI. Localhost manager, companion trust import, remote CLI,
+and USB repeater onboard.
 
-The **book** (`nodes.yaml`, creds, poll log) is private and is not in this
-repo. Point at it with `--book` or `ENVYBOT_HOME`. If the current directory
-already contains `nodes.yaml`, that is used.
+The **book** (`nodes.yaml`, creds, `data/fleet/history.sqlite`) is private
+and is not in this repo. Point at it with `--book` or `ENVYBOT_HOME`. If
+the current directory already contains `nodes.yaml`, that is used.
 
 ```bash
 uv sync
 export ENVYBOT_HOME=/path/to/book
-./envybot monitor          # poll + live map at http://127.0.0.1:8787/
-./envybot monitor --web-only
+./envybot fleet            # poll + apply + live map at http://127.0.0.1:8787/
+./envybot fleet --web-only
+./envybot trust
 ./envybot cmd me0016 ver
 ./envybot onboard
 ```
@@ -19,7 +21,8 @@ export ENVYBOT_HOME=/path/to/book
 
 | Command | Manual | What it does |
 |---------|--------|--------------|
-| [`monitor`](docs/commands/monitor.md) | [docs/commands/monitor.md](docs/commands/monitor.md) | Poll deployed MeshCore units over LoRa. Live map UI at `:8787` by default. |
+| [`fleet`](docs/commands/fleet.md) | [docs/commands/fleet.md](docs/commands/fleet.md) | Map, poll GET → sqlite, apply privacy mask (or `public: true`). |
+| [`trust`](docs/commands/trust.md) | [docs/commands/trust.md](docs/commands/trust.md) | Import book name + loc + pubkey onto a companion. |
 | [`cmd`](docs/commands/cmd.md) | [docs/commands/cmd.md](docs/commands/cmd.md) | Run remote MeshCore CLI on one unit (one-shot or REPL). |
 | [`onboard`](docs/commands/onboard.md) | [docs/commands/onboard.md](docs/commands/onboard.md) | USB text-CLI onboard of a repeater under test. |
 

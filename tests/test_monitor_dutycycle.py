@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from envybot.commands.monitor import (
+from envybot.radio import (
     DUTYCYCLE_CLI_SINCE,
     FLEET_DUTYCYCLE_PCT,
     airtime_factor_for_dutycycle,

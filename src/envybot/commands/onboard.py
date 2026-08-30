@@ -30,21 +30,24 @@ except ImportError as exc:  # pragma: no cover
         "  ./envybot onboard"
     ) from exc
 
-from envybot.commands.monitor import (
+from envybot.history import open_history, record_onboard_heard
+from envybot.nodes_doc import (
     PLACEHOLDER_PW,
-    airtime_factor_for_dutycycle,
     allocate_unit_id,
-    firmware_has_dutycycle_cli,
     load_nodes_doc,
+    remember_unit_id,
+    write_nodes_doc,
+)
+from envybot.radio import (
+    airtime_factor_for_dutycycle,
+    firmware_has_dutycycle_cli,
     parse_bootloader,
     parse_coord,
     parse_dutycycle,
     parse_firmware,
     parse_get_value,
     parse_int_get_value,
-    remember_unit_id,
     serial_port_candidates,
-    write_nodes_doc,
 )
 
 # USA/Canada recommended: 910.525 MHz, BW 62.5, SF7, CR 4/5
@@ -55,8 +58,8 @@ RADIO_CR = 5
 RADIO_CMD = f"set radio {RADIO_FREQ},{RADIO_BW},{RADIO_SF},{RADIO_CR}"
 
 ONBOARD_NAME = "Repeater"
-ONBOARD_LAT = 14.009295
-ONBOARD_LON = 120.996018
+ONBOARD_LAT = 0.0
+ONBOARD_LON = 0.0
 DUTYCYCLE_PCT = 100
 ADVERT_MIN = 0
 FLOOD_ADVERT_H = 0
@@ -722,40 +725,34 @@ def register(nodes_path: Path, result: dict[str, Any], *, unit: str | None) -> t
         nodes[key] = node
 
     now = int(time.time())
-    node["name"] = ONBOARD_NAME
+    if node.get("name") == ONBOARD_NAME:
+        node.pop("name", None)
     node["firmware_platform"] = result["firmware_platform"]
-    if result.get("firmware_version"):
-        node["firmware_version"] = result["firmware_version"]
-        node["firmware_pulled_at"] = now
-    if "bootloader_version" in result:
-        heard = result["bootloader_version"]
-        if heard or not node.get("bootloader_version"):
-            node["bootloader_version"] = heard
-        node["bootloader_pulled_at"] = now
     node["admin_password"] = result["admin_password"]
     node["guest_password"] = result["guest_password"]
     node["identity_pubkey"] = result["pubkey"]
     node["identity_secret"] = result["secret"]
-    node["lat"] = ONBOARD_LAT
-    node["lon"] = ONBOARD_LON
-    node["advert_interval_min"] = ADVERT_MIN
-    node["flood_advert_interval_h"] = FLOOD_ADVERT_H
-    node["dutycycle"] = DUTYCYCLE_PCT
-    node["node_clock"] = result["node_clock"]
+    node.pop("lat", None)
+    node.pop("lon", None)
     if result.get("admin_changed"):
         node["last_admin_roll"] = now
     if result.get("guest_changed"):
         node["last_guest_roll"] = now
-    node["name_pulled_at"] = now
-    node["lat_pulled_at"] = now
-    node["lon_pulled_at"] = now
-    node["advert_pulled_at"] = now
-    node["flood_advert_pulled_at"] = now
-    node["dutycycle_pulled_at"] = now
-    if result.get("neighbors") is not None:
-        node["neighbors"] = result["neighbors"]
-        node["neighbors_pulled_at"] = now
+    if "site" not in node:
+        node["site"] = None
     write_nodes_doc(nodes_path, doc)
+    conn = open_history(nodes_path.parent)
+    record_onboard_heard(
+        conn,
+        unit=key,
+        firmware_version=result.get("firmware_version"),
+        bootloader_version=result.get("bootloader_version"),
+        firmware_platform=result.get("firmware_platform"),
+        node_clock=result.get("node_clock"),
+        neighbors=result.get("neighbors"),
+        ts=now,
+    )
+    conn.close()
     return key, created
 
 

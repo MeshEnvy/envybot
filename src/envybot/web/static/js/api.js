@@ -24,3 +24,21 @@ export function connectEvents(handlers) {
   }
   return es
 }
+
+/** @param {string} key @param {Record<string, unknown>} body */
+export async function patchUnit(key, body) {
+  const res = await fetch(`/api/unit/${encodeURIComponent(key)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw new Error(`unit edit ${res.status}`)
+  return res.json()
+}
+
+/** @param {string} unit @param {string} metric */
+export async function fetchHistory(unit, metric) {
+  const res = await fetch(`/api/history/${encodeURIComponent(unit)}?metric=${encodeURIComponent(metric)}`)
+  if (!res.ok) throw new Error(`history ${res.status}`)
+  return res.json()
+}

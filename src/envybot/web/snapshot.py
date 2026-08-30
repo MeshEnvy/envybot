@@ -7,8 +7,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-from envybot.commands.monitor import load_nodes_doc, normalize_fleet_node
-from envybot.position import load_sites, resolve_book_position
+from envybot.history import all_last_seen, latest_neighbors, open_history
+from envybot.nodes_doc import is_public, load_nodes_doc, normalize_fleet_node
+from envybot.position import is_placeholder_gps, load_sites, resolve_book_position
 
 SECRET_KEY_RE = re.compile(r"(password|secret)", re.I)
 PULLED_AT_SUFFIX = "_pulled_at"
@@ -43,14 +44,35 @@ def unit_label(
     node: dict[str, Any],
     sites: dict[str, dict[str, Any]],
 ) -> str:
+    book_name = str(node.get("name") or "").strip()
     site_name = lookup_site_name(node.get("site"), sites)
+    if book_name and site_name:
+        return f"{book_name} @ {site_name}"
     if site_name:
         return site_name
+    if book_name:
+        return book_name
     return str(node.get("unit_id") or key.upper())
 
 
-def last_heard(node: dict[str, Any]) -> int | None:
+def last_heard(node: dict[str, Any], seen: dict[str, Any] | None = None) -> int | None:
     stamps: list[int] = []
+    if seen:
+        for key in (
+            "updated_at",
+            "status_at",
+            "firmware_at",
+            "name_at",
+            "telemetry_at",
+            "neighbors_at",
+        ):
+            val = seen.get(key)
+            if val is None:
+                continue
+            try:
+                stamps.append(int(val))
+            except (TypeError, ValueError):
+                continue
     for key, val in node.items():
         if not key.endswith(PULLED_AT_SUFFIX) or val is None:
             continue
@@ -154,6 +176,35 @@ def strip_secrets(node: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in node.items() if not is_secret_key(k)}
 
 
+def _neighbors_from_seen(seen: dict[str, Any] | None) -> list[Any]:
+    if not seen:
+        return []
+    raw = seen.get("neighbors_payload")
+    if isinstance(raw, list):
+        return raw
+    return []
+
+
+def drift_state(node: dict[str, Any], seen: dict[str, Any] | None) -> str | None:
+    """None = ok. leak (private) or mismatch (public)."""
+    if not seen:
+        return None
+    name_heard = seen.get("name_heard")
+    lat, lon = seen.get("lat_heard"), seen.get("lon_heard")
+    if is_public(node):
+        book = str(node.get("name") or "")
+        if name_heard and book and name_heard != book:
+            return "mismatch"
+        return None
+    if name_heard and name_heard not in ("Repeater", ""):
+        return "leak"
+    if lat is not None and lon is not None and not is_placeholder_gps(lat, lon):
+        return "leak"
+    if seen.get("advert_interval_min") not in (None, 0):
+        return "leak"
+    return None
+
+
 def sanitize_unit(
     key: str,
     node: dict[str, Any],
@@ -164,14 +215,27 @@ def sanitize_unit(
     now: int,
     stale_secs: float,
     session: dict[str, Any] | None = None,
+    seen: dict[str, Any] | None = None,
+    neighbors_raw: Any = None,
 ) -> dict[str, Any]:
     normalize_fleet_node(node)
-    heard = last_heard(node)
+    heard = last_heard(node, seen)
     position = resolve_position(node, sites)
-    tele = extract_telemetry(node.get("telemetry"))
-    status = node.get("status") if isinstance(node.get("status"), dict) else None
-    acl = node.get("acl")
-    acl_count = len(acl) if isinstance(acl, list) else None
+    tele_src = None
+    if seen and seen.get("voltage") is not None:
+        tele_src = [{"type": "voltage", "value": seen.get("voltage")}]
+    tele = extract_telemetry(tele_src)
+    if seen and seen.get("battery_mv") is not None:
+        status = {
+            "battery_mv": seen.get("battery_mv"),
+            "packets_recv": seen.get("packets_recv"),
+            "packets_sent": seen.get("packets_sent"),
+            "err_events": seen.get("err_events"),
+            "recv_errors": seen.get("recv_errors"),
+        }
+    else:
+        status = None
+    nbs = neighbors_raw if neighbors_raw is not None else node.get("neighbors")
     site_name = lookup_site_name(node.get("site"), sites)
 
     unit: dict[str, Any] = {
@@ -182,12 +246,14 @@ def sanitize_unit(
         "owner": node.get("owner"),
         "site": node.get("site"),
         "site_name": site_name,
+        "public": is_public(node),
         "hardware": node.get("hardware"),
         "notes": node.get("notes"),
         "decommissioned": node.get("decommissioned"),
-        "firmware_version": node.get("firmware_version"),
+        "firmware_version": (seen or {}).get("firmware_version"),
         "firmware_platform": node.get("firmware_platform"),
-        "bootloader_version": node.get("bootloader_version"),
+        "bootloader_version": (seen or {}).get("bootloader_version"),
+        "name_heard": (seen or {}).get("name_heard"),
         "identity_pubkey": str(node.get("identity_pubkey") or "").lower() or None,
         "position": position,
         "mapped": position is not None,
@@ -196,18 +262,19 @@ def sanitize_unit(
         "telemetry": tele,
         "status": status,
         "neighbors": sanitize_neighbors(
-            node.get("neighbors"),
+            nbs,
             pubkey_index=pubkey_index,
             nodes=nodes,
             sites=sites,
         ),
-        "neighbor_count": len(node.get("neighbors") or []) if isinstance(node.get("neighbors"), list) else 0,
-        "acl_count": acl_count,
-        "advert_interval_min": node.get("advert_interval_min"),
-        "flood_advert_interval_h": node.get("flood_advert_interval_h"),
+        "neighbor_count": len(nbs or []) if isinstance(nbs, list) else 0,
+        "acl_count": None,
+        "advert_interval_min": (seen or {}).get("advert_interval_min"),
+        "flood_advert_interval_h": (seen or {}).get("flood_advert_interval_h"),
         "path_hash_mode": node.get("path_hash_mode"),
         "dutycycle": node.get("dutycycle"),
-        "node_clock": node.get("node_clock"),
+        "node_clock": (seen or {}).get("node_clock"),
+        "drift": drift_state(node, seen),
     }
     if session:
         unit["session"] = session
@@ -222,8 +289,9 @@ def build_fleet_snapshot(
     session_states: dict[str, dict[str, Any]] | None = None,
     companion: str | None = None,
     poll: dict[str, Any] | None = None,
+    last_seen: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Full public fleet snapshot from the book."""
+    """Full public fleet snapshot: YAML desired + sqlite last_seen."""
     doc = load_nodes_doc(nodes_path)
     nodes = doc.get("nodes") or {}
     if not isinstance(nodes, dict):
@@ -235,6 +303,19 @@ def build_fleet_snapshot(
     pubkey_index = build_pubkey_index(nodes)
     now = int(time.time())
     states = session_states or {}
+    seen_map = last_seen
+    neighbors_map: dict[str, Any] = {}
+    if seen_map is None:
+        try:
+            conn = open_history(book_dir)
+            seen_map = all_last_seen(conn)
+            for key in nodes:
+                nbs = latest_neighbors(conn, key)
+                if nbs is not None:
+                    neighbors_map[key] = nbs
+            conn.close()
+        except OSError:
+            seen_map = {}
 
     units: dict[str, dict[str, Any]] = {}
     for key, node in nodes.items():
@@ -249,6 +330,8 @@ def build_fleet_snapshot(
             now=now,
             stale_secs=stale_secs,
             session=states.get(key),
+            seen=seen_map.get(key),
+            neighbors_raw=neighbors_map.get(key),
         )
 
     mapped = sum(1 for u in units.values() if u.get("mapped"))

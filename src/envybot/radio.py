@@ -1,67 +1,10 @@
-#!/usr/bin/env python3
-"""Poll deployed MeshCore repeaters over LoRa; snapshot firmware + mesh stats.
-
-Requires a local MeshCore companion (BLE, USB serial, or TCP) with mesh reach to targets.
-Full poll flow: admin login (RTC from ``LOGIN_SUCCESS``) → binary status → authed
-CLI/binary queries as due (name, advert, flood_advert, path_hash,
-dutycycle, firmware, bootloader, telemetry, neighbors, acl). Clock sync via
-mesh CLI when skew exceeds threshold. path_hash / dutycycle / lat / lon are SET
-to book policy; an OK reply stamps them. Pre-1.15 MeshCore has no
-``set dutycycle``; monitor uses ``set af 0`` (same 100% policy). GPS is never
-pulled from the radio.
-
-``nodes.yaml`` holds last-known state as flat fields with a ``*_pulled_at``
-timestamp per query. Mesh ``name`` overwrites the registry ``name`` on pull.
-Full pull snapshots append to ``data/fleet/polls.jsonl`` for audit.
-Prefer ``./envybot monitor``.
-
-Path strategy (mirrors meshcore-open): reuse the companion's saved direct path when
-one exists; fall back to flood only after a timeout. A flood login makes the repeater
-send a path return, so after LOGIN_SUCCESS the companion has a fresh direct path.
-CLI commands ride that path; flooded CLI replies are unreliable.
-
-All fleet queries run post-login over authed CLI or binary requests. Anonymous
-requests are not used.
-
-By default, inventory queries (firmware, bootloader, name, lat, lon, advert,
-flood_advert, path_hash, dutycycle) run once and then skip; periodic
-queries (status, telemetry, neighbors, acl) re-pull when older than
-``--min-interval`` (default 24h). ``path_hash``, ``dutycycle``, ``lat``, and
-``lon`` stay due until SET returns OK. Book lat/lon (else site loc) is the
-position SoT. Use ``--force`` for everything, ``--live`` for periodic only,
-``--group NAME`` to refresh specific queries. ``--unit`` filters targets only
-(does not imply ``--force``). Each query has its own ``*_pulled_at``.
-
-Login: always send admin login (guest-or-admin ACL session). Do not skip because
-the companion is already in stored ACL. Binary STATUS has uptime, not wall clock.
-The live RTC is ``LOGIN_SUCCESS.server_timestamp``. Login is one packet and also
-refreshes the direct path. Skipping it left only a stale ``node_clock`` snapshot
-or an expensive CLI clock set. After login, if that live clock is unset or
-behind host time, push ``time <host epoch>`` (not ``clock sync``).
-
-Unreachable nodes are retried until every target succeeds (or you interrupt with Ctrl+C).
-
-Greenfield: no legacy pull group names, field aliases, or migration shims. Obsolete
-``nodes.yaml`` keys are dropped on write, not mapped forward. After schema changes,
-use ``--force`` or ``--group`` to repopulate.
-
-Companion discovery (default ``--transport auto``):
-  1. BLE scan for Nordic UART Service (6E400001-…) — works for BLE companion firmware
-  2. Serial ports probed with appstart handshake — skips CDC/charge-only USB
-
-Examples:
-  ./envybot monitor --probe
-  ./envybot monitor --transport ble
-  ./envybot monitor --ble AA:BB:CC:DD:EE:FF
-  ./envybot monitor --skip me0001 --skip me0006
-"""
+"""Companion transport + mesh CLI/binary session for fleet poll and apply."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
-import os
 import re
 import sys
 import time
@@ -70,8 +13,13 @@ from typing import Any, Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ruamel.yaml import YAML
-
+from envybot.nodes_doc import (
+    HEX_PUBKEY_RE,
+    PLACEHOLDER_PW,
+    UNIT_NUM_RE,
+    load_nodes_doc,
+    normalize_fleet_node,
+)
 from envybot.position import book_coord, load_sites
 
 try:
@@ -81,51 +29,13 @@ except ImportError as exc:  # pragma: no cover
     raise SystemExit(
         "meshcore not installed. From envybot root:\n"
         "  uv sync\n"
-        "  ./envybot monitor"
+        "  ./envybot fleet"
     ) from exc
 
-HEX_PUBKEY_RE = re.compile(r"^[0-9a-fA-F]{64}$")
-UNIT_NUM_RE = re.compile(r"^me(\d+)$", re.I)
-PLACEHOLDER_PW = frozenset({"<mt>", "<bear changed to mt>"})
 VER_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)*)\s*\(Build:", re.I)
 BL_RE = re.compile(r"^>\s*(.+)$")
 VERSION_POLL_NOTE_RE = re.compile(r"(?:\s*[—–-]\s*)?version poll (\d{4}-\d{2}-\d{2})", re.I)
 
-NODES_YAML_HEADER = (
-    "# MeshEnvy fleet nodes — canonical unit registry (private).\n"
-    "# One entry per physical unit (ME####): identity, credentials, deployment site,\n"
-    "# and last-known mesh state (flat fields + per-query *_pulled_at unix epochs).\n"
-    "# name: on-device adv name (overwritten by envybot monitor). owner: owner.info string.\n"
-    "# lat/lon: book-canonical GPS (from sites.yaml / onX). Monitor SETs the radio;\n"
-    "#   never overwrites these from a GET. node_clock, status, telemetry: last pull.\n"
-    "# advert_interval_min, flood_advert_interval_h: local (minutes) and flood (hours) cadence.\n"
-    "# path_hash_mode: MeshCore advert path hash (0=1-byte, 1=2-byte, 2=3-byte).\n"
-    "# dutycycle: transmit duty cycle percent (100 = no airtime cap).\n"
-    "# acl: [{key, perm}, …] access list. neighbors: [{pubkey, secs_ago, snr}, …].\n"
-    "# firmware_pulled_at, bootloader_pulled_at, name_pulled_at, lat_pulled_at,\n"
-    "# lon_pulled_at, advert_pulled_at, flood_advert_pulled_at, path_hash_pulled_at,\n"
-    "# dutycycle_pulled_at, status_pulled_at, telemetry_pulled_at, acl_pulled_at,\n"
-    "# neighbors_pulled_at.\n"
-    "# Monitor policy (envybot monitor): one stamp per query; inventory once unless\n"
-    "# --force/--group; status, telemetry, neighbors, acl periodic (--min-interval, default 24h).\n"
-    "# Radio policy: path.hash.mode=1 (2-byte), dutycycle=100, lat/lon from book.\n"
-    "#   Monitor SETs; OK stamps. MeshCore <1.15: set af 0 (dutycycle CLI added 1.15).\n"
-    "# Login: always send admin login (live RTC + path). STATUS is uptime, not clock.\n"
-    "# firmware_platform: meshcore | meshtastic (no admin_password => meshtastic).\n"
-    "# site: sites.yaml slug, or null while in the bag / decommissioned.\n"
-    "# decommissioned: unix epoch when unit was pulled from service (null = active inventory).\n"
-    "# SoT for last-known reachability / fw / battery: cite *_pulled_at.\n"
-    "# GPS SoT is the book lat/lon (or site loc). lat_pulled_at / lon_pulled_at =\n"
-    "#   last successful SET, not a device read.\n"
-    "# Stale stamp = refresh via ./envybot monitor. Never copy secrets\n"
-    "# (passwords, keypairs) into this repo or other public trees.\n"
-    "# next_unit: next free ME number (never reuse; onboard allocates and bumps).\n"
-    "# Tool: envybot. Monitor: ./envybot monitor. Cmd: ./envybot cmd. Onboard: ./envybot onboard.\n"
-    "# Greenfield: no legacy pull groups/fields; obsolete keys dropped on write.\n"
-    "# Audit log: data/fleet/polls.jsonl.\n"
-)
-
-DEFAULT_LOG_PATH = Path("data/fleet/polls.jsonl")
 DEFAULT_MIN_POLL_INTERVAL = 86400.0  # 24h
 DEFAULT_MESH_ATTEMPTS = 10
 CLOCK_SKEW_MAX = 300  # seconds; sync when *live login* RTC vs host exceeds this
@@ -518,82 +428,6 @@ async def ensure_companion_identity(
     return None
 
 
-FLEET_PULL_AT_KEYS = tuple(spec.pulled_at_key for spec in PULL_GROUPS.values())
-
-
-def load_nodes_doc(nodes_path: Path) -> dict[str, Any]:
-    """Load nodes.yaml body without preserving stale comment headers on rewrite."""
-    yaml = YAML()
-    raw = nodes_path.read_text(encoding="utf-8")
-    lines = raw.splitlines(keepends=True)
-    start = 0
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#"):
-            start = i
-            break
-    payload = "".join(lines[start:])
-    return yaml.load(payload) or {}
-
-
-def max_unit_num(nodes: dict[str, Any] | None) -> int:
-    nums: list[int] = []
-    for key, node in (nodes or {}).items():
-        m = UNIT_NUM_RE.match(str(key))
-        if m:
-            nums.append(int(m.group(1)))
-        if isinstance(node, dict):
-            m2 = UNIT_NUM_RE.match(str(node.get("unit_id") or ""))
-            if m2:
-                nums.append(int(m2.group(1)))
-    return max(nums) if nums else 0
-
-
-def ensure_next_unit(doc: dict[str, Any]) -> int:
-    """Next free ME number: never reuse. At least max(existing)+1."""
-    floor = max_unit_num(doc.get("nodes") or {}) + 1
-    try:
-        claimed = int(doc.get("next_unit") or 0)
-    except (TypeError, ValueError):
-        claimed = 0
-    nxt = max(floor, claimed, 1)
-    doc["next_unit"] = nxt
-    return nxt
-
-
-def allocate_unit_id(doc: dict[str, Any]) -> str:
-    n = ensure_next_unit(doc)
-    doc["next_unit"] = n + 1
-    return f"ME{n:04d}"
-
-
-def remember_unit_id(doc: dict[str, Any], unit_id: str) -> None:
-    m = UNIT_NUM_RE.match(unit_id.strip())
-    if not m:
-        return
-    n = int(m.group(1))
-    doc["next_unit"] = max(ensure_next_unit(doc), n + 1)
-
-
-def write_nodes_doc(nodes_path: Path, doc: dict[str, Any]) -> None:
-    ensure_next_unit(doc)
-    yaml = YAML()
-    yaml.preserve_quotes = True
-    yaml.width = 120
-    ordered: dict[str, Any] = {"next_unit": doc["next_unit"]}
-    for key, val in doc.items():
-        if key == "next_unit":
-            continue
-        ordered[key] = val
-    tmp_path = nodes_path.with_name(nodes_path.name + ".tmp")
-    with tmp_path.open("w", encoding="utf-8") as fh:
-        fh.write(NODES_YAML_HEADER)
-        yaml.dump(ordered, fh)
-        fh.flush()
-        os.fsync(fh.fileno())
-    tmp_path.replace(nodes_path)
-
-
 # Nordic UART Service — same filter meshcore-open uses for BLE discovery
 NUS_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 MESH_NAME_PREFIXES = (
@@ -640,15 +474,6 @@ def poll_age_label(pulled_at: int | None, *, now: int) -> str:
 def _firmware_pulled_at(node: dict[str, Any]) -> int | None:
     stamp = node.get("firmware_pulled_at")
     return int(stamp) if stamp is not None else None
-
-
-def normalize_fleet_node(node: dict[str, Any]) -> None:
-    """Drop obsolete keys before read/write (greenfield — no field aliasing)."""
-    node.pop("live", None)
-    node.pop("last_version_poll", None)
-    node.pop("basic_pulled_at", None)
-    node.pop("features", None)
-    node.pop("position_pulled_at", None)
 
 
 def _stamp_and_value(node: dict[str, Any], stamp_key: str, value_key: str) -> bool:
@@ -2246,41 +2071,37 @@ async def poll_one(
                 else:
                     log.step(f"bootloader unknown ({raw_bl.strip()[:60]})")
 
-        if "lat" in polled:
-            want_lat = book_coord(node, "lat", sites)
-            if want_lat is None:
-                log.step("lat: skipped (no book position)")
+        if "lat" in polled or "gps" in polled:
+            raw_lat = await send_cmd_sync(
+                client, target, "get lat", timeout=cmd_timeout, attempts=attempts, log=log, session=session
+            )
+            if raw_lat is None:
+                stat_errors.append("lat: no response")
+                log.step("lat: no response")
+            elif cli_error_reply(raw_lat):
+                stat_errors.append("lat: error")
+                log.step("lat: error")
             else:
-                lat = await set_book_coord(
-                    client,
-                    target,
-                    "lat",
-                    want_lat,
-                    cmd_timeout=cmd_timeout,
-                    attempts=attempts,
-                    log=log,
-                    session=session,
-                )
+                lat = parse_coord(raw_lat)
                 if lat is None:
-                    stat_errors.append("lat: set failed")
+                    lat = 0.0
+                log.step(f"lat heard ({lat:.5f})")
 
-        if "lon" in polled:
-            want_lon = book_coord(node, "lon", sites)
-            if want_lon is None:
-                log.step("lon: skipped (no book position)")
+        if "lon" in polled or "gps" in polled:
+            raw_lon = await send_cmd_sync(
+                client, target, "get lon", timeout=cmd_timeout, attempts=attempts, log=log, session=session
+            )
+            if raw_lon is None:
+                stat_errors.append("lon: no response")
+                log.step("lon: no response")
+            elif cli_error_reply(raw_lon):
+                stat_errors.append("lon: error")
+                log.step("lon: error")
             else:
-                lon = await set_book_coord(
-                    client,
-                    target,
-                    "lon",
-                    want_lon,
-                    cmd_timeout=cmd_timeout,
-                    attempts=attempts,
-                    log=log,
-                    session=session,
-                )
+                lon = parse_coord(raw_lon)
                 if lon is None:
-                    stat_errors.append("lon: set failed")
+                    lon = 0.0
+                log.step(f"lon heard ({lon:.5f})")
 
         if "advert" in polled:
             raw_advert = await send_cmd_sync(
@@ -2325,35 +2146,6 @@ async def poll_one(
                 if flood_h is None:
                     flood_h = 0
                 log.step(f"flood advert OK ({flood_h}h)")
-
-        if "path_hash" in polled:
-            path_hash_mode = await set_path_hash_policy(
-                client,
-                target,
-                cmd_timeout=cmd_timeout,
-                attempts=attempts,
-                log=log,
-                session=session,
-            )
-            if path_hash_mode is None:
-                stat_errors.append("path_hash: no response")
-            elif not path_hash_matches_policy(path_hash_mode):
-                stat_errors.append(f"path_hash: mode {path_hash_mode}")
-
-        if "dutycycle" in polled:
-            dutycycle = await set_dutycycle_policy(
-                client,
-                target,
-                cmd_timeout=cmd_timeout,
-                attempts=attempts,
-                log=log,
-                session=session,
-                firmware_version=fw or node.get("firmware_version"),
-            )
-            if dutycycle is None:
-                stat_errors.append("dutycycle: no response")
-            elif not dutycycle_matches_policy(dutycycle):
-                stat_errors.append(f"dutycycle: {dutycycle:g}%")
 
         position = None
         if lat is not None or lon is not None:
@@ -2749,100 +2541,6 @@ def strip_legacy_version_poll_notes(node: dict[str, Any]) -> None:
     node["notes"] = cleaned or None
 
 
-def apply_poll_to_node(node: dict[str, Any], res: PollResult, *, now: int) -> None:
-    """Write successful poll fields into a node (only groups in polled_groups)."""
-    groups = res.polled_groups
-    if "firmware" in groups and res.firmware_version:
-        node["firmware_version"] = res.firmware_version
-        node["firmware_pulled_at"] = now
-        if res.firmware_platform:
-            node["firmware_platform"] = res.firmware_platform
-    if "bootloader" in groups and res.bootloader_version is not None:
-        node["bootloader_version"] = res.bootloader_version
-        node["bootloader_pulled_at"] = now
-    if "name" in groups and res.name is not None:
-        node["name"] = res.name
-        node["name_pulled_at"] = now
-    if "name" in groups and res.owner is not None:
-        node["owner"] = res.owner
-    if "lat" in groups and res.lat is not None:
-        node["lat"] = res.lat
-        node["lat_pulled_at"] = now
-    if "lon" in groups and res.lon is not None:
-        node["lon"] = res.lon
-        node["lon_pulled_at"] = now
-    if res.node_clock is not None:
-        node["node_clock"] = res.node_clock
-    if "status" in groups and res.status:
-        node["status"] = res.status
-        node["status_pulled_at"] = now
-    if "telemetry" in groups and res.telemetry is not None:
-        node["telemetry"] = res.telemetry
-        node["telemetry_pulled_at"] = now
-    if "advert" in groups and res.advert_interval_min is not None:
-        node["advert_interval_min"] = res.advert_interval_min
-        node["advert_pulled_at"] = now
-    if "flood_advert" in groups and res.flood_advert_interval_h is not None:
-        node["flood_advert_interval_h"] = res.flood_advert_interval_h
-        node["flood_advert_pulled_at"] = now
-    if "path_hash" in groups and res.path_hash_mode is not None:
-        node["path_hash_mode"] = res.path_hash_mode
-        node["path_hash_pulled_at"] = now
-    if "dutycycle" in groups and res.dutycycle is not None:
-        node["dutycycle"] = store_dutycycle(res.dutycycle)
-        node["dutycycle_pulled_at"] = now
-    if "acl" in groups and res.acl is not None:
-        node["acl"] = res.acl
-        node["acl_pulled_at"] = now
-    if "neighbors" in groups and res.neighbors is not None:
-        node["neighbors"] = res.neighbors
-        node["neighbors_pulled_at"] = now
-    strip_legacy_version_poll_notes(node)
-
-
-def log_poll_record(
-    log_path: Path,
-    target: RouterTarget,
-    res: PollResult,
-    *,
-    dry_run: bool,
-) -> None:
-    """Append-only audit log — full pull payload, not the nodes.yaml summary."""
-    if dry_run or not res.ok:
-        return
-    record: dict[str, Any] = {
-        "event": "monitor",
-        "ts": int(time.time()),
-        "unit": res.key,
-        "unit_id": target.unit_id,
-        "site": target.site,
-        "polled_groups": sorted(res.polled_groups),
-        "firmware_version": res.firmware_version,
-        "bootloader_version": res.bootloader_version,
-        "firmware_platform": res.firmware_platform,
-        "node_clock": res.node_clock,
-        "status": res.status,
-        "adv_name": res.name,
-        "owner": res.owner,
-        "lat": res.lat,
-        "lon": res.lon,
-        "position": res.position,
-        "telemetry": res.telemetry,
-        "advert_interval_min": res.advert_interval_min,
-        "flood_advert_interval_h": res.flood_advert_interval_h,
-        "path_hash_mode": res.path_hash_mode,
-        "dutycycle": res.dutycycle,
-        "acl": res.acl,
-        "neighbors": res.neighbors,
-        "raw_ver": res.raw_ver,
-        "raw_bl": res.raw_bl,
-    }
-    if res.stat_errors:
-        record["stat_errors"] = res.stat_errors
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record, separators=(",", ":"), default=str) + "\n")
-
 
 def poll_summary(res: PollResult) -> str:
     parts: list[str] = []
@@ -2885,308 +2583,9 @@ def poll_summary(res: PollResult) -> str:
         parts.append(f"partial({len(res.stat_errors)})")
     return " ".join(parts)
 
-
-def apply_results(nodes_path: Path, results: list[PollResult], *, dry_run: bool) -> None:
-    doc = load_nodes_doc(nodes_path)
-    nodes = doc.setdefault("nodes", {})
-    now = int(time.time())
-
-    for res in results:
-        if not res.ok:
-            continue
-        node = nodes.get(res.key)
-        if not node:
-            continue
-        normalize_fleet_node(node)
-        apply_poll_to_node(node, res, now=now)
-
-    for node in nodes.values():
-        if isinstance(node, dict):
-            normalize_fleet_node(node)
-
-    if dry_run:
-        return
-
-    write_nodes_doc(nodes_path, doc)
-
-
 def target_label(target: RouterTarget) -> str:
     site = f" @ {target.site}" if target.site else ""
     return f"{target.unit_id} {target.name}{site}"
-
-
-async def _serve_web_until_stop(web_ctx: Any, poll_exit: int) -> int:
-    print(f"Monitor UI still running at {web_ctx.url} (Ctrl+C to exit).")
-    await web_ctx.start_yaml_watch()
-    try:
-        await web_ctx.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        await web_ctx.shutdown()
-    return poll_exit
-
-
-async def run(args: argparse.Namespace) -> int:
-    web_ctx: Any | None = None
-    session_states: dict[str, dict[str, Any]] = {}
-    use_web = not args.no_web
-
-    if use_web:
-        from envybot.web.server import start_monitor_web
-
-        web_ctx = await start_monitor_web(
-            nodes_path=args.nodes,
-            host=args.bind,
-            port=args.port,
-            stale_secs=args.min_interval,
-            open_browser=args.open,
-        )
-
-    if args.web_only:
-        if web_ctx is None:
-            print("envybot monitor: --web-only conflicts with --no-web", file=sys.stderr)
-            return 2
-        print("Web-only mode — watching nodes.yaml. Ctrl+C to exit.")
-        return await _serve_web_until_stop(web_ctx, 0)
-
-    include = {u.lower() for u in args.unit} if args.unit else None
-    skip = {u.lower() for u in args.skip} if args.skip else None
-    all_targets = load_targets(
-        args.nodes, deployed_only=not args.all_units, include=include, skip=skip
-    )
-    if skip and not args.quiet:
-        print(f"Excluding {len(skip)} unit(s): {', '.join(sorted(skip))}")
-    if not all_targets:
-        print("No pollable routers matched filters.", file=sys.stderr)
-        if web_ctx:
-            await web_ctx.refresh_snapshot(poll={"phase": "idle", "error": "no targets"})
-            return await _serve_web_until_stop(web_ctx, 1)
-        return 1
-
-    policy = PullPolicy(
-        force=args.force,
-        live_only=args.live and not args.force,
-        force_groups=normalize_force_groups(args.group),
-        min_interval=args.min_interval,
-    )
-    nodes_doc = load_nodes_doc(args.nodes)
-    nodes = nodes_doc.get("nodes") or {}
-    sites = load_sites(Path(args.nodes).parent / "sites.yaml")
-    now = int(time.time())
-    targets, skipped = partition_due_targets(
-        all_targets, nodes, policy=policy, now=now, sites=sites
-    )
-    if skipped and not args.quiet:
-        interval_label = format_interval(policy.min_interval)
-        print(
-            f"Skipping {len(skipped)} up-to-date router(s) "
-            f"(inventory complete; periodic groups within {interval_label}; "
-            f"use --force / --live / --group)"
-        )
-        for target in skipped:
-            print(f"  skip {target_label(target)}")
-    for target in targets:
-        session_states[target.key] = {
-            "state": "queued",
-            "due_groups": list(target.due_groups),
-        }
-    if web_ctx:
-        await web_ctx.refresh_snapshot(
-            session_states=session_states,
-            poll={
-                "phase": "starting",
-                "pending": len(targets),
-                "total": len(all_targets),
-            },
-        )
-    if not targets:
-        print(f"All {len(all_targets)} router(s) up to date.")
-        if web_ctx:
-            await web_ctx.publish_session(
-                {"phase": "done", "pending": 0, "ok": 0, "total": len(all_targets)}
-            )
-            return await _serve_web_until_stop(web_ctx, 0)
-        return 0
-
-    retry_mode = not args.once
-    print(f"Polling {len(targets)} router(s)" + (
-        " — retries until all succeed (Ctrl+C to stop) …" if retry_mode else " — single pass …"
-    ))
-
-    log = PollLog(progress=not args.quiet, verbose=args.verbose)
-    session = FleetSession()
-    client = await connect(args)
-    companion_label = companion_identity(client)
-    companion_short = companion_label[:12] if companion_label else None
-    session.bind_companion(client)
-    session.attach_orphan_watch(client, log)
-    await sync_fleet_contacts(client, targets, log=log)
-    pending: list[RouterTarget] = list(targets)
-    succeeded: dict[str, PollResult] = {}
-    attempt_counts: dict[str, int] = {}
-    round_num = 0
-    interrupted = False
-
-    if web_ctx:
-        await web_ctx.refresh_snapshot(
-            session_states=session_states,
-            companion=companion_short,
-            poll={"phase": "polling", "round": 0, "pending": len(pending)},
-        )
-
-    try:
-        while pending:
-            round_num += 1
-            if args.max_rounds and round_num > args.max_rounds:
-                break
-            if retry_mode and round_num > 1:
-                print(f"\n--- round {round_num}: {len(pending)} still pending ---")
-            if web_ctx:
-                await web_ctx.publish_session(
-                    {
-                        "phase": "polling",
-                        "round": round_num,
-                        "pending": len(pending),
-                        "companion": companion_short,
-                    }
-                )
-            next_pending: list[RouterTarget] = []
-            for target in pending:
-                attempt_counts[target.key] = attempt_counts.get(target.key, 0) + 1
-                n = attempt_counts[target.key]
-                if args.max_attempts and n > args.max_attempts:
-                    print(f"[{target.key}] gave up after {args.max_attempts} attempts")
-                    continue
-                prefix = f"[{n}] " if retry_mode and n > 1 else ""
-                print(f"{prefix}{target_label(target)} …", flush=True)
-                node_record = nodes.get(target.key) or {}
-                if n == 1:
-                    need, skip_plan = format_pull_plan(
-                        node_record,
-                        target.due_groups,
-                        policy=policy,
-                        now=int(time.time()),
-                        sites=sites,
-                    )
-                    print(f"  need: {need}")
-                    print(f"  skip: {skip_plan}")
-                    print("  login: always (live clock + path)")
-                session_states[target.key] = {
-                    "state": "polling",
-                    "due_groups": list(target.due_groups),
-                }
-                if web_ctx:
-                    await web_ctx.publish_unit(
-                        target.key,
-                        session=session_states[target.key],
-                        session_states=session_states,
-                        companion=companion_short,
-                        poll={
-                            "phase": "polling",
-                            "round": round_num,
-                            "pending": len(pending),
-                            "unit": target.key,
-                        },
-                    )
-                res = await poll_one(
-                    client,
-                    target,
-                    node=node_record,
-                    due_groups=frozenset(target.due_groups),
-                    cmd_timeout=args.timeout,
-                    login_timeout=args.login_timeout,
-                    attempts=args.attempts,
-                    session=session,
-                    log=log,
-                    sites=sites,
-                )
-                if res.ok:
-                    succeeded[target.key] = res
-                    apply_results(args.nodes, [res], dry_run=args.dry_run)
-                    log_poll_record(args.log_file, target, res, dry_run=args.dry_run)
-                    fresh_doc = load_nodes_doc(args.nodes)
-                    fresh_nodes = fresh_doc.get("nodes") or {}
-                    fresh_node = fresh_nodes.get(target.key) or {}
-                    if fresh_node:
-                        nodes[target.key] = fresh_node
-                    remaining = gaps_from_poll_result(res)
-                    if remaining:
-                        target.due_groups = remaining
-                        next_pending.append(target)
-                    else:
-                        target.due_groups = fleet_due_groups(
-                            fresh_node, policy=policy, now=int(time.time()), sites=sites
-                        )
-                    if res.name:
-                        target.name = res.name
-                    session_states[target.key] = {
-                        "state": "ok",
-                        "due_groups": list(target.due_groups),
-                    }
-                    print(f"  OK {poll_summary(res)}")
-                else:
-                    session_states[target.key] = {
-                        "state": "unreachable",
-                        "error": res.error,
-                        "due_groups": list(target.due_groups),
-                    }
-                    print(f"  unreachable: {res.error}")
-                    next_pending.append(target)
-                    if args.retry_delay > 0:
-                        await asyncio.sleep(args.retry_delay)
-                if web_ctx:
-                    await web_ctx.publish_unit(
-                        target.key,
-                        session=session_states[target.key],
-                        session_states=session_states,
-                        companion=companion_short,
-                        poll={
-                            "phase": "polling",
-                            "round": round_num,
-                            "pending": len(next_pending) + len(pending) - 1,
-                            "unit": target.key,
-                        },
-                    )
-            pending = sorted(next_pending, key=poll_staleness_key)
-            if not pending or args.once:
-                break
-            if args.round_delay > 0:
-                print(f"Waiting {args.round_delay:.0f}s before retrying {len(pending)} node(s) …")
-                await asyncio.sleep(args.round_delay)
-    except KeyboardInterrupt:
-        interrupted = True
-        print("\nInterrupted — keeping progress from successful polls.")
-    finally:
-        await client.stop_auto_message_fetching()
-        await client.disconnect()
-
-    total = len(targets)
-    ok_count = len(succeeded)
-    if args.dry_run:
-        print(f"Dry run: polled {ok_count}/{total} successfully")
-    elif ok_count:
-        print(f"nodes.yaml updated for {ok_count}/{total} router(s)")
-        if not args.dry_run:
-            print(f"Stats logged to {args.log_file}")
-    if pending:
-        names = ", ".join(t.unit_id for t in pending)
-        print(f"Still pending ({len(pending)}): {names}")
-    poll_exit = 130 if interrupted else (0 if not pending else 2)
-    if web_ctx:
-        await web_ctx.publish_session(
-            {
-                "phase": "done",
-                "ok": ok_count,
-                "pending": len(pending),
-                "total": total,
-                "round": round_num,
-                "companion": companion_short,
-            }
-        )
-        return await _serve_web_until_stop(web_ctx, poll_exit)
-    return poll_exit
-
 
 def add_companion_args(parser: argparse.ArgumentParser) -> None:
     """Companion transport + mesh wait flags shared by monitor and cmd."""
@@ -3239,127 +2638,4 @@ def add_companion_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--nodes", type=Path, default=Path("nodes.yaml"))
-    parser.add_argument(
-        "--log-file",
-        type=Path,
-        default=DEFAULT_LOG_PATH,
-        help="Append JSONL poll snapshots here (default: data/fleet/polls.jsonl)",
-    )
-    add_companion_args(parser)
-    parser.add_argument(
-        "--probe",
-        action="store_true",
-        help="List companion candidates and verify handshake; do not poll fleet",
-    )
-    parser.add_argument(
-        "--retry-delay",
-        type=float,
-        default=0.0,
-        help="Seconds to wait after a failed node before trying the next (default: 0)",
-    )
-    parser.add_argument(
-        "--round-delay",
-        type=float,
-        default=0.0,
-        help="Seconds to wait between full retry rounds (default: 0)",
-    )
-    parser.add_argument(
-        "--max-rounds",
-        type=int,
-        default=0,
-        help="Stop after N rounds (0 = unlimited until all succeed)",
-    )
-    parser.add_argument(
-        "--max-attempts",
-        type=int,
-        default=0,
-        help="Give up on a node after N tries (0 = unlimited)",
-    )
-    parser.add_argument(
-        "--once",
-        action="store_true",
-        help="Single pass only — do not retry unreachable nodes",
-    )
-    parser.add_argument("--all-units", action="store_true", help="Include bag/bench units (site null)")
-    parser.add_argument(
-        "--unit",
-        action="append",
-        metavar="me0003",
-        help="Poll only this unit key (repeatable; does not imply --force)",
-    )
-    parser.add_argument(
-        "--skip",
-        action="append",
-        metavar="me0001",
-        help="Do not poll this unit key (repeatable; e.g. --skip me0001 --skip me0006)",
-    )
-    parser.add_argument(
-        "--min-interval",
-        type=float,
-        default=DEFAULT_MIN_POLL_INTERVAL,
-        metavar="SECS",
-        help="Re-pull periodic groups (status, telemetry, neighbors, acl) when older than this (default: 86400 = 24h)",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Poll every group on every matching router",
-    )
-    parser.add_argument(
-        "--live",
-        action="store_true",
-        help="Poll only periodic groups (status, telemetry, neighbors, acl); skip inventory unless incomplete",
-    )
-    parser.add_argument(
-        "--group",
-        action="append",
-        choices=PULL_GROUP_ORDER,
-        metavar="GROUP",
-        help="Force this query (repeatable). lat/lon SET book coords; path_hash/dutycycle SET policy",
-    )
-    parser.add_argument("--dry-run", action="store_true", help="Poll but do not write nodes.yaml")
-    parser.add_argument(
-        "-q",
-        "--quiet",
-        action="store_true",
-        help="No per-step progress (only node lines and OK/unreachable)",
-    )
-    parser.add_argument(
-        "--no-web",
-        action="store_true",
-        help="Disable local web UI (poll and exit)",
-    )
-    parser.add_argument(
-        "--web-only",
-        action="store_true",
-        help="Serve book UI without polling radios",
-    )
-    parser.add_argument(
-        "--bind",
-        default="127.0.0.1",
-        help="Web UI bind address (default: 127.0.0.1)",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8787,
-        help="Web UI port (default: 8787)",
-    )
-    parser.add_argument(
-        "--open",
-        action="store_true",
-        help="Open browser to the web UI on start",
-    )
-    args = parser.parse_args(argv)
 
-    if args.probe:
-        return asyncio.run(probe_only(args))
-
-    return asyncio.run(run(args))
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

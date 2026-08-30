@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ruamel.yaml import YAML
 
+from envybot.history import import_yaml_last_seen, open_history
 from envybot.position import is_placeholder_gps
 from envybot.web.snapshot import (
     assert_no_secrets,
@@ -133,23 +134,27 @@ class SnapshotTests(unittest.TestCase):
                 },
                 nodes_path.open("w", encoding="utf-8"),
             )
+            conn = open_history(book)
+            import_yaml_last_seen(conn, yaml.load(nodes_path.read_text(encoding="utf-8"))["nodes"])
+            conn.close()
             snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
             assert_no_secrets(snap)
             u1 = snap["units"]["me0001"]
-            self.assertEqual(u1["acl_count"], 1)
             self.assertNotIn("acl", u1)
+            self.assertEqual(u1["status"]["battery_mv"], 4200)
             self.assertEqual(u1["telemetry"]["voltage"], 4.2)
             self.assertTrue(u1["mapped"])
             self.assertEqual(u1["position"]["source"], "site")
             self.assertEqual(u1["site_name"], "Test")
-            self.assertEqual(u1["label"], "Test")
+            self.assertEqual(u1["name"], "Alpha")
+            self.assertEqual(u1["label"], "Alpha @ Test")
             u2 = snap["units"]["me0002"]
             self.assertEqual(u2["position"]["source"], "node")
             self.assertIsNone(u2["site_name"])
-            self.assertEqual(u2["label"], "ME0002")
+            self.assertEqual(u2["label"], "Beta")
             nbs = [n for n in u1["neighbors"] if n.get("unit_key") == "me0002"]
             self.assertEqual(len(nbs), 1)
-            self.assertEqual(nbs[0]["label"], "ME0002")
+            self.assertEqual(nbs[0]["label"], "Beta")
 
 
 class LabelTests(unittest.TestCase):
@@ -157,17 +162,17 @@ class LabelTests(unittest.TestCase):
         sites = {"ophir-hill": {"name": "Ophir"}}
         node = {"unit_id": "ME0003", "name": "RAK4631 Repeater", "site": "ophir-hill"}
         self.assertEqual(lookup_site_name("ophir-hill", sites), "Ophir")
-        self.assertEqual(unit_label(key="me0003", node=node, sites=sites), "Ophir")
+        self.assertEqual(unit_label(key="me0003", node=node, sites=sites), "RAK4631 Repeater @ Ophir")
 
     def test_bound_missing_site_falls_back_to_slug(self) -> None:
         node = {"unit_id": "ME0003", "name": "RAK4631 Repeater", "site": "ophir-hill"}
         self.assertEqual(lookup_site_name("ophir-hill", {}), "ophir-hill")
-        self.assertEqual(unit_label(key="me0003", node=node, sites={}), "ophir-hill")
+        self.assertEqual(unit_label(key="me0003", node=node, sites={}), "RAK4631 Repeater @ ophir-hill")
 
     def test_unbound_uses_unit_id(self) -> None:
         node = {"unit_id": "ME0041", "name": "Bag radio", "site": None}
         self.assertIsNone(lookup_site_name(None, {}))
-        self.assertEqual(unit_label(key="me0041", node=node, sites={}), "ME0041")
+        self.assertEqual(unit_label(key="me0041", node=node, sites={}), "Bag radio")
 
 
 if __name__ == "__main__":

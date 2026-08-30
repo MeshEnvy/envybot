@@ -15,9 +15,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,15 +29,15 @@ except ImportError as exc:  # pragma: no cover
         "  ./envybot cmd"
     ) from exc
 
-from envybot.commands.monitor import (
-    DEFAULT_LOG_PATH,
+from envybot.history import insert_command, open_history
+from envybot.nodes_doc import load_nodes_doc
+from envybot.radio import (
     FleetSession,
     RouterTarget,
     add_companion_args,
     admin_login,
     cli_suggests_auth_failure,
     connect,
-    load_nodes_doc,
     send_cmd_sync,
     sync_fleet_contacts,
 )
@@ -80,7 +78,7 @@ def redact_snippet(text: str | None, *, max_len: int = 120) -> str | None:
 
 
 def log_cmd_record(
-    log_path: Path,
+    book: Path,
     *,
     target: RouterTarget,
     selector: str,
@@ -88,20 +86,15 @@ def log_cmd_record(
     reply: str | None,
     ok: bool,
 ) -> None:
-    record: dict[str, Any] = {
-        "event": "cmd",
-        "ts": int(time.time()),
-        "unit": target.key,
-        "unit_id": target.unit_id,
-        "site": target.site,
-        "selector": selector,
-        "command": redact_snippet(command, max_len=500) or command,
-        "reply": redact_snippet(reply),
-        "ok": ok,
-    }
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record, separators=(",", ":"), default=str) + "\n")
+    conn = open_history(book)
+    insert_command(
+        conn,
+        unit=target.key,
+        argv=redact_snippet(command, max_len=500) or command,
+        reply=redact_snippet(reply),
+        ok=ok,
+    )
+    conn.close()
 
 
 async def send_remote_cli(
@@ -143,7 +136,7 @@ async def run_repl(
     attempts: int,
     session: FleetSession,
     log: CmdLog,
-    log_file: Path,
+    book: Path,
 ) -> int:
     prompt = f"{target.unit_id}> "
     log.step(f"REPL on {target.unit_id} ({target.name}); type quit to exit")
@@ -172,7 +165,7 @@ async def run_repl(
             log=log,
         )
         log_cmd_record(
-            log_file,
+            book,
             target=target,
             selector=selector,
             command=cmd,
@@ -227,7 +220,7 @@ async def run(args: argparse.Namespace) -> int:
                 attempts=args.attempts,
                 session=session,
                 log=log,
-                log_file=args.log_file,
+                book=args.nodes.parent,
             )
 
         code, reply = await send_remote_cli(
@@ -241,7 +234,7 @@ async def run(args: argparse.Namespace) -> int:
             log=log,
         )
         log_cmd_record(
-            args.log_file,
+            args.nodes.parent,
             target=target,
             selector=args.selector,
             command=command,
@@ -259,12 +252,6 @@ async def run(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--nodes", type=Path, default=Path("nodes.yaml"))
-    parser.add_argument(
-        "--log-file",
-        type=Path,
-        default=DEFAULT_LOG_PATH,
-        help="Append JSONL cmd audit lines here (default: data/fleet/polls.jsonl)",
-    )
     add_companion_args(parser)
     parser.add_argument(
         "selector",

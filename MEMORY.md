@@ -1,13 +1,14 @@
 # EnvyBot
 
-Public fleet CLI. Book (identity, creds, last-seen) is private and outside this repo.
+Public fleet CLI. Book (identity, creds) is private and outside this repo.
+Observed last-seen lives in the book's SQLite, not in YAML.
 
 | | |
 |---|---|
 | Repo | [MeshEnvy/envybot](https://github.com/MeshEnvy/envybot) |
 | Version | 0.1.0 |
 | Tooling | `uv` + `pyproject.toml` |
-| Commands | `monitor`, `cmd`, `onboard` |
+| Commands | `fleet`, `trust`, `cmd`, `onboard` |
 | Book | `--book` / `ENVYBOT_HOME` / cwd with `nodes.yaml` |
 
 ## Layout
@@ -17,33 +18,39 @@ Public fleet CLI. Book (identity, creds, last-seen) is private and outside this 
 | `./envybot` | Root shim (reexec `.venv`) |
 | `src/envybot/cli.py` | Dispatcher; `COMMANDS` registry |
 | `src/envybot/book.py` | Resolve book dir; never write secrets here |
-| `src/envybot/position.py` | Book GPS (node lat/lon, else site loc). Not device. |
-| `src/envybot/commands/monitor.py` | Companion LoRa poll → `nodes.yaml` |
-| `src/envybot/commands/cmd.py` | Remote MeshCore CLI over companion |
-| `src/envybot/selector.py` | Book selector resolution for `cmd` |
-| `docs/commands/` | Per-command manuals |
+| `src/envybot/nodes_doc.py` | Desired `nodes.yaml` load/write/migrate |
+| `src/envybot/history.py` | `data/fleet/history.sqlite` |
+| `src/envybot/position.py` | Book GPS (node lat/lon, else site loc) |
+| `src/envybot/radio.py` | Companion session, login, CLI/binary |
+| `src/envybot/poll.py` | GET cadence → sqlite |
+| `src/envybot/apply.py` | SET mask unless `public: true` |
+| `src/envybot/commands/fleet.py` | Localhost manager |
+| `src/envybot/commands/trust.py` | Companion contact import |
+| `src/envybot/commands/cmd.py` | Remote MeshCore CLI |
 | `src/envybot/commands/onboard.py` | USB repeater text CLI onboard |
-| `src/envybot/web/` | Monitor localhost UI (`snapshot`, `hub`, `server`, ESM static) |
+| `src/envybot/web/` | Fleet UI (`:8787`) |
 
 ## Contract
 
-- Greenfield: no `./fleet` shim, no push stub, no dual config.
-- `nodes.yaml` is SoT for last-seen / fw / battery. Cite `*_pulled_at`.
-- GPS is book-canonical (`lat`/`lon`, else `sites.yaml` loc). `monitor` SETs
-  the radio. Never GET device coords into the book.
+- Greenfield: no `monitor` alias, no `polls.jsonl`, no last-seen in YAML.
+- `nodes.yaml` is SoT for **desired** identity. Cite sqlite `last_seen` for
+  reachability / fw / battery.
+- GPS is book-canonical (`lat`/`lon` override, else `sites.yaml` loc).
+  Apply SETs `0,0` unless `public: true`. Never GET device coords into YAML.
+- Mask name is `Repeater`. Book name stays in YAML.
 - Duty-cycle policy is 100%. `set dutycycle` needs MeshCore 1.15+; older
-  1.x uses `set af 0` and still stamps `dutycycle`.
+  1.x uses `set af 0`.
 - Do not copy passwords or keypairs into this repo.
 - Not mesh-api. Not the sidecar mux (`mesh-sidecar-daemon`).
-- Daemon (`envybot serve`, N-radio mux) is later. `mcmt-gateway` stays the burn bridge.
-- **EnvyOS package (native):** pinned `0.1.0` in `releases.next` (unpublished). Artifact is `envybot-<ver>-py3-none-any.whl`. Book stays private.
+- Daemon (`envybot serve`, N-radio mux) is later.
+- **EnvyOS package (native):** pinned `0.1.0` in `releases.next` (unpublished).
 
 ## Desk radios
 
-BLE companion for `monitor`. USB DUT for `onboard`. Separate USB OTA repeater for `motatool serve`. No combined hub firmware.
+BLE companion for `fleet` / `trust` / `cmd`. USB DUT for `onboard`.
+Separate USB OTA repeater for `motatool serve`.
 
-- **Monitor UI:** `./envybot monitor` serves `127.0.0.1:8787` by default (map +
-  live SSE). `--web-only` to browse the book without a radio. `--no-web` for
-  headless poll. Never expose secrets to the browser.
+- **Fleet UI:** `./envybot fleet` serves `127.0.0.1:8787` by default.
+  `--web-only` browses the book without a radio. Never expose secrets.
 
 Last updated: 2026-08-30

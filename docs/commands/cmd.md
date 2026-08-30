@@ -3,7 +3,7 @@
 Run one MeshCore CLI command on a remote repeater over the companion link.
 Admin login always. No clock sync, radio policy SET, or `nodes.yaml` writes.
 
-Uses a **companion** radio (BLE first). Same desk radio as [`monitor`](monitor.md).
+Uses a **companion** radio (BLE first). Same desk radio as [`fleet`](fleet.md).
 Not USB repeater text CLI ([`onboard`](onboard.md)).
 
 ```
@@ -17,12 +17,12 @@ Not USB repeater text CLI ([`onboard`](onboard.md)).
 2. Connect a companion and admin-login the target.
 3. Send the CLI string and print the reply body on **stdout**.
 4. Progress (`login OK`, retries) goes to **stderr**.
-5. Append an audit line to `data/fleet/polls.jsonl` (`event: cmd`).
+5. Write an audit row to `data/fleet/history.sqlite` (`commands`).
 
 Omit CLI words (or pass only the selector) to enter an interactive REPL on
 the same login session. Type `quit` or EOF to exit.
 
-Does not update last-seen state. Use [`monitor`](monitor.md) for that.
+Does not update last-seen state. Use [`fleet`](fleet.md) for that.
 
 ## Selector
 
@@ -43,14 +43,14 @@ Examples:
 
 ## Companion flags
 
-Same as [`monitor`](monitor.md): `--transport`, `--ble`, `--serial`, `--tcp`,
+Same as [`fleet`](fleet.md): `--transport`, `--ble`, `--serial`, `--tcp`,
 `--scan-timeout`, `--baud`, `--timeout`, `--login-timeout`, `--attempts`, `-v`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `-q` / `--quiet` | | No login/retry progress on stderr |
 
-`--nodes` and `--log-file` are injected from the book.
+`--nodes` is injected from the book.
 
 ## Exit status
 
@@ -63,8 +63,9 @@ Same as [`monitor`](monitor.md): `--transport`, `--ble`, `--serial`, `--tcp`,
 
 ## Audit log
 
-Each command appends one JSONL line. Commands or replies mentioning
-`password`, `prv.key`, or `guest.password` are stored as `[redacted]`.
+Each command writes one `commands` row in `data/fleet/history.sqlite`.
+Commands or replies mentioning `password`, `prv.key`, or `guest.password`
+are stored as `[redacted]`.
 
 ## Examples
 
@@ -75,8 +76,8 @@ Each command appends one JSONL line. Commands or replies mentioning
 ./envybot cmd me0016
 ```
 
-After a GET that should update the book, run monitor:
+After a GET that should update last-seen, run fleet:
 
 ```bash
-./envybot monitor --unit me0016 --group name
+./envybot fleet --unit me0016 --group name --poll-only
 ```

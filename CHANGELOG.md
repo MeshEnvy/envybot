@@ -6,6 +6,28 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Added
+
+- `./envybot fleet` replaces `monitor`: localhost manager, sqlite history,
+  privacy-mask apply unless `public: true`.
+- `./envybot trust` imports book name + resolved loc + pubkey as companion
+  contacts. Optional `--export`.
+- `data/fleet/history.sqlite` is the observed store (last-seen, graphs,
+  apply log, `cmd` audit).
+
+### Removed
+
+- `./envybot monitor` (no alias).
+- `data/fleet/polls.jsonl` (imported once, then deleted).
+
+### Changed
+
+- `nodes.yaml` is desired identity only. Poll does not write last-seen.
+- Default apply SETs `Repeater`, `0,0`, adverts off, guest password, ACL
+  allowlist. Book GPS is SET only when `public: true`.
+- Onboard omits `public`, does not store `Repeater` as the book name, and
+  uses device GPS `0,0` (not the Manila placeholder).
+
 ## [0.1.0] - 2026-08-29
 
 ### Added

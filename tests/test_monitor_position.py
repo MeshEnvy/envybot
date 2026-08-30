@@ -1,83 +1,71 @@
-"""Monitor treats book GPS as SET policy, not a pull."""
+"""Poll GET due comes from sqlite, not YAML SET stamps."""
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
-from envybot.commands.monitor import (
-    PollResult,
-    PullPolicy,
-    apply_poll_to_node,
-    fleet_due_groups,
-    fleet_group_complete,
-    format_book_coord,
-)
+from envybot.history import open_history, record_poll
+from envybot.poll import PollPolicy, due_groups, group_complete
+
+
+class _Res:
+    def __init__(self, **kwargs):
+        self.firmware_version = kwargs.get("firmware_version", "v0.1.0")
+        self.bootloader_version = kwargs.get("bootloader_version", "bl")
+        self.firmware_platform = "meshcore"
+        self.name = kwargs.get("name", "Repeater")
+        self.lat = kwargs.get("lat", 0.0)
+        self.lon = kwargs.get("lon", 0.0)
+        self.node_clock = None
+        self.status = {"battery_mv": 4000, "uptime_secs": 1}
+        self.telemetry = []
+        self.advert_interval_min = 0
+        self.flood_advert_interval_h = 0
+        self.acl = []
+        self.neighbors = []
+        self.polled_groups = kwargs.get(
+            "polled_groups",
+            frozenset(
+                {
+                    "firmware",
+                    "bootloader",
+                    "name",
+                    "lat",
+                    "lon",
+                    "advert",
+                    "flood_advert",
+                    "status",
+                    "telemetry",
+                    "acl",
+                    "neighbors",
+                }
+            ),
+        )
 
 
 class DueTests(unittest.TestCase):
-    def test_stamped_book_coords_are_complete(self) -> None:
-        node = {"lat": 39.9, "lon": -119.3, "lat_pulled_at": 1, "lon_pulled_at": 1}
-        self.assertTrue(fleet_group_complete(node, "lat"))
-        self.assertTrue(fleet_group_complete(node, "lon"))
-        due = fleet_due_groups(node, policy=PullPolicy(), now=10)
-        self.assertNotIn("lat", due)
-        self.assertNotIn("lon", due)
+    def test_empty_db_is_due(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            due = due_groups(conn, "me0001", policy=PollPolicy(), now=10)
+            self.assertIn("firmware", due)
+            self.assertIn("status", due)
+            self.assertIn("lat", due)
+            self.assertNotIn("path_hash", due)
+            self.assertNotIn("dutycycle", due)
 
-    def test_unstamped_book_coords_are_due(self) -> None:
-        node = {"lat": 39.9, "lon": -119.3, "site": "russell-peak"}
-        self.assertFalse(fleet_group_complete(node, "lat"))
-        due = fleet_due_groups(node, policy=PullPolicy(), now=10)
-        self.assertIn("lat", due)
-        self.assertIn("lon", due)
-
-    def test_zero_gps_uses_site_and_is_due(self) -> None:
-        node = {"lat": 0.0, "lon": 0.0, "site": "foo"}
-        sites = {"foo": {"loc": [41.0, -119.0]}}
-        self.assertFalse(fleet_group_complete(node, "lat", sites))
-        due = fleet_due_groups(node, policy=PullPolicy(), now=10, sites=sites)
-        self.assertIn("lat", due)
-
-    def test_no_book_position_skips_even_on_force(self) -> None:
-        node = {"lat": 0.0, "lon": 0.0, "site": None}
-        due = fleet_due_groups(node, policy=PullPolicy(force=True), now=10)
-        self.assertNotIn("lat", due)
-        self.assertNotIn("lon", due)
-
-
-class ApplyTests(unittest.TestCase):
-    def test_successful_set_stamps_book_value(self) -> None:
-        node = {"lat": 39.9, "lon": -119.3}
-        res = PollResult(
-            "me0001",
-            ok=True,
-            lat=39.909448,
-            lon=-119.328847,
-            polled_groups=frozenset({"lat", "lon"}),
-        )
-        apply_poll_to_node(node, res, now=99)
-        self.assertEqual(node["lat"], 39.909448)
-        self.assertEqual(node["lon"], -119.328847)
-        self.assertEqual(node["lat_pulled_at"], 99)
-        self.assertEqual(node["lon_pulled_at"], 99)
-
-    def test_failed_set_does_not_write_device_zero(self) -> None:
-        node = {"lat": 39.9, "lon": -119.3}
-        res = PollResult(
-            "me0001",
-            ok=True,
-            lat=None,
-            lon=None,
-            polled_groups=frozenset({"lat", "lon"}),
-        )
-        apply_poll_to_node(node, res, now=99)
-        self.assertEqual(node["lat"], 39.9)
-        self.assertNotIn("lat_pulled_at", node)
-
-
-class FormatTests(unittest.TestCase):
-    def test_six_decimals(self) -> None:
-        self.assertEqual(format_book_coord(39.909448), "39.909448")
-        self.assertEqual(format_book_coord(-119.328847), "-119.328847")
+    def test_inventory_complete_skips(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            record_poll(conn, unit="me0001", res=_Res(), ts=10)
+            self.assertTrue(group_complete(None, "firmware") is False)
+            seen_due = due_groups(conn, "me0001", policy=PollPolicy(), now=20)
+            self.assertNotIn("firmware", seen_due)
+            later = due_groups(conn, "me0001", policy=PollPolicy(), now=10 + 86400)
+            self.assertIn("status", later)
+            self.assertNotIn("firmware", later)
 
 
 if __name__ == "__main__":

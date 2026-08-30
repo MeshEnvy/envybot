@@ -8,7 +8,6 @@ from pathlib import Path
 ENV_HOME = "ENVYBOT_HOME"
 NODES_NAME = "nodes.yaml"
 SITES_NAME = "sites.yaml"
-POLL_LOG = Path("data/fleet/polls.jsonl")
 
 
 class BookError(SystemExit):
@@ -54,10 +53,6 @@ def resolve_book(explicit: Path | str | None = None) -> Path:
 
 def nodes_path(book: Path) -> Path:
     return book / NODES_NAME
-
-
-def poll_log_path(book: Path) -> Path:
-    return book / POLL_LOG
 
 
 def sites_path(book: Path) -> Path:

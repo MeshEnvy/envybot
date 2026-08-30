@@ -11,8 +11,11 @@ from typing import Any
 
 from aiohttp import web
 
+from envybot.history import history_series, open_history
+from envybot.nodes_doc import is_public, load_nodes_doc, write_nodes_doc
+from envybot.position import is_placeholder_gps, load_sites, site_loc
 from envybot.web.hub import FleetHub
-from envybot.web.snapshot import build_fleet_snapshot, build_neighbor_edges
+from envybot.web.snapshot import assert_no_secrets, build_fleet_snapshot, build_neighbor_edges
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -22,7 +25,7 @@ DEFAULT_PORT = 8787
 
 @dataclass
 class MonitorWeb:
-    """Running monitor web server + hub."""
+    """Running fleet web server + hub."""
 
     hub: FleetHub
     nodes_path: Path
@@ -166,6 +169,83 @@ async def _handle_events(request: web.Request) -> web.StreamResponse:
     return response
 
 
+async def _handle_history(request: web.Request) -> web.Response:
+    unit = request.match_info["unit"]
+    metric = request.query.get("metric") or "battery_mv"
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    conn = open_history(web_ctx.nodes_path.parent)
+    try:
+        series = history_series(conn, unit, metric)
+    finally:
+        conn.close()
+    payload = {"unit": unit, "metric": metric, "points": series}
+    assert_no_secrets(payload)
+    return web.json_response(payload)
+
+
+async def _handle_unit_edit(request: web.Request) -> web.Response:
+    key = request.match_info["key"].lower()
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "object required"}, status=400)
+    doc = load_nodes_doc(web_ctx.nodes_path)
+    nodes = doc.get("nodes") or {}
+    node = nodes.get(key)
+    if not isinstance(node, dict):
+        return web.json_response({"error": "unknown unit"}, status=404)
+    if "name" in body:
+        name = body["name"]
+        if name is None or (isinstance(name, str) and not name.strip()):
+            node.pop("name", None)
+        elif isinstance(name, str):
+            node["name"] = name.strip()
+    if "public" in body:
+        if body["public"] is True:
+            node["public"] = True
+        else:
+            node.pop("public", None)
+    if "site" in body:
+        site = body["site"]
+        if site is None or site == "":
+            node["site"] = None
+        elif isinstance(site, str):
+            node["site"] = site.strip()
+            sites = load_sites(web_ctx.sites_path)
+            loc = site_loc(sites.get(node["site"]))
+            lat, lon = node.get("lat"), node.get("lon")
+            if loc and lat is not None and lon is not None:
+                try:
+                    if abs(float(lat) - loc[0]) < 0.0001 and abs(float(lon) - loc[1]) < 0.0001:
+                        node.pop("lat", None)
+                        node.pop("lon", None)
+                except (TypeError, ValueError):
+                    pass
+    if "lat" in body or "lon" in body:
+        if body.get("lat") is None and body.get("lon") is None:
+            node.pop("lat", None)
+            node.pop("lon", None)
+        else:
+            try:
+                lat = float(body.get("lat", node.get("lat")))
+                lon = float(body.get("lon", node.get("lon")))
+            except (TypeError, ValueError):
+                return web.json_response({"error": "bad lat/lon"}, status=400)
+            if is_placeholder_gps(lat, lon):
+                node.pop("lat", None)
+                node.pop("lon", None)
+            else:
+                node["lat"] = lat
+                node["lon"] = lon
+    write_nodes_doc(web_ctx.nodes_path, doc)
+    snap = await web_ctx.refresh_snapshot()
+    unit = snap["units"].get(key) or {}
+    return web.json_response(unit)
+
+
 async def _handle_index(_request: web.Request) -> web.Response:
     return web.FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
@@ -183,6 +263,8 @@ def make_app(web_ctx: MonitorWeb) -> web.Application:
     app["hub"] = web_ctx.hub
     app["web_ctx"] = web_ctx
     app.router.add_get("/api/fleet", _handle_fleet)
+    app.router.add_post("/api/unit/{key}", _handle_unit_edit)
+    app.router.add_get("/api/history/{unit}", _handle_history)
     app.router.add_get("/events", _handle_events)
     app.router.add_get("/", _handle_index)
     app.router.add_get("/index.html", _handle_index)
@@ -236,7 +318,7 @@ async def start_monitor_web(
         stale_secs=stale_secs,
     )
     await web_ctx.refresh_snapshot()
-    print(f"Monitor UI: {web_ctx.url}")
+    print(f"Fleet UI: {web_ctx.url}")
     if open_browser:
         webbrowser.open(web_ctx.url)
     return web_ctx

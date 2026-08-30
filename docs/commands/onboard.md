@@ -19,8 +19,8 @@ Idempotent on identity, creds, radio, name, and GPS:
 3. GET then SET. Reuse stored admin/guest passwords on re-run.
 4. Set USA/Canada radio (`910.525`, BW 62.5, SF7, CR 4/5), dutycycle 100%
    (`set af 0` on MeshCore before 1.15), advert 0 / flood advert 0.
-5. Placeholder name `Repeater` and GPS `14.009295, 120.996018` unless already
-   set.
+5. Device mask: name `Repeater` and GPS `0,0`. Book `name` is not set to
+   `Repeater`. No `public` key (private default).
 6. Read public + secret keys. Set host clock.
 7. Neighbor discover/fetch (default 3 rounds). Always re-runs.
 8. Reboot only if radio prefs changed (unless `--no-reboot` / `--force`).
@@ -29,7 +29,7 @@ Idempotent on identity, creds, radio, name, and GPS:
 
 ## Radio
 
-The **DUT** on USB. Not the BLE companion used by [`monitor`](monitor.md).
+The **DUT** on USB. Not the BLE companion used by [`fleet`](fleet.md).
 Not the USB OTA seeder used by `motatool serve`.
 
 ## Flags
@@ -74,4 +74,4 @@ Not the USB OTA seeder used by `motatool serve`.
 - `next_unit` bump when a new `ME####` is allocated
 
 Does not poll the mesh. After the unit is deployed, run
-[`monitor`](monitor.md).
+[`fleet`](fleet.md).

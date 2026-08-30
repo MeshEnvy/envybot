@@ -17,34 +17,37 @@ def _inject_flag(argv: list[str], flag: str, value: str) -> list[str]:
     return [flag, value, *argv]
 
 
-def cmd_monitor(book: Path, argv: list[str]) -> int:
-    from envybot.book import nodes_path, poll_log_path
-    from envybot.commands import monitor
+def cmd_fleet(book: Path, argv: list[str]) -> int:
+    from envybot.book import nodes_path
+    from envybot.commands import fleet
 
-    forwarded = _inject_flag(argv, "--nodes", str(nodes_path(book)))
-    forwarded = _inject_flag(forwarded, "--log-file", str(poll_log_path(book)))
-    return monitor.main(forwarded)
+    return fleet.main(_inject_flag(argv, "--nodes", str(nodes_path(book))))
+
+
+def cmd_trust(book: Path, argv: list[str]) -> int:
+    from envybot.book import nodes_path
+    from envybot.commands import trust
+
+    return trust.main(_inject_flag(argv, "--nodes", str(nodes_path(book))))
 
 
 def cmd_onboard(book: Path, argv: list[str]) -> int:
     from envybot.book import nodes_path
     from envybot.commands import onboard
 
-    forwarded = _inject_flag(argv, "--nodes", str(nodes_path(book)))
-    return onboard.main(forwarded)
+    return onboard.main(_inject_flag(argv, "--nodes", str(nodes_path(book))))
 
 
 def cmd_cmd(book: Path, argv: list[str]) -> int:
-    from envybot.book import nodes_path, poll_log_path
+    from envybot.book import nodes_path
     from envybot.commands import cmd
 
-    forwarded = _inject_flag(argv, "--nodes", str(nodes_path(book)))
-    forwarded = _inject_flag(forwarded, "--log-file", str(poll_log_path(book)))
-    return cmd.main(forwarded)
+    return cmd.main(_inject_flag(argv, "--nodes", str(nodes_path(book))))
 
 
 COMMANDS: dict[str, tuple[str, Command]] = {
-    "monitor": ("Poll deployed units over LoRa into nodes.yaml", cmd_monitor),
+    "fleet": ("Localhost fleet manager (map, poll, apply)", cmd_fleet),
+    "trust": ("Import book contacts onto a companion", cmd_trust),
     "onboard": ("USB-serial onboard a repeater (idempotent)", cmd_onboard),
     "cmd": ("Run remote MeshCore CLI on one unit", cmd_cmd),
 }

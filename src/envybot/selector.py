@@ -6,14 +6,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from envybot.commands.monitor import (
-    HEX_PUBKEY_RE,
-    PLACEHOLDER_PW,
-    UNIT_NUM_RE,
-    RouterTarget,
-    normalize_fleet_node,
-    target_label,
-)
+from envybot.nodes_doc import HEX_PUBKEY_RE, PLACEHOLDER_PW, UNIT_NUM_RE, normalize_fleet_node
+from envybot.radio import RouterTarget, target_label
 
 ADV_NAME_BRACE_RE = re.compile(r"\{[^}]*\}")
 ADV_NAME_PIPE_RE = re.compile(r"\s*\|.*$")
