@@ -17,13 +17,13 @@ def _inject_flag(argv: list[str], flag: str, value: str) -> list[str]:
     return [flag, value, *argv]
 
 
-def cmd_pull(book: Path, argv: list[str]) -> int:
+def cmd_monitor(book: Path, argv: list[str]) -> int:
     from envybot.book import nodes_path, poll_log_path
-    from envybot.commands import pull
+    from envybot.commands import monitor
 
     forwarded = _inject_flag(argv, "--nodes", str(nodes_path(book)))
     forwarded = _inject_flag(forwarded, "--log-file", str(poll_log_path(book)))
-    return pull.main(forwarded)
+    return monitor.main(forwarded)
 
 
 def cmd_onboard(book: Path, argv: list[str]) -> int:
@@ -35,7 +35,7 @@ def cmd_onboard(book: Path, argv: list[str]) -> int:
 
 
 COMMANDS: dict[str, tuple[str, Command]] = {
-    "pull": ("Pull mesh state from deployed units into nodes.yaml", cmd_pull),
+    "monitor": ("Poll deployed units over LoRa into nodes.yaml", cmd_monitor),
     "onboard": ("USB-serial onboard a repeater (idempotent)", cmd_onboard),
 }
 
@@ -44,8 +44,8 @@ def _usage() -> str:
     lines = [
         "usage: envybot [--book DIR] <command> [args…]",
         "",
-        "Fleet book (nodes.yaml) stays in private peaky-nevada.",
-        "Set ENVYBOT_HOME or pass --book. Sibling peaky-nevada is the default.",
+        "Fleet book is a private directory that contains nodes.yaml.",
+        "Set ENVYBOT_HOME or pass --book. Cwd works if it already has the file.",
         "",
         "commands:",
     ]

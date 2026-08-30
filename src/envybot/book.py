@@ -23,18 +23,10 @@ def _as_book_dir(path: Path) -> Path | None:
     return None
 
 
-def default_book_candidates() -> list[Path]:
-    repo = Path(__file__).resolve().parents[2]
-    return [
-        repo.parent / "peaky-nevada",
-        Path.cwd(),
-    ]
-
-
 def resolve_book(explicit: Path | str | None = None) -> Path:
     """Directory that contains nodes.yaml.
 
-    Order: ``--book`` / argument, ``ENVYBOT_HOME``, sibling ``peaky-nevada``, cwd.
+    Order: ``--book`` / argument, ``ENVYBOT_HOME``, cwd.
     """
     if explicit:
         found = _as_book_dir(Path(explicit))
@@ -49,14 +41,13 @@ def resolve_book(explicit: Path | str | None = None) -> Path:
             return found
         raise BookError(f"{ENV_HOME}={env} has no {NODES_NAME}")
 
-    for cand in default_book_candidates():
-        found = _as_book_dir(cand)
-        if found:
-            return found
+    found = _as_book_dir(Path.cwd())
+    if found:
+        return found
 
     raise BookError(
         f"No fleet book found. Set {ENV_HOME} or pass --book "
-        f"to the directory that contains {NODES_NAME} (private peaky-nevada)."
+        f"to the directory that contains {NODES_NAME}."
     )
 
 

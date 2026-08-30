@@ -11,7 +11,7 @@ radio policy (2-byte, 100%); an OK reply stamps them.
 ``nodes.yaml`` holds last-known state as flat fields with a ``*_pulled_at``
 timestamp per query. Mesh ``name`` overwrites the registry ``name`` on pull.
 Full pull snapshots append to ``data/fleet/polls.jsonl`` for audit.
-Prefer ``./envybot pull``.
+Prefer ``./envybot monitor``.
 
 Path strategy (mirrors meshcore-open): reuse the companion's saved direct path when
 one exists; fall back to flood only after a timeout. A flood login makes the repeater
@@ -48,10 +48,10 @@ Companion discovery (default ``--transport auto``):
   2. Serial ports probed with appstart handshake — skips CDC/charge-only USB
 
 Examples:
-  ./envybot pull --probe
-  ./envybot pull --transport ble
-  ./envybot pull --ble AA:BB:CC:DD:EE:FF
-  ./envybot pull --skip me0001 --skip me0006
+  ./envybot monitor --probe
+  ./envybot monitor --transport ble
+  ./envybot monitor --ble AA:BB:CC:DD:EE:FF
+  ./envybot monitor --skip me0001 --skip me0006
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ except ImportError as exc:  # pragma: no cover
     raise SystemExit(
         "meshcore not installed. From envybot root:\n"
         "  uv sync\n"
-        "  ./envybot pull"
+        "  ./envybot monitor"
     ) from exc
 
 HEX_PUBKEY_RE = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -91,8 +91,8 @@ NODES_YAML_HEADER = (
     "# MeshEnvy fleet nodes — canonical unit registry (private).\n"
     "# One entry per physical unit (ME####): identity, credentials, deployment site,\n"
     "# and last-known mesh state (flat fields + per-query *_pulled_at unix epochs).\n"
-    "# name: on-device adv name (overwritten by fleet pull). owner: owner.info string.\n"
-    "# lat/lon, node_clock, status, telemetry: last successful pull values.\n"
+    "# name: on-device adv name (overwritten by envybot monitor). owner: owner.info string.\n"
+    "# lat/lon, node_clock, status, telemetry: last successful monitor values.\n"
     "# advert_interval_min, flood_advert_interval_h: local (minutes) and flood (hours) cadence.\n"
     "# path_hash_mode: MeshCore advert path hash (0=1-byte, 1=2-byte, 2=3-byte).\n"
     "# dutycycle: transmit duty cycle percent (100 = no airtime cap).\n"
@@ -101,23 +101,20 @@ NODES_YAML_HEADER = (
     "# lon_pulled_at, advert_pulled_at, flood_advert_pulled_at, path_hash_pulled_at,\n"
     "# dutycycle_pulled_at, status_pulled_at, telemetry_pulled_at, acl_pulled_at,\n"
     "# neighbors_pulled_at.\n"
-    "# Pull policy (envybot pull): one stamp per query; inventory once unless\n"
+    "# Monitor policy (envybot monitor): one stamp per query; inventory once unless\n"
     "# --force/--group; status, telemetry, neighbors, acl periodic (--min-interval, default 24h).\n"
-    "# Radio policy: path.hash.mode=1 (2-byte) and dutycycle=100. Pull SETs; OK stamps.\n"
+    "# Radio policy: path.hash.mode=1 (2-byte) and dutycycle=100. Monitor SETs; OK stamps.\n"
     "# Login: always send admin login (live RTC + path). STATUS is uptime, not clock.\n"
     "# firmware_platform: meshcore | meshtastic (no admin_password => meshtastic).\n"
     "# site: sites.yaml slug, or null while in the bag / decommissioned.\n"
     "# decommissioned: unix epoch when unit was pulled from service (null = active inventory).\n"
     "# SoT for last-known reachability / fw / battery / GPS: cite *_pulled_at.\n"
-    "# Stale stamp = refresh via ./envybot pull, not a chat question. Never copy\n"
-    "# secrets (passwords, keypairs) into ops/ or other git-tracked repos.\n"
-    "# Standalone for now; Peaky serve does not read this file (site->node refs = v6).\n"
+    "# Stale stamp = refresh via ./envybot monitor. Never copy secrets\n"
+    "# (passwords, keypairs) into this repo or other public trees.\n"
     "# next_unit: next free ME number (never reuse; onboard allocates and bumps).\n"
-    "# Tool: envybot (leaf MeshEnvy/envybot). Book stays in peaky-nevada.\n"
-    "# Pull: ./envybot pull. USB onboard: ./envybot onboard.\n"
+    "# Tool: envybot. Monitor: ./envybot monitor. USB onboard: ./envybot onboard.\n"
     "# Greenfield: no legacy pull groups/fields; obsolete keys dropped on write.\n"
-    "# Re-import CSV: scripts/ingest_fleet_csv.py (credentials overwritten,\n"
-    "# mesh-pulled fields preserved). Audit log: data/fleet/polls.jsonl.\n"
+    "# Audit log: data/fleet/polls.jsonl.\n"
 )
 
 DEFAULT_LOG_PATH = Path("data/fleet/polls.jsonl")
@@ -2666,7 +2663,7 @@ def log_poll_record(
     if dry_run or not res.ok:
         return
     record: dict[str, Any] = {
-        "event": "pull",
+        "event": "monitor",
         "ts": int(time.time()),
         "unit": res.key,
         "unit_id": target.unit_id,

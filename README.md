@@ -1,22 +1,32 @@
 # EnvyBot
 
-MeshEnvy fleet CLI. Companion pull and USB repeater onboard.
+MeshEnvy fleet CLI. Companion monitor and USB repeater onboard.
 
-The **book** (`nodes.yaml`, creds, `data/fleet/polls.jsonl`) stays in private
-[`peaky-nevada`](https://github.com/MeshEnvy). This repo has no secrets.
+The **book** (`nodes.yaml`, creds, poll log) is private and is not in this
+repo. Point at it with `--book` or `ENVYBOT_HOME`. If the current directory
+already contains `nodes.yaml`, that is used.
 
 ```bash
 uv sync
-./envybot pull
+export ENVYBOT_HOME=/path/to/book
+./envybot monitor
 ./envybot onboard
-./envybot onboard /dev/cu.usbmodem1444301
-./envybot pull --unit me0016 --force
 ```
 
-Book path: `--book DIR`, `ENVYBOT_HOME`, sibling `../peaky-nevada`, or cwd
-if it contains `nodes.yaml`.
+## Commands
 
-Commands are modules under `src/envybot/commands/`. Add a function to
-`COMMANDS` in `cli.py`.
+| Command | Manual | What it does |
+|---------|--------|--------------|
+| [`monitor`](docs/commands/monitor.md) | [docs/commands/monitor.md](docs/commands/monitor.md) | Poll deployed MeshCore units over LoRa. Write last-seen into the book. |
+| [`onboard`](docs/commands/onboard.md) | [docs/commands/onboard.md](docs/commands/onboard.md) | USB text-CLI onboard of a repeater under test. |
+
+Global flags (before the command): `--book DIR`.
+
+```
+./envybot [--book DIR] <command> [args…]
+```
+
+Add a command by putting `src/envybot/commands/<name>.py` with `main(argv)`
+and registering it in `cli.py` `COMMANDS`.
 
 Daemon / radio mux is later. `mcmt-gateway` remains the burn bridge.

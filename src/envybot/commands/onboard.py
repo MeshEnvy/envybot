@@ -30,7 +30,7 @@ except ImportError as exc:  # pragma: no cover
         "  ./envybot onboard"
     ) from exc
 
-from envybot.commands.pull import (
+from envybot.commands.monitor import (
     PLACEHOLDER_PW,
     allocate_unit_id,
     load_nodes_doc,

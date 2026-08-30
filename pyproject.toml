@@ -1,7 +1,7 @@
 [project]
 name = "envybot"
 version = "0.1.0"
-description = "MeshEnvy fleet CLI — companion pull and USB repeater onboard"
+description = "MeshEnvy fleet CLI — companion monitor and USB repeater onboard"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11,<4.0"
