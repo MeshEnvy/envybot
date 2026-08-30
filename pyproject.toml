@@ -1,0 +1,25 @@
+[project]
+name = "envybot"
+version = "0.1.0"
+description = "MeshEnvy fleet CLI — companion pull and USB repeater onboard"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11,<4.0"
+dependencies = [
+  "meshcore>=2.3.9",
+  "pyserial>=3.5",
+  "ruamel.yaml>=0.18",
+]
+
+[project.scripts]
+envybot = "envybot.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/envybot"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src/envybot" = "envybot"

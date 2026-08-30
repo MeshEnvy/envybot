@@ -1,0 +1,16 @@
+---
+description: EnvyBot search stays in this repo unless the book or ops pointer is in scope
+alwaysApply: true
+---
+
+# Search scope — envybot
+
+CLI and radio session code live here. The fleet **book** is private `peaky-nevada/` (`nodes.yaml`). Ops strategy is `ops/initiatives/envybot-radio-daemon.md`.
+
+| Need | `path` / `target_directory` |
+|------|-----------------------------|
+| CLI, commands, book resolver | `envybot/` |
+| nodes.yaml / last-seen | `peaky-nevada/` |
+| Enterprise / sitrep pointers | `ops/` |
+
+Do not copy secrets from the book into this repo.

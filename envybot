@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+"""Repo-root shim — prefer the project venv, then dispatch envybot.cli."""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+VENV_PYTHON = ROOT / ".venv" / "bin" / "python"
+
+
+def reexec_in_project_venv() -> None:
+    venv_root = (ROOT / ".venv").resolve()
+    if not VENV_PYTHON.is_file():
+        return
+    if Path(sys.prefix).resolve() == venv_root:
+        return
+    os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), str(Path(__file__).resolve()), *sys.argv[1:]])
+
+
+if __name__ == "__main__":
+    reexec_in_project_venv()
+    from envybot.cli import main
+
+    raise SystemExit(main())
