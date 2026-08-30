@@ -1,6 +1,6 @@
 [project]
 name = "envybot"
-version = "0.1.0"
+version = "0.2.0"
 description = "MeshEnvy fleet CLI — companion monitor and USB repeater onboard"
 readme = "README.md"
 license = "MIT"

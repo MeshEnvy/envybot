@@ -5,9 +5,9 @@ Public fleet CLI. Book (identity, creds, last-seen) is private and outside this 
 | | |
 |---|---|
 | Repo | [MeshEnvy/envybot](https://github.com/MeshEnvy/envybot) |
-| Version | 0.1.0 |
+| Version | 0.2.0 |
 | Tooling | `uv` + `pyproject.toml` |
-| Commands | `monitor`, `onboard` |
+| Commands | `monitor`, `cmd`, `onboard` |
 | Book | `--book` / `ENVYBOT_HOME` / cwd with `nodes.yaml` |
 
 ## Layout
@@ -18,6 +18,8 @@ Public fleet CLI. Book (identity, creds, last-seen) is private and outside this 
 | `src/envybot/cli.py` | Dispatcher; `COMMANDS` registry |
 | `src/envybot/book.py` | Resolve book dir; never write secrets here |
 | `src/envybot/commands/monitor.py` | Companion LoRa poll → `nodes.yaml` |
+| `src/envybot/commands/cmd.py` | Remote MeshCore CLI over companion |
+| `src/envybot/selector.py` | Book selector resolution for `cmd` |
 | `docs/commands/` | Per-command manuals |
 | `src/envybot/commands/onboard.py` | USB repeater text CLI onboard |
 

@@ -103,4 +103,4 @@ need a different file.
 - `nodes.yaml` last-seen fields + `*_pulled_at` (unless `--dry-run`)
 - `data/fleet/polls.jsonl` line with `event: monitor`
 
-Does not run ad-hoc remote CLI. That is `cmd` (planned).
+Does not run ad-hoc remote CLI. Use [`cmd`](cmd.md).

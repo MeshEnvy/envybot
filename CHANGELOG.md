@@ -6,19 +6,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-29
+
 ### Added
 
-- Per-command manuals under `docs/commands/`. README command table.
+- `./envybot cmd` — remote MeshCore CLI on one unit (one-shot + REPL).
+- Selector resolve: unit key/id, pubkey prefix, name, site slug.
+- `docs/commands/cmd.md`. jsonl audit `event: cmd` with credential redaction.
 
 ### Changed
 
-- Book resolve is `--book`, `ENVYBOT_HOME`, or cwd with `nodes.yaml`. No implicit sibling-repo default.
-- Renamed `pull` to `monitor`. No `pull` alias. jsonl `event` is `monitor`.
+- `add_companion_args()` shared by `monitor` and `cmd`.
 
-## [v0.1.0] - 2026-08-29
+## [0.1.0] - 2026-08-29
 
 ### Added
 
-- `./envybot pull` — companion LoRa poll into a private `nodes.yaml` book.
+- `./envybot monitor` (was `pull`) — companion LoRa poll into a private `nodes.yaml` book.
 - `./envybot onboard` — USB repeater text-CLI onboard (idempotent).
 - Book resolve: `--book`, `ENVYBOT_HOME`, or cwd with `nodes.yaml`.
+- Per-command manuals under `docs/commands/`.

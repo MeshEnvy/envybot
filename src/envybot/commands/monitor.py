@@ -112,7 +112,7 @@ NODES_YAML_HEADER = (
     "# Stale stamp = refresh via ./envybot monitor. Never copy secrets\n"
     "# (passwords, keypairs) into this repo or other public trees.\n"
     "# next_unit: next free ME number (never reuse; onboard allocates and bumps).\n"
-    "# Tool: envybot. Monitor: ./envybot monitor. USB onboard: ./envybot onboard.\n"
+    "# Tool: envybot. Monitor: ./envybot monitor. Cmd: ./envybot cmd. Onboard: ./envybot onboard.\n"
     "# Greenfield: no legacy pull groups/fields; obsolete keys dropped on write.\n"
     "# Audit log: data/fleet/polls.jsonl.\n"
 )
@@ -2913,18 +2913,18 @@ async def run(args: argparse.Namespace) -> int:
     return 0 if not pending else 2
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--nodes", type=Path, default=Path("nodes.yaml"))
-    parser.add_argument(
-        "--log-file",
-        type=Path,
-        default=DEFAULT_LOG_PATH,
-        help="Append JSONL poll snapshots here (default: data/fleet/polls.jsonl)",
-    )
+def add_companion_args(parser: argparse.ArgumentParser) -> None:
+    """Companion transport + mesh wait flags shared by monitor and cmd."""
     parser.add_argument("--serial", help="Force USB serial companion port (must pass appstart probe)")
     parser.add_argument("--tcp", help="Companion TCP host:port")
-    parser.add_argument("--ble", nargs="?", const="", default=None, metavar="ADDRESS", help="BLE companion (optional MAC; omit value to auto-pick)")
+    parser.add_argument(
+        "--ble",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="ADDRESS",
+        help="BLE companion (optional MAC; omit value to auto-pick)",
+    )
     parser.add_argument(
         "--transport",
         choices=("auto", "ble", "serial", "tcp"),
@@ -2936,11 +2936,6 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=4.0,
         help="BLE scan duration in seconds (default: 4; use --ble ADDRESS to skip)",
-    )
-    parser.add_argument(
-        "--probe",
-        action="store_true",
-        help="List companion candidates and verify handshake; do not poll fleet",
     )
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument(
@@ -2960,6 +2955,29 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=DEFAULT_MESH_ATTEMPTS,
         help="Retries per send that expects a reply (login, CLI, binary, clock; 0 = unlimited; default: 10)",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Extra protocol/debug detail (prefixes, payloads, ignored msgs)",
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--nodes", type=Path, default=Path("nodes.yaml"))
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        default=DEFAULT_LOG_PATH,
+        help="Append JSONL poll snapshots here (default: data/fleet/polls.jsonl)",
+    )
+    add_companion_args(parser)
+    parser.add_argument(
+        "--probe",
+        action="store_true",
+        help="List companion candidates and verify handshake; do not poll fleet",
     )
     parser.add_argument(
         "--retry-delay",
@@ -3033,12 +3051,6 @@ def main(argv: list[str] | None = None) -> int:
         "--quiet",
         action="store_true",
         help="No per-step progress (only node lines and OK/unreachable)",
-    )
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="Extra protocol/debug detail (prefixes, payloads, ignored msgs)",
     )
     args = parser.parse_args(argv)
 

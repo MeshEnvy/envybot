@@ -34,9 +34,19 @@ def cmd_onboard(book: Path, argv: list[str]) -> int:
     return onboard.main(forwarded)
 
 
+def cmd_cmd(book: Path, argv: list[str]) -> int:
+    from envybot.book import nodes_path, poll_log_path
+    from envybot.commands import cmd
+
+    forwarded = _inject_flag(argv, "--nodes", str(nodes_path(book)))
+    forwarded = _inject_flag(forwarded, "--log-file", str(poll_log_path(book)))
+    return cmd.main(forwarded)
+
+
 COMMANDS: dict[str, tuple[str, Command]] = {
     "monitor": ("Poll deployed units over LoRa into nodes.yaml", cmd_monitor),
     "onboard": ("USB-serial onboard a repeater (idempotent)", cmd_onboard),
+    "cmd": ("Run remote MeshCore CLI on one unit", cmd_cmd),
 }
 
 
