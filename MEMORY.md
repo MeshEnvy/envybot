@@ -30,7 +30,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/commands/fleet.py` | Localhost manager |
 | `src/envybot/commands/trust.py` | Contacts + channels + keys.yaml / ACL login |
 | `src/envybot/commands/cmd.py` | Remote MeshCore CLI |
-| `src/envybot/commands/onboard.py` | USB repeater text CLI onboard (`get acl` is `ACL:` dump, no `->`) |
+| `src/envybot/commands/onboard.py` | USB repeater text CLI onboard (`path.hash.mode` 1, `get acl` is `ACL:` dump) |
 | `src/envybot/web/` | Fleet UI (`:8787`) |
 
 ## Contract
@@ -66,6 +66,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   companion from the ACL so the next run logs in.
 - Duty-cycle default is 100% (`nodes.yaml` `dutycycle` overrides).
   `set dutycycle` needs MeshCore 1.15+; older 1.x uses `set af`.
+  Onboard also SETs `path.hash.mode` 1 (2-byte), same as fleet apply.
 - Do not copy passwords or keypairs into this repo.
 - Not mesh-api. Not the sidecar mux (`mesh-sidecar-daemon`).
 - Daemon (`envybot serve`, N-radio mux) is later.

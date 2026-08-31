@@ -4,8 +4,9 @@
 ``get prv.key`` is serial-only (sender_timestamp == 0). Do not send these
 commands over the mesh.
 
-Idempotent on identity/creds/radio/name/GPS: match existing pubkey (or --unit),
-GET then SET, reuse stored passwords, reboot only if radio prefs changed.
+Idempotent on identity/creds/radio/name/GPS/path.hash: match existing pubkey
+(or --unit), GET then SET, reuse stored passwords, reboot only if radio prefs
+changed.
 Always pulls firmware + bootloader.ver and re-runs neighbor discover/fetch.
 Writes nodes.yaml (next ME#### if new; site stays null).
 """
@@ -49,6 +50,7 @@ from envybot.passwords import (
     password_is_strong,
 )
 from envybot.radio import (
+    FLEET_PATH_HASH_MODE,
     airtime_factor_for_dutycycle,
     firmware_has_dutycycle_cli,
     parse_bootloader,
@@ -569,6 +571,25 @@ def apply_if_needed(
     return True
 
 
+def apply_path_hash_policy(cli: RepeaterSerial, *, force: bool) -> bool:
+    """``set path.hash.mode 1`` (2-byte). Skip if firmware has no CLI."""
+    want = FLEET_PATH_HASH_MODE
+    raw = cli.cmd("get path.hash.mode")
+    if reply_failed(raw):
+        print(f"   skipped ({raw.strip()[:40]})")
+        return False
+    got = parse_int_get_value(raw)
+    return apply_if_needed(
+        cli,
+        step="set path.hash.mode",
+        already=got == want,
+        setter=f"set path.hash.mode {want}",
+        verify=lambda: parse_int_get_value(cli.cmd("get path.hash.mode")) == want,
+        ok_label=f"{want} (2-byte)",
+        force=force,
+    )
+
+
 def apply_dutycycle_policy(cli: RepeaterSerial, fw: str | None, *, force: bool) -> bool:
     """``set dutycycle 100``, or ``set af 0`` on MeshCore <1.15."""
     af = airtime_factor_for_dutycycle(DUTYCYCLE_PCT)
@@ -647,7 +668,10 @@ def onboard(
     print("2. dutycycle 100% …")
     apply_dutycycle_policy(cli, fw, force=force)
 
-    print("3. adverts 0/0 …")
+    print("3. path.hash 2-byte …")
+    apply_path_hash_policy(cli, force=force)
+
+    print("4. adverts 0/0 …")
     adv = parse_int_get_value(cli.cmd("get advert.interval"))
     flood = parse_int_get_value(cli.cmd("get flood.advert.interval"))
     adverts_ok = adv == ADVERT_MIN and flood == FLOOD_ADVERT_H
@@ -662,7 +686,7 @@ def onboard(
             raise CliError(f"advert verify failed: local={adv} flood={flood}")
         print("   local 0m / flood 0h")
 
-    print("4. admin password …")
+    print("5. admin password …")
     admin_changed = False
     if admin_src == "yaml" and not force:
         print("   kept (yaml)")
@@ -671,7 +695,7 @@ def onboard(
         admin_changed = admin_src != "yaml"
         print("   set" if admin_changed else "   confirmed")
 
-    print("5. guest password …")
+    print("6. guest password …")
     device_guest = parse_get_value(cli.cmd("get guest.password"))
     if device_guest is None:
         device_guest = ""
@@ -686,7 +710,7 @@ def onboard(
         guest_changed = device_guest != guest_pw
         print("   set" if guest_changed else "   confirmed")
 
-    print(f"6. position {ONBOARD_LAT}, {ONBOARD_LON} …")
+    print(f"7. position {ONBOARD_LAT}, {ONBOARD_LON} …")
     lat = parse_coord(cli.cmd("get lat"))
     lon = parse_coord(cli.cmd("get lon"))
     pos_ok = coords_match(lat, ONBOARD_LAT) and coords_match(lon, ONBOARD_LON)
@@ -701,7 +725,7 @@ def onboard(
             raise CliError(f"position verify failed: {lat}, {lon}")
         print("   set")
 
-    print(f"7. name {ONBOARD_NAME} …")
+    print(f"8. name {ONBOARD_NAME} …")
     name = parse_get_value(cli.cmd("get name")) or ""
     apply_if_needed(
         cli,
@@ -713,11 +737,11 @@ def onboard(
         force=force,
     )
 
-    print("8. secret key …")
+    print("9. secret key …")
     prv = normalize_hex(parse_get_value(cli.cmd("get prv.key")) or "", PRV_HEX_LEN, "prv.key")
     print(f"   {prv}")
 
-    print("9. clock …")
+    print("10. clock …")
     now = int(time.time())
     clock_reply = cli.cmd(f"time {now}")
     if "cannot go backwards" in clock_reply.lower():
@@ -892,7 +916,7 @@ def main(argv: list[str] | None = None) -> int:
             print("reboot skipped — radio already applied")
 
         if do_discover:
-            print(f"10. neighbor baseline ({args.discover_rounds}×, {args.discover_wait:g}s) …")
+            print(f"11. neighbor baseline ({args.discover_rounds}×, {args.discover_wait:g}s) …")
             if cli is None:
                 cli, port = reconnect_after_reboot(
                     port, baud=args.baud, timeout=args.timeout, verbose=args.verbose

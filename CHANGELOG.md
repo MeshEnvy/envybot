@@ -55,6 +55,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 - USB onboard accepts MeshCore `get acl` (firmware prints `ACL:` and
   skips the `->` reply). Book row is written before ACL so a later CLI
   miss no longer drops identity and passwords.
+- USB onboard SETs `path.hash.mode` 1 (2-byte), matching fleet apply.
+  Firmware default is 0 (1-byte).
 
 ## [0.1.0] - 2026-08-29
 

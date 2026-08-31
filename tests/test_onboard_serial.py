@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from envybot.commands.onboard import RepeaterSerial
+from envybot.commands.onboard import RepeaterSerial, apply_path_hash_policy
 from envybot.keys_doc import parse_serial_acl
 
 BEN = "aa" * 32
@@ -37,3 +37,41 @@ class ExtractReplyTests(unittest.TestCase):
     def test_no_reply(self) -> None:
         self.assertIsNone(RepeaterSerial._extract_reply("get acl\n"))
         self.assertIsNone(RepeaterSerial._reply_start("get acl\n"))
+
+
+class FakeCli:
+    def __init__(self, replies: dict[str, str | list[str]]) -> None:
+        self.replies = replies
+        self.sent: list[str] = []
+
+    def cmd(self, command: str, **_kwargs: object) -> str:
+        self.sent.append(command)
+        val = self.replies[command]
+        if isinstance(val, list):
+            return val.pop(0)
+        return val
+
+
+class PathHashPolicyTests(unittest.TestCase):
+    def test_already_two_byte(self) -> None:
+        cli = FakeCli({"get path.hash.mode": "> 1"})
+        self.assertFalse(apply_path_hash_policy(cli, force=False))
+        self.assertEqual(cli.sent, ["get path.hash.mode"])
+
+    def test_sets_one_byte_to_two(self) -> None:
+        cli = FakeCli(
+            {
+                "get path.hash.mode": ["> 0", "> 1"],
+                "set path.hash.mode 1": "OK",
+            }
+        )
+        self.assertTrue(apply_path_hash_policy(cli, force=False))
+        self.assertEqual(
+            cli.sent,
+            ["get path.hash.mode", "set path.hash.mode 1", "get path.hash.mode"],
+        )
+
+    def test_skips_unknown(self) -> None:
+        cli = FakeCli({"get path.hash.mode": "UNKNOWN"})
+        self.assertFalse(apply_path_hash_policy(cli, force=False))
+        self.assertEqual(cli.sent, ["get path.hash.mode"])

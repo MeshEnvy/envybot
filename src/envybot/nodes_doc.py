@@ -51,7 +51,7 @@ NODES_YAML_HEADER = (
     "# Observed last-seen / telemetry live in data/fleet/history.sqlite.\n"
     "# name: book radio name (later a codename). Pushed to the radio only when\n"
     "#   public: true. Default apply SETs Repeater + 0,0 + adverts off.\n"
-    "# path_hash_mode / dutycycle: radio prefs (apply default 1 / 100).\n"
+    "# path_hash_mode / dutycycle: radio prefs (apply/onboard default 1 / 100).\n"
     "# trust.admin / trust.guest: people from keys.yaml (MeshCore ACL).\n"
     "# admin1_pubkey / admin1_secret: Meshtastic remote-admin. Not MC ACL.\n"
     "# firmware_platform: meshcore | meshtastic.\n"
