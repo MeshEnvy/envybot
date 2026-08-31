@@ -22,8 +22,10 @@ Idempotent on identity, creds, radio, name, and GPS:
    (`set af 0` on MeshCore before 1.15), advert 0 / flood advert 0.
 5. Device mask: name `Repeater` and GPS `0,0`. Book `name` is not set to
    `Repeater`. No `public` key (private default).
-6. Stamp resolved fleet ACL from `keys.yaml` + book/node `trust` (`get acl`
-   + `setperm`). Skip if there are no named people yet.
+6. Write the book row (identity, creds). Then stamp fleet ACL from
+   `keys.yaml` + book/node `trust` (`get acl` + `setperm`). Skip ACL if
+   there are no named people yet. MeshCore prints `ACL:` on serial and
+   does not send a `->` reply for `get acl`.
 7. Read public + secret keys. Set host clock.
 8. Neighbor discover/fetch (default 3 rounds). Always re-runs.
 9. Reboot only if radio prefs changed (unless `--no-reboot` / `--force`).

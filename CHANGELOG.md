@@ -50,6 +50,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 - Onboard omits `public`, does not store `Repeater` as the book name, and
   uses device GPS `0,0` (not the Manila placeholder).
 
+### Fixed
+
+- USB onboard accepts MeshCore `get acl` (firmware prints `ACL:` and
+  skips the `->` reply). Book row is written before ACL so a later CLI
+  miss no longer drops identity and passwords.
+
 ## [0.1.0] - 2026-08-29
 
 ### Added

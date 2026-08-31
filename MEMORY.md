@@ -30,7 +30,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/commands/fleet.py` | Localhost manager |
 | `src/envybot/commands/trust.py` | Contacts + channels + keys.yaml / ACL login |
 | `src/envybot/commands/cmd.py` | Remote MeshCore CLI |
-| `src/envybot/commands/onboard.py` | USB repeater text CLI onboard |
+| `src/envybot/commands/onboard.py` | USB repeater text CLI onboard (`get acl` is `ACL:` dump, no `->`) |
 | `src/envybot/web/` | Fleet UI (`:8787`) |
 
 ## Contract

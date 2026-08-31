@@ -277,18 +277,29 @@ class RepeaterSerial:
         return reply
 
     @staticmethod
+    def _normalize_buf(buf: str) -> str:
+        return buf.replace("\r\n", "\n").replace("\r", "\n")
+
+    @staticmethod
     def _reply_start(buf: str) -> int | None:
-        text = buf.replace("\r\n", "\n").replace("\r", "\n")
+        """``->`` for normal CLI, or ``ACL:`` (firmware dumps, no reply prefix)."""
+        text = RepeaterSerial._normalize_buf(buf)
         idx = text.find("->")
+        if idx >= 0:
+            return idx
+        idx = text.find("ACL:")
         return idx if idx >= 0 else None
 
     @classmethod
     def _extract_reply(cls, buf: str) -> str | None:
-        text = buf.replace("\r\n", "\n").replace("\r", "\n")
+        text = cls._normalize_buf(buf)
         idx = text.find("->")
-        if idx < 0:
-            return None
-        return text[idx + 2 :].strip()
+        if idx >= 0:
+            return text[idx + 2 :].strip()
+        idx = text.find("ACL:")
+        if idx >= 0:
+            return text[idx:].strip()
+        return None
 
 
 def probe_repeater(port: str, *, baud: int, timeout: float, verbose: bool) -> str | None:
@@ -851,6 +862,14 @@ def main(argv: list[str] | None = None) -> int:
             force=args.force,
             pubkey=pub,
         )
+        if not args.no_write:
+            unit_key, created = register(args.nodes, result, unit=unit_key or args.unit)
+            result["admin_changed"] = False
+            result["guest_changed"] = False
+            print(f"nodes.yaml {'created' if created else 'updated'} {unit_key.upper()}")
+        else:
+            print("nodes.yaml not written (--no-write)")
+
         print("ACL …")
         apply_serial_acl(
             cli,
@@ -859,13 +878,6 @@ def main(argv: list[str] | None = None) -> int:
             load_keys(keys_path(args.nodes)),
             force=args.force,
         )
-        if not args.no_write:
-            unit_key, created = register(args.nodes, result, unit=unit_key or args.unit)
-            result["admin_changed"] = False
-            result["guest_changed"] = False
-            print(f"nodes.yaml {'created' if created else 'updated'} {unit_key.upper()}")
-        else:
-            print("nodes.yaml not written (--no-write)")
 
         do_discover = not args.no_discover and args.discover_rounds > 0
 
