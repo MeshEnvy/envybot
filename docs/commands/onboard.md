@@ -31,7 +31,9 @@ Idempotent on identity, creds, radio, name, and GPS:
 8. Neighbor discover/fetch (default 3 rounds). Prompts to attach an
    antenna first (Enter to continue, `s` to skip). `--no-discover` skips
    the prompt. No TTY skips discover.
-9. Reboot only if radio prefs changed (unless `--no-reboot` / `--force`).
+9. Always reboot so `set radio` takes effect (`get radio` is prefs, not
+   the live radio). Waits for the USB node to drop as proof. `--no-reboot`
+   leaves that pending.
 
 `site` stays null. This unit is bag/bench until you stake it.
 
@@ -49,7 +51,7 @@ Not the USB OTA seeder used by `motatool serve`.
 | `--admin-pw` | generated or yaml | Admin password |
 | `--guest-pw` | generated or yaml | Guest password (`''` for blank) |
 | `--no-write` | | Do not update `nodes.yaml` |
-| `--force` | | Re-SET even when matching (implies radio reboot) |
+| `--force` | | Re-SET even when matching |
 | `--no-reboot` | | Skip reboot (radio change stays pending) |
 | `--no-discover` | | Skip neighbor rounds |
 | `--discover-rounds N` | `3` | Discover/fetch rounds |

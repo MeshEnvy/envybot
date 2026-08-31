@@ -8,6 +8,7 @@ from envybot.commands.onboard import (
     RepeaterSerial,
     antenna_ready,
     apply_path_hash_policy,
+    wait_usb_gone,
 )
 from envybot.keys_doc import parse_serial_acl
 
@@ -79,6 +80,14 @@ class PathHashPolicyTests(unittest.TestCase):
         cli = FakeCli({"get path.hash.mode": "UNKNOWN"})
         self.assertFalse(apply_path_hash_policy(cli, force=False))
         self.assertEqual(cli.sent, ["get path.hash.mode"])
+
+
+class UsbDropTests(unittest.TestCase):
+    def test_missing_path_is_gone(self) -> None:
+        self.assertTrue(wait_usb_gone("/dev/cu.usbmodem-envybot-missing", timeout=0.2))
+
+    def test_existing_path_stays(self) -> None:
+        self.assertFalse(wait_usb_gone("/dev/null", timeout=0.35))
 
 
 class AntennaPromptTests(unittest.TestCase):

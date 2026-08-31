@@ -5,8 +5,8 @@
 commands over the mesh.
 
 Idempotent on identity/creds/radio/name/GPS/path.hash: match existing pubkey
-(or --unit), GET then SET, reuse stored passwords, reboot only if radio prefs
-changed.
+(or --unit), GET then SET, reuse stored passwords. Always reboot so ``set radio``
+applies (firmware writes prefs only; ``get radio`` cannot see the live radio).
 Always pulls firmware + bootloader.ver and re-runs neighbor discover/fetch.
 Writes nodes.yaml (next ME#### if new; site stays null).
 """
@@ -83,6 +83,8 @@ REPLY_IDLE_S = 0.25
 DISCOVER_ROUNDS = 3
 DISCOVER_WAIT_S = 12.0
 REBOOT_SETTLE_S = 4.0
+REBOOT_FLUSH_S = 0.4
+USB_DROP_TIMEOUT_S = 8.0
 RECONNECT_TIMEOUT_S = 25.0
 PUB_HEX_LEN = 64
 PRV_HEX_LEN = 128
@@ -451,6 +453,28 @@ def discover_baseline(
         latest = parse_neighbors_cli(raw)
         print(f"   {format_neighbors(latest)}")
     return latest
+
+
+def wait_usb_gone(port: str, *, timeout: float = USB_DROP_TIMEOUT_S) -> bool:
+    """True if the USB node disappears (device reset). Close the handle first."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not Path(port).exists():
+            return True
+        time.sleep(0.15)
+    return False
+
+
+def send_reboot(cli: RepeaterSerial) -> bool:
+    """CLI ``reboot``. Returns True if the USB node dropped after close."""
+    port = cli.port
+    cli.cmd("reboot", expect_reply=False)
+    time.sleep(REBOOT_FLUSH_S)
+    try:
+        cli.__exit__(None, None, None)
+    except (serial.SerialException, OSError):
+        pass
+    return wait_usb_gone(port)
 
 
 def open_repeater(port: str, *, baud: int, timeout: float, verbose: bool) -> RepeaterSerial:
@@ -865,8 +889,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--guest-pw", help="Guest password (generated if omitted; '' for blank)")
     parser.add_argument("--nodes", type=Path, default=Path("nodes.yaml"))
     parser.add_argument("--no-write", action="store_true", help="Do not update nodes.yaml")
-    parser.add_argument("--force", action="store_true", help="Re-SET even when already matching (implies radio reboot)")
-    parser.add_argument("--no-reboot", action="store_true", help="Skip reboot (radio stays pending)")
+    parser.add_argument("--force", action="store_true", help="Re-SET even when already matching")
+    parser.add_argument("--no-reboot", action="store_true", help="Skip reboot (radio change stays pending)")
     parser.add_argument("--no-discover", action="store_true", help="Skip neighbor discover/fetch rounds")
     parser.add_argument("--discover-rounds", type=int, default=DISCOVER_ROUNDS, metavar="N")
     parser.add_argument("--discover-wait", type=float, default=DISCOVER_WAIT_S, metavar="SEC")
@@ -927,14 +951,15 @@ def main(argv: list[str] | None = None) -> int:
         do_discover = not args.no_discover and args.discover_rounds > 0
 
         if args.no_reboot:
-            print("reboot skipped — radio USA/Canada applies after reboot")
-        elif result["radio_changed"]:
-            print("reboot (radio apply) …")
-            cli.cmd("reboot", expect_reply=False)
-            cli.__exit__(None, None, None)
-            cli = None
+            print("reboot skipped (--no-reboot) — radio applies after reboot")
         else:
-            print("reboot skipped — radio already applied")
+            print("reboot (apply radio) …")
+            dropped = send_reboot(cli)
+            cli = None
+            if dropped:
+                print(f"   USB dropped")
+            else:
+                print(f"   USB still present — reboot did not take")
 
         if do_discover and not confirm_antenna():
             do_discover = False

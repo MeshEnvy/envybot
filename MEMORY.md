@@ -67,6 +67,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 - Duty-cycle default is 100% (`nodes.yaml` `dutycycle` overrides).
   `set dutycycle` needs MeshCore 1.15+; older 1.x uses `set af`.
   Onboard also SETs `path.hash.mode` 1 (2-byte), same as fleet apply.
+  Onboard always reboots (`set radio` is prefs-only until reboot) unless
+  `--no-reboot`. `get radio` matching is not evidence the radio is live.
 - Do not copy passwords or keypairs into this repo.
 - Not mesh-api. Not the sidecar mux (`mesh-sidecar-daemon`).
 - Daemon (`envybot serve`, N-radio mux) is later.
