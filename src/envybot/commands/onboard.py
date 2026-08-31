@@ -413,6 +413,27 @@ def format_neighbors(neighbors: list[dict[str, Any]]) -> str:
     return f"{len(neighbors)}: " + ", ".join(parts)
 
 
+def antenna_ready(reply: str) -> bool:
+    """Enter / y continues. s / n / skip aborts discover."""
+    return reply.strip().lower() not in ("s", "n", "no", "skip")
+
+
+def confirm_antenna() -> bool:
+    """Block until the operator confirms an antenna is on the DUT."""
+    if not sys.stdin.isatty():
+        print("neighbor baseline skipped (no TTY to confirm antenna)")
+        return False
+    try:
+        reply = input("Attach an antenna, then press Enter (s to skip) ")
+    except EOFError:
+        print("neighbor baseline skipped")
+        return False
+    if antenna_ready(reply):
+        return True
+    print("neighbor baseline skipped")
+    return False
+
+
 def discover_baseline(
     cli: RepeaterSerial,
     *,
@@ -914,6 +935,9 @@ def main(argv: list[str] | None = None) -> int:
             cli = None
         else:
             print("reboot skipped — radio already applied")
+
+        if do_discover and not confirm_antenna():
+            do_discover = False
 
         if do_discover:
             print(f"11. neighbor baseline ({args.discover_rounds}×, {args.discover_wait:g}s) …")

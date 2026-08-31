@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import unittest
 
-from envybot.commands.onboard import RepeaterSerial, apply_path_hash_policy
+from envybot.commands.onboard import (
+    RepeaterSerial,
+    antenna_ready,
+    apply_path_hash_policy,
+)
 from envybot.keys_doc import parse_serial_acl
 
 BEN = "aa" * 32
@@ -75,3 +79,15 @@ class PathHashPolicyTests(unittest.TestCase):
         cli = FakeCli({"get path.hash.mode": "UNKNOWN"})
         self.assertFalse(apply_path_hash_policy(cli, force=False))
         self.assertEqual(cli.sent, ["get path.hash.mode"])
+
+
+class AntennaPromptTests(unittest.TestCase):
+    def test_enter_continues(self) -> None:
+        self.assertTrue(antenna_ready(""))
+        self.assertTrue(antenna_ready("y"))
+        self.assertTrue(antenna_ready("yes"))
+
+    def test_skip(self) -> None:
+        self.assertFalse(antenna_ready("s"))
+        self.assertFalse(antenna_ready("skip"))
+        self.assertFalse(antenna_ready("n"))

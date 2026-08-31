@@ -49,6 +49,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   allowlist. Book GPS is SET only when `public: true`.
 - Onboard omits `public`, does not store `Repeater` as the book name, and
   uses device GPS `0,0` (not the Manila placeholder).
+- Onboard waits for an antenna confirm before neighbor discover (Enter
+  to proceed, `s` to skip). No TTY skips discover.
 
 ### Fixed
 

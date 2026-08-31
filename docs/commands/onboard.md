@@ -28,7 +28,9 @@ Idempotent on identity, creds, radio, name, and GPS:
    there are no named people yet. MeshCore prints `ACL:` on serial and
    does not send a `->` reply for `get acl`.
 7. Read public + secret keys. Set host clock.
-8. Neighbor discover/fetch (default 3 rounds). Always re-runs.
+8. Neighbor discover/fetch (default 3 rounds). Prompts to attach an
+   antenna first (Enter to continue, `s` to skip). `--no-discover` skips
+   the prompt. No TTY skips discover.
 9. Reboot only if radio prefs changed (unless `--no-reboot` / `--force`).
 
 `site` stays null. This unit is bag/bench until you stake it.
