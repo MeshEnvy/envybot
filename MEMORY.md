@@ -9,7 +9,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | Version | 0.1.0 |
 | Tooling | `uv` + `pyproject.toml` |
 | Commands | `fleet`, `trust`, `cmd`, `onboard` |
-| Book | `--book` / `ENVYBOT_HOME` / cwd with `nodes.yaml` (+ `keys.yaml`) |
+| Book | `--book` / `ENVYBOT_HOME` / cwd with `nodes.yaml` (+ `keys.yaml`, `channels.yaml`) |
 
 ## Layout
 
@@ -19,6 +19,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/cli.py` | Dispatcher; `COMMANDS` registry |
 | `src/envybot/book.py` | Resolve book dir; never write secrets here |
 | `src/envybot/keys_doc.py` | `keys.yaml` people + `trust` role resolve |
+| `src/envybot/channels_doc.py` | `channels.yaml` catalog + companion slot planner |
 | `src/envybot/nodes_doc.py` | Desired `nodes.yaml` load/write/migrate |
 | `src/envybot/history.py` | `data/fleet/history.sqlite` |
 | `src/envybot/position.py` | Book GPS from `sites.yaml` (`node:` bind + `loc`) |
@@ -27,7 +28,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/apply.py` | SET mask unless `public: true`; `v1:` profile hash |
 | `src/envybot/passwords.py` | Password strength + uniqueness (no shared defaults) |
 | `src/envybot/commands/fleet.py` | Localhost manager |
-| `src/envybot/commands/trust.py` | Contacts + keys.yaml / ACL login |
+| `src/envybot/commands/trust.py` | Contacts + channels + keys.yaml / ACL login |
 | `src/envybot/commands/cmd.py` | Remote MeshCore CLI |
 | `src/envybot/commands/onboard.py` | USB repeater text CLI onboard |
 | `src/envybot/web/` | Fleet UI (`:8787`) |
@@ -49,6 +50,10 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   not login. Book `trust.admin` / `trust.guest` name people. Apply
   `setperm`s those keys (admin 3, guest 1) and drops extras.
   `admin1_*` is Meshtastic, not MC ACL.
+- `channels.yaml` (channel-first) lists group name + 16-byte PSK + who
+  gets it (`everyone` or person slugs). `trust` add/updates granted
+  channels on the companion; extras on the tag are left alone. Missing
+  file skips channel work.
 - Mask name is `Repeater`. Book name stays in YAML.
 - Passwords are unique and strong per unit. Apply/onboard roll blank, weak
   (`m35h3nvy`, placeholders, short), or colliding guests. Admin is never

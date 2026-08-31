@@ -15,6 +15,7 @@ from envybot.keys_doc import (
     add_book_role,
     apply_node_override,
     companion_in_desired_acl,
+    find_person_for_pubkey,
     load_keys,
     parse_serial_acl,
     parse_trust_policy,
@@ -41,6 +42,13 @@ class RememberTests(unittest.TestCase):
     def test_reject_short_hex(self) -> None:
         with self.assertRaises(TrustError):
             remember_person_key({}, "ben", "aa" * 12)
+
+
+class FindPersonTests(unittest.TestCase):
+    def test_match_by_prefix(self) -> None:
+        keys = {"ben": [BEN], "bill": [BILL]}
+        self.assertEqual(find_person_for_pubkey(keys, BEN), "ben")
+        self.assertIsNone(find_person_for_pubkey(keys, EXTRA))
 
 
 class ResolveTests(unittest.TestCase):

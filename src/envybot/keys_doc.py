@@ -138,6 +138,17 @@ def person_has_key(keys: dict[str, list[str]], name: str, pubkey: str) -> bool:
     return False
 
 
+def find_person_for_pubkey(keys: dict[str, list[str]], pubkey: str) -> str | None:
+    """First keys.yaml person whose pubkey list matches this companion."""
+    want = pubkey.strip().lower()
+    if len(want) < 12:
+        return None
+    for person in sorted(keys):
+        if person_has_key(keys, person, want):
+            return person
+    return None
+
+
 def remember_person_key(keys: dict[str, list[str]], name: str, pubkey: str) -> bool:
     person = name.strip().lower()
     if not PERSON_RE.match(person):

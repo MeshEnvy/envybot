@@ -3,7 +3,7 @@
 MeshEnvy fleet CLI. Localhost manager, companion trust import, remote CLI,
 and USB repeater onboard.
 
-The **book** (`nodes.yaml`, creds, `data/fleet/history.sqlite`) is private
+The **book** (`nodes.yaml`, creds, `channels.yaml`, `data/fleet/history.sqlite`) is private
 and is not in this repo. Point at it with `--book` or `ENVYBOT_HOME`. If
 the current directory already contains `nodes.yaml`, that is used.
 
@@ -22,7 +22,7 @@ export ENVYBOT_HOME=/path/to/book
 | Command | Manual | What it does |
 |---------|--------|--------------|
 | [`fleet`](docs/commands/fleet.md) | [docs/commands/fleet.md](docs/commands/fleet.md) | Map, poll GET → sqlite, apply privacy mask (or `public: true`). |
-| [`trust`](docs/commands/trust.md) | [docs/commands/trust.md](docs/commands/trust.md) | Companion contacts plus `keys.yaml` / fleet ACL grant. |
+| [`trust`](docs/commands/trust.md) | [docs/commands/trust.md](docs/commands/trust.md) | Companion contacts, `channels.yaml` grants, plus `keys.yaml` / fleet ACL grant. |
 | [`cmd`](docs/commands/cmd.md) | [docs/commands/cmd.md](docs/commands/cmd.md) | Run remote MeshCore CLI on one unit (one-shot or REPL). |
 | [`onboard`](docs/commands/onboard.md) | [docs/commands/onboard.md](docs/commands/onboard.md) | USB text-CLI onboard of a repeater under test. |
 

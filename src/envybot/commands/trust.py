@@ -11,12 +11,22 @@ import time
 from pathlib import Path
 from typing import Any
 
+from envybot.channels_doc import (
+    DEFAULT_MAX_CHANNELS,
+    ChannelsError,
+    channels_path,
+    heard_slot_from_payload,
+    load_channels,
+    plan_channel_ops,
+    resolve_person_channels,
+)
 from envybot.keys_doc import (
     HEX_PUBKEY_RE,
     TrustError,
     TrustPolicy,
     add_book_role,
     apply_node_override,
+    find_person_for_pubkey,
     keys_path,
     load_keys,
     parse_trust_policy,
@@ -258,6 +268,72 @@ async def grant_companion_acl(
     return ok, fail
 
 
+async def _fetch_channel_slots(client: MeshCore, max_channels: int) -> list:
+    from envybot.channels_doc import ChannelSlot
+
+    slots: list[ChannelSlot] = []
+    for idx in range(max_channels):
+        res = await client.commands.get_channel(idx)
+        if res.type == EventType.CHANNEL_INFO and isinstance(res.payload, dict):
+            slots.append(heard_slot_from_payload(idx, res.payload))
+    return slots
+
+
+async def push_channels(
+    client: MeshCore,
+    nodes_path: Path,
+    *,
+    person: str | None,
+    log: PollLog,
+) -> tuple[int, int, bool]:
+    """Apply channels.yaml grants. Returns (satisfied, want, all_ok)."""
+    cpath = channels_path(nodes_path)
+    if not cpath.is_file():
+        return 0, 0, True
+    try:
+        catalog = load_channels(cpath)
+    except ChannelsError as exc:
+        raise TrustError(str(exc)) from exc
+    want = resolve_person_channels(catalog, person)
+    if not want:
+        return 0, 0, True
+
+    res = await client.commands.send_device_query()
+    max_channels = DEFAULT_MAX_CHANNELS
+    if res.type == EventType.DEVICE_INFO and isinstance(res.payload, dict):
+        max_channels = int(res.payload.get("max_channels") or DEFAULT_MAX_CHANNELS)
+
+    heard = await _fetch_channel_slots(client, max_channels)
+    ops, planner_failures = plan_channel_ops(want, heard)
+    set_fail = 0
+    for op in ops:
+        set_res = await client.commands.set_channel(op.idx, op.name, op.secret)
+        if set_res.type == EventType.ERROR:
+            log.step(f"{op.label}: set failed ({set_res.payload})")
+            set_fail += 1
+            continue
+        log.step(f"{op.label} slot {op.idx}")
+    for name in planner_failures:
+        log.step(f"channel {name}: table full")
+
+    fail_count = len(planner_failures) + set_fail
+    satisfied = len(want) - fail_count
+    return satisfied, len(want), fail_count == 0
+
+
+def resolve_channel_person(
+    nodes_path: Path,
+    client: MeshCore,
+    policy: TrustPolicy | None,
+) -> str | None:
+    if policy is not None:
+        return policy.person
+    pubkey = companion_identity(client)
+    if not pubkey or not HEX_PUBKEY_RE.match(pubkey.strip().lower()):
+        return None
+    return find_person_for_pubkey(load_keys(keys_path(nodes_path)), pubkey.strip().lower())
+
+
 async def run(args: argparse.Namespace) -> int:
     nodes_path: Path = args.nodes
     grant_include = {u.lower() for u in args.unit} if args.unit else None
@@ -291,10 +367,25 @@ async def run(args: argparse.Namespace) -> int:
         n = await push_contacts(client, rows, log=log)
         print(f"trusted {n}/{len(rows)} contact(s) on companion")
         contact_ok = n == len(rows)
-        if policy is None:
-            return 0 if contact_ok else 2
 
         await ensure_companion_identity(client)
+        try:
+            channel_person = resolve_channel_person(nodes_path, client, policy)
+            ch_ok, ch_want, channel_ok = await push_channels(
+                client,
+                nodes_path,
+                person=channel_person,
+                log=log,
+            )
+        except TrustError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        if ch_want:
+            print(f"channels {ch_ok}/{ch_want} grant(s)")
+
+        if policy is None:
+            return 0 if contact_ok and channel_ok else 2
+
         pubkey = companion_identity(client)
         if not pubkey or not HEX_PUBKEY_RE.match(pubkey.strip().lower()):
             print(
@@ -321,7 +412,7 @@ async def run(args: argparse.Namespace) -> int:
                 print("skip ACL login (guest grant; run fleet apply from an admin tag)")
             else:
                 print("skip ACL login (key already in keys.yaml)")
-            return 0 if contact_ok else 2
+            return 0 if contact_ok and channel_ok else 2
 
         grant_targets = load_targets(
             nodes_path, deployed_only=False, include=grant_include, skip=None
@@ -337,7 +428,7 @@ async def run(args: argparse.Namespace) -> int:
             log=log,
         )
         print(f"acl {acl_ok}/{acl_ok + acl_fail} login(s)")
-        if acl_fail or not contact_ok:
+        if acl_fail or not contact_ok or not channel_ok:
             return 2
         return 0
     finally:

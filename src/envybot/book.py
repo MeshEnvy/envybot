@@ -9,6 +9,7 @@ ENV_HOME = "ENVYBOT_HOME"
 NODES_NAME = "nodes.yaml"
 SITES_NAME = "sites.yaml"
 KEYS_NAME = "keys.yaml"
+CHANNELS_NAME = "channels.yaml"
 
 
 class BookError(SystemExit):
@@ -62,3 +63,7 @@ def sites_path(book: Path) -> Path:
 
 def keys_path(book: Path) -> Path:
     return book / KEYS_NAME
+
+
+def channels_path(book: Path) -> Path:
+    return book / CHANNELS_NAME

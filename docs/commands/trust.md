@@ -1,15 +1,16 @@
 # `envybot trust`
 
 Write site name + resolved location + pubkey onto a companion as
-contacts/favorites. With a person arg, also record this tag in `keys.yaml`
-and update `nodes.yaml` trust roles.
+contacts/favorites. Applies `channels.yaml` group-channel grants. With a
+person arg, also record this tag in `keys.yaml` and update `nodes.yaml`
+trust roles.
 
 ```
 ./envybot [--book DIR] trust [person[:role] selector:role …] [flags]
 ```
 
 ```
-./envybot trust                         # contacts only
+./envybot trust                         # contacts + channel grants
 ./envybot trust ben                     # this tag is ben, fleet admin
 ./envybot trust bill:guest              # this tag is bill, fleet guest
 ./envybot trust ben me0016:guest        # fleet admin, guest on that unit
@@ -22,6 +23,22 @@ advert name is removed and re-added so the phone list picks up the
 book name. Reconnect the MeshCore app after trust.
 
 Does not copy admin/guest passwords or field-node secret keys.
+
+## Group channels
+
+`channels.yaml` lives next to `keys.yaml` in the private book. Each channel
+is defined once (name + 32-hex PSK) with a `people:` grant (`everyone` or
+a list of person slugs). `public` is reserved for the stock MeshCore Public
+slot (no key required).
+
+On every companion connect, `trust` GETs channel slots and SETs any granted
+channel that is missing or has the wrong key. Add/update only: personal
+channels already on the tag are not removed. Without `channels.yaml`, channel
+work is skipped.
+
+Person for grants: the `trust` person arg, else lookup of the live companion
+pubkey in `keys.yaml`, else `everyone` channels only. Guest vs admin does
+not change channel grants.
 
 ## People and roles
 
