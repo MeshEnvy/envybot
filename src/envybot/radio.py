@@ -55,7 +55,8 @@ DUTYCYCLE_CLI_SINCE = (1, 15)
 #   (keys.yaml + trust.admin). ACL-admin can send CLI without a password.
 #   Out of sync: drop the companion from that ACL so the next run logs in.
 #   Live RTC is ``clock`` CLI (or LOGIN_SUCCESS timestamp). STATUS is uptime,
-#   not wall clock.
+#   not wall clock. Clock is the skip-login reachability probe: a timeout
+#   means the unit is unreachable. Do not continue GET/SET on that unit.
 # - Clock set is one CLI: ``time <host epoch>``. Drift is vs host, so set from
 #   host, not companion RTC (``clock sync``). Only from a live clock
 #   (login timestamp or ``clock``), or stored clock that is unset (0 / pre-2020).
@@ -1683,7 +1684,8 @@ async def fetch_repeater_clock(
     attempts: int,
     log: PollLog,
     session: FleetSession | None = None,
-) -> int | None:
+) -> tuple[int | None, bool]:
+    """Return (epoch or None, heard). heard=False is a timeout, not an unparsed reply."""
     raw = await send_cmd_sync(
         client,
         target,
@@ -1693,12 +1695,14 @@ async def fetch_repeater_clock(
         log=log,
         session=session,
     )
+    if raw is None:
+        return None, False
     ts = parse_clock_cli(raw)
     if ts is not None:
         log.step(f"clock {ts}")
-    elif raw:
+    else:
         log.step(f"clock: unparsed ({raw.strip()[:40]})")
-    return ts
+    return ts, True
 
 
 async def maybe_admin_access(
@@ -1725,7 +1729,7 @@ async def maybe_admin_access(
             session.mark_authed(target.key)
         if not fetch_clock:
             return True, None, None
-        clock = await fetch_repeater_clock(
+        clock, heard = await fetch_repeater_clock(
             client,
             target,
             cmd_timeout=cmd_timeout,
@@ -1733,6 +1737,9 @@ async def maybe_admin_access(
             log=log,
             session=session,
         )
+        if not heard:
+            log.step("clock timeout, skip remaining ops")
+            return False, "clock timeout", None
         return True, None, clock
     return await admin_login(
         client,

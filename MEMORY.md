@@ -62,8 +62,10 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   ok apply stamp. Payload: name/gps/adverts, guest+admin tokens, identity
   pubkey, path.hash, dutycycle, ACL. Identity secret is `roll`, not apply.
 - Skip password login when the companion is a resolved **admin** key.
-  Live RTC is `clock` CLI (or login timestamp). Out of sync: drop the
-  companion from the ACL so the next run logs in.
+  Live RTC is `clock` CLI (or login timestamp). Clock is the skip-login
+  reachability probe: timeout = unreachable, skip remaining GET/apply
+  for that unit. Out of sync: drop the companion from the ACL so the
+  next run logs in.
 - Duty-cycle default is 100% (`nodes.yaml` `dutycycle` overrides).
   `set dutycycle` needs MeshCore 1.15+; older 1.x uses `set af`.
   Onboard also SETs `path.hash.mode` 1 (2-byte), same as fleet apply.
@@ -82,4 +84,4 @@ Separate USB OTA repeater for `motatool serve`.
 - **Fleet UI:** `./envybot fleet` serves `127.0.0.1:8787` by default.
   `--web-only` browses the book without a radio. Never expose secrets.
 
-Last updated: 2026-08-30
+Last updated: 2026-08-31

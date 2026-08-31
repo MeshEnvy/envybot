@@ -35,8 +35,9 @@ Always also SETs `path.hash.mode` (default 1 = 2-byte), `dutycycle`
 (default 100), a strong book admin via `password`, and clock if unset
 or behind. Password login is skipped when the companion is a resolved
 **admin** key for that unit. Live clock then comes from the `clock`
-CLI. Drop the companion from the ACL to force login if that belief is
-wrong.
+CLI, which is also the reachability probe. If `clock` times out, that
+unit is unreachable and remaining GET/SET ops are skipped. Drop the
+companion from the ACL to force login if that belief is wrong.
 
 Apply is due when `profile_id` (`v1:` + hash of the desired SET payload)
 does not match the last successful apply stamp, or a private node is
