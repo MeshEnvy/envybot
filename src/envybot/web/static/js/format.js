@@ -55,16 +55,43 @@ export function formatUnreadableRf(recvErrors, packetsRecv) {
   const recv = packetsRecv ?? 0
   const total = errs + recv
   const count = formatCount(errs)
-  if (total === 0) return `${count} · 0% of receptions`
-  return `${count} · ${formatPct((errs / total) * 100)} of receptions`
+  if (total === 0) return `${count} · 0%`
+  return `${count} · ${formatPct((errs / total) * 100)}`
 }
 
-/** @param {number | null | undefined} secs */
+/** Compact duration: 12s, 8m9s, 16h36m, 1d17h */
 export function formatPollWindow(secs) {
-  if (secs == null) return '—'
-  if (secs < 3600) return `${secs}s`
-  if (secs < 86400) return `${(secs / 3600).toFixed(1)}h`
-  return `${(secs / 86400).toFixed(1)}d`
+  if (secs == null || Number.isNaN(Number(secs))) return '—'
+  const s = Math.max(0, Math.floor(Number(secs)))
+  if (s < 60) return `${s}s`
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  if (d > 0) return h ? `${d}d${h}h` : `${d}d`
+  if (h > 0) return m ? `${h}h${m}m` : `${h}h`
+  return sec ? `${m}m${sec}s` : `${m}m`
+}
+
+/**
+ * Stock-ticker change vs the previous sample.
+ * @returns {{ text: string, dir: 'up' | 'down' } | null}
+ */
+export function formatStockDelta(curr, prev, digits = 2) {
+  if (curr == null || prev == null) return null
+  const a = Number(curr)
+  const b = Number(prev)
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null
+  return formatSignedDelta(a - b, digits)
+}
+
+/** @param {number | null | undefined} delta */
+export function formatSignedDelta(delta, digits = 2) {
+  if (delta == null) return null
+  const d = Number(delta)
+  if (!Number.isFinite(d)) return null
+  if (Math.abs(d) < 0.5 * 10 ** -digits) return null
+  return { text: `${d > 0 ? '+' : ''}${d.toFixed(digits)}`, dir: d > 0 ? 'up' : 'down' }
 }
 
 /** @param {Record<string, unknown> | null | undefined} interval */
@@ -125,7 +152,7 @@ export function healthEmoji(unit) {
 /** @param {Record<string, unknown> | undefined} unit */
 export function healthMark(unit) {
   const mark = HEALTH_MARKS[healthHeadline(unit)] || HEALTH_MARKS.healthy
-  return `${mark.emoji} ${mark.label}`
+  return mark.label
 }
 
 /** @param {Record<string, unknown> | null | undefined} health */

@@ -1,12 +1,11 @@
-import { createApp, computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { connectEvents, fetchFleet, fetchHistory, patchUnit, pullUnit, pushUnit, refreshUnit } from './api.js'
+import { createApp, computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { connectEvents, fetchFleet, fetchPolls, patchUnit, pullUnit, pushUnit, refreshUnit } from './api.js'
 import {
   formatAgo,
-  formatAirtimePct,
   formatBattery,
   formatCount,
-  formatNoiseFloor,
   formatPollWindow,
+  formatSignedDelta,
   formatUnreadableRf,
   formatRelative,
   formatRssi,
@@ -15,7 +14,6 @@ import {
   formatTemp,
   formatUptime,
   hasHealthIssues,
-  hasTrafficInterval,
   hasTrafficStats,
   healthHeadline,
   healthMark,
@@ -23,9 +21,9 @@ import {
   compareUnits,
   unitLabel,
   unitTitle,
-} from './format.js?v=15'
-import { buildNeighborEdges, createMapController, hasMapPin, unitStage, unitStatus } from './map.js?v=18'
-import { healthStroke, sparklinePath } from './sparklines.js?v=1'
+} from './format.js?v=18'
+import { buildNeighborEdges, createMapController, unitStage, unitStatus } from './map.js?v=22'
+import { isSynthetic, seriesFromPolls, sparklineWallTime, SPARK_MIN_SPAN } from './sparklines.js?v=5'
 
 const App = {
   setup() {
@@ -39,15 +37,16 @@ const App = {
     const selectedKey = ref(null)
     const search = ref('')
     const listFilter = ref('all')
-    const sparkData = reactive({
-      voltage: [],
-      temperature: [],
-      unreadable_pct: [],
-      recv_rate: [],
-      noise_floor: [],
-    })
-    /** @type {import('vue').Ref<HTMLElement | null>} */
-    const detailEl = ref(null)
+    const pollLog = ref([])
+    const historyHours = 72
+
+    const METRIC_ROWS = [
+      { key: 'battery_mv', label: 'Voltage', stroke: '#6ee7a0' },
+      { key: 'temperature', label: 'Temp', stroke: '#f0b86e' },
+      { key: 'unreadable_pct', label: 'Unreadable', stroke: '#f06e6e' },
+      { key: 'recv_rate', label: 'In / h', stroke: '#4ea1ff' },
+      { key: 'noise_floor', label: 'Noise', stroke: '#a78bfa' },
+    ]
     /** @type {ReturnType<typeof createMapController> | null} */
     let mapCtrl = null
     /** @type {EventSource | null} */
@@ -154,70 +153,86 @@ const App = {
 
     const selectedUnit = computed(() => (selectedKey.value ? fleet.units[selectedKey.value] : null))
 
-    const detailHasMapPin = computed(() => hasMapPin(selectedUnit.value?.position))
-
-    function restowDetailEl() {
-      const el = detailEl.value
-      if (!el) return
-      const wrap = document.getElementById('map-wrap')
-      if (wrap && el.parentElement !== wrap) wrap.appendChild(el)
-    }
-
-    function syncDetailPopup() {
-      const unit = selectedUnit.value
-      const el = detailEl.value
-      if (!unit || !el) {
-        mapCtrl?.detachDetail()
-        restowDetailEl()
-        return
-      }
-      if (hasMapPin(unit.position)) {
-        const lat = Number(unit.position.lat)
-        const lon = Number(unit.position.lon)
-        mapCtrl.attachDetail(el, [lon, lat])
-        return
-      }
-      mapCtrl?.detachDetail()
-      restowDetailEl()
-    }
-
     async function loadSparklines(key) {
-      const metrics = ['voltage', 'temperature', 'unreadable_pct', 'recv_rate', 'noise_floor']
-      const results = await Promise.all(
-        metrics.map((m) =>
-          fetchHistory(key, m)
-            .then((r) => r.points || [])
-            .catch(() => [])
-        )
-      )
-      metrics.forEach((m, i) => {
-        sparkData[m] = results[i]
-      })
+      try {
+        const res = await fetchPolls(key, historyHours)
+        pollLog.value = res.polls || []
+      } catch {
+        pollLog.value = []
+      }
     }
 
-    function sparkPath(metric) {
-      return sparklinePath(sparkData[metric] || [], 120, 28)
-    }
+    const sparkSeries = computed(() => seriesFromPolls(pollLog.value))
+
+    const sparkModels = computed(() => {
+      /** @type {Record<string, ReturnType<typeof sparklineWallTime>>} */
+      const out = {}
+      for (const row of METRIC_ROWS) {
+        out[row.key] = sparklineWallTime(sparkSeries.value[row.key] || [], 168, 22, {
+          minSpan: SPARK_MIN_SPAN[row.key] || 0,
+        })
+      }
+      return out
+    })
 
     const SPARK_VALUE_FORMAT = {
-      voltage: (v) => `${v.toFixed(2)} V`,
+      battery_mv: (v) => `${v.toFixed(2)} V`,
       temperature: (v) => `${v.toFixed(1)} °C`,
       unreadable_pct: (v) => `${v.toFixed(1)}%`,
       recv_rate: (v) => `${v.toFixed(1)}/h`,
       noise_floor: (v) => `${Math.trunc(v)} dBm`,
     }
 
-    /** Latest value as text when there are too few points for a line. */
-    function sparkFallback(metric) {
-      const values = (sparkData[metric] || [])
-        .map((p) => p.value)
-        .filter((v) => v != null && Number.isFinite(Number(v)))
-      if (!values.length) return '—'
+    function metricNow(metric) {
+      const unit = selectedUnit.value
+      if (metric === 'battery_mv') {
+        const mv = unit?.status?.battery_mv
+        if (mv != null) return formatBattery(mv)
+        const v = unit?.telemetry?.voltage
+        if (v != null) return `${Number(v).toFixed(2)} V`
+      }
+      if (metric === 'temperature') {
+        const t = unit?.telemetry?.temperature
+        if (t != null) return formatTemp(t)
+      }
+      const points = sparkSeries.value[metric] || []
+      const last = [...points].reverse().find((p) => p.value != null && Number.isFinite(Number(p.value)))
+      if (!last) return '—'
       const fmt = SPARK_VALUE_FORMAT[metric] || ((v) => String(v))
-      return `${fmt(Number(values[values.length - 1]))} · 1 poll`
+      return fmt(Number(last.value))
     }
 
-    async function selectUnit(key) {
+    /** Latest value as text when there are too few points for a line. */
+    function sparkFallback(metric) {
+      return metricNow(metric)
+    }
+
+    function formatPollDelta(recv, sent) {
+      const parts = []
+      if (recv != null) parts.push(`+${recv}`)
+      if (sent != null) parts.push(`+${sent}`)
+      return parts.length ? parts.join(' / ') : '—'
+    }
+
+    function formatPollVoltage(poll) {
+      if (poll?.voltage != null) return `${Number(poll.voltage).toFixed(2)} V`
+      if (poll?.battery_mv != null) return formatBattery(poll.battery_mv)
+      return '—'
+    }
+
+    function formatPollTemp(poll) {
+      return poll?.temperature != null ? formatTemp(poll.temperature) : '—'
+    }
+
+    function voltageStock(poll) {
+      return formatSignedDelta(poll?.delta_voltage, 2)
+    }
+
+    function tempStock(poll) {
+      return formatSignedDelta(poll?.delta_temperature, 1)
+    }
+
+    function selectUnit(key) {
       if (selectedKey.value === key) {
         clearSelection()
         return
@@ -226,19 +241,11 @@ const App = {
       mapCtrl?.flyTo(key, fleet)
       mapCtrl?.sync(fleet, key)
       loadSparklines(key)
-      await nextTick()
-      syncDetailPopup()
     }
 
     function clearSelection() {
       selectedKey.value = null
-      sparkData.voltage = []
-      sparkData.temperature = []
-      sparkData.unreadable_pct = []
-      sparkData.recv_rate = []
-      sparkData.noise_floor = []
-      mapCtrl?.detachDetail()
-      restowDetailEl()
+      pollLog.value = []
       mapCtrl?.sync(fleet, null)
     }
 
@@ -296,7 +303,6 @@ const App = {
     }
     function pushMap() {
       mapCtrl?.sync(fleet, selectedKey.value)
-      syncDetailPopup()
     }
 
     onMounted(async () => {
@@ -346,8 +352,6 @@ const App = {
       sortedUnits,
       selectedUnit,
       selectedKey,
-      detailEl,
-      detailHasMapPin,
       manualAccepting,
       canManualUnit,
       runManualJob,
@@ -366,10 +370,8 @@ const App = {
       formatAgo,
       formatRelative,
       formatSite,
-      formatAirtimePct,
       formatBattery,
       formatCount,
-      formatNoiseFloor,
       formatPollWindow,
       formatUnreadableRf,
       formatTemp,
@@ -377,12 +379,20 @@ const App = {
       formatRssi,
       formatSnr,
       hasHealthIssues,
-      hasTrafficInterval,
       hasTrafficStats,
-      healthStroke,
       healthTooltip,
-      sparkPath,
+      METRIC_ROWS,
+      pollLog,
+      historyHours,
+      sparkModels,
       sparkFallback,
+      metricNow,
+      formatPollDelta,
+      formatPollVoltage,
+      formatPollTemp,
+      voltageStock,
+      tempStock,
+      isSynthetic,
       unitLabel,
       unitTitle,
       togglePublic,
@@ -420,13 +430,18 @@ const App = {
         <div id="map"></div>
         <div
           v-if="selectedUnit"
-          ref="detailEl"
-          id="detail"
-          class="detail"
-          :class="{ 'detail-unmapped': !detailHasMapPin }"
+          class="detail-modal"
+          @click.self="clearSelection"
         >
+          <div
+            id="detail"
+            class="detail"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="detail-title"
+          >
           <div class="detail-head">
-            <h2>{{ unitTitle(selectedUnit) }}</h2>
+            <h2 id="detail-title">{{ unitTitle(selectedUnit) }}</h2>
             <button type="button" class="detail-close" aria-label="Close" @click="clearSelection">×</button>
           </div>
           <p class="sub">
@@ -435,53 +450,59 @@ const App = {
             · {{ formatRelative(selectedUnit.last_heard) }}
             <span v-if="selectedUnit.drift"> · {{ selectedUnit.drift }}</span>
           </p>
-          <label class="book-toggle">
-            <input type="checkbox" :checked="!!selectedUnit.public" @change="togglePublic(selectedUnit, $event)" />
-            public (push site name + GPS)
-          </label>
-          <label class="book-toggle">
-            <input type="checkbox" :checked="!!selectedUnit.paused" @change="togglePaused(selectedUnit, $event)" />
-            pause auto poll/apply (Refresh, Pull, and Push still work)
-          </label>
-          <div v-if="manualAccepting" class="manual-actions">
-            <button
-              type="button"
-              class="manual-btn"
-              :disabled="!canManualUnit(selectedUnit)"
-              @click="runManualJob(selectedUnit, 'refresh', $event)"
+          <div class="detail-toolbar">
+            <label
+              class="book-toggle"
+              title="Push site name and GPS when public"
             >
-              Refresh
-            </button>
-            <button
-              type="button"
-              class="manual-btn"
-              :disabled="!canManualUnit(selectedUnit)"
-              @click="runManualJob(selectedUnit, 'pull', $event)"
+              <input type="checkbox" :checked="!!selectedUnit.public" @change="togglePublic(selectedUnit, $event)" />
+              <span class="switch" aria-hidden="true"></span>
+              Public
+            </label>
+            <label
+              class="book-toggle book-toggle-pause"
+              title="Skip auto poll and apply. Refresh, Pull, and Push still work."
             >
-              Pull
-            </button>
-            <button
-              type="button"
-              class="manual-btn manual-btn-push"
-              :disabled="!canManualUnit(selectedUnit)"
-              @click="runManualJob(selectedUnit, 'push', $event)"
-            >
-              Push
-            </button>
+              <input type="checkbox" :checked="!!selectedUnit.paused" @change="togglePaused(selectedUnit, $event)" />
+              <span class="switch" aria-hidden="true"></span>
+              Pause
+            </label>
+            <div v-if="manualAccepting" class="manual-actions">
+              <button
+                type="button"
+                class="manual-btn"
+                :disabled="!canManualUnit(selectedUnit)"
+                @click="runManualJob(selectedUnit, 'refresh', $event)"
+              >
+                Refresh
+              </button>
+              <button
+                type="button"
+                class="manual-btn"
+                :disabled="!canManualUnit(selectedUnit)"
+                @click="runManualJob(selectedUnit, 'pull', $event)"
+              >
+                Pull
+              </button>
+              <button
+                type="button"
+                class="manual-btn manual-btn-push"
+                :disabled="!canManualUnit(selectedUnit)"
+                @click="runManualJob(selectedUnit, 'push', $event)"
+              >
+                Push
+              </button>
+            </div>
           </div>
           <section v-if="selectedUnit.health" class="health-section">
-            <h3>Health</h3>
-            <p class="health-summary">
+            <div class="health-summary">
               <span
                 class="health-chip"
                 :class="'health-' + healthHeadline(selectedUnit)"
               >
                 {{ healthMark(selectedUnit) }}
               </span>
-              <template v-if="!hasHealthIssues(selectedUnit.health)">
-                {{ selectedUnit.health.summary }}
-              </template>
-            </p>
+            </div>
             <ul v-if="hasHealthIssues(selectedUnit.health)" class="health-issues">
               <li
                 v-for="(issue, i) in selectedUnit.health.issues"
@@ -492,71 +513,65 @@ const App = {
                 <div v-if="issue.fix" class="health-fix">{{ issue.fix }}</div>
               </li>
             </ul>
-            <div class="spark-grid">
-              <div class="spark-row">
-                <span class="spark-label">Voltage</span>
-                <svg v-if="sparkPath('voltage')" class="spark" width="120" height="28" viewBox="0 0 120 28" aria-hidden="true">
-                  <polyline fill="none" stroke="#6ee7a0" stroke-width="1.5" :points="sparkPath('voltage')" />
+            <div class="metric-grid">
+              <div v-for="row in METRIC_ROWS" :key="row.key" class="metric-row">
+                <span class="metric-label">{{ row.label }}</span>
+                <span class="metric-now">{{ metricNow(row.key) }}</span>
+                <svg
+                  v-if="sparkModels[row.key]"
+                  class="spark"
+                  width="168"
+                  height="22"
+                  viewBox="0 0 168 22"
+                  aria-hidden="true"
+                >
+                  <polyline
+                    v-if="sparkModels[row.key].line"
+                    fill="none"
+                    :stroke="row.stroke"
+                    stroke-width="1.5"
+                    :points="sparkModels[row.key].line"
+                  />
+                  <circle
+                    v-for="(dot, di) in sparkModels[row.key].dots"
+                    :key="di"
+                    :cx="dot.x"
+                    :cy="dot.y"
+                    r="1.6"
+                    :fill="dot.synthetic ? 'none' : row.stroke"
+                    :stroke="row.stroke"
+                    :stroke-width="dot.synthetic ? 1.2 : 0"
+                    :opacity="dot.synthetic ? 0.65 : 1"
+                  />
                 </svg>
-                <span v-else class="spark-empty">{{ sparkFallback('voltage') }}</span>
-              </div>
-              <div class="spark-row">
-                <span class="spark-label">Temp</span>
-                <svg v-if="sparkPath('temperature')" class="spark" width="120" height="28" viewBox="0 0 120 28" aria-hidden="true">
-                  <polyline fill="none" stroke="#f0b86e" stroke-width="1.5" :points="sparkPath('temperature')" />
-                </svg>
-                <span v-else class="spark-empty">{{ sparkFallback('temperature') }}</span>
-              </div>
-              <div class="spark-row">
-                <span class="spark-label">Unreadable %</span>
-                <svg v-if="sparkPath('unreadable_pct')" class="spark" width="120" height="28" viewBox="0 0 120 28" aria-hidden="true">
-                  <polyline fill="none" stroke="#f06e6e" stroke-width="1.5" :points="sparkPath('unreadable_pct')" />
-                </svg>
-                <span v-else class="spark-empty">{{ sparkFallback('unreadable_pct') }}</span>
-              </div>
-              <div class="spark-row">
-                <span class="spark-label">In rate / h</span>
-                <svg v-if="sparkPath('recv_rate')" class="spark" width="120" height="28" viewBox="0 0 120 28" aria-hidden="true">
-                  <polyline fill="none" stroke="#4ea1ff" stroke-width="1.5" :points="sparkPath('recv_rate')" />
-                </svg>
-                <span v-else class="spark-empty">{{ sparkFallback('recv_rate') }}</span>
-              </div>
-              <div class="spark-row">
-                <span class="spark-label">Noise floor</span>
-                <svg v-if="sparkPath('noise_floor')" class="spark" width="120" height="28" viewBox="0 0 120 28" aria-hidden="true">
-                  <polyline fill="none" stroke="#a78bfa" stroke-width="1.5" :points="sparkPath('noise_floor')" />
-                </svg>
-                <span v-else class="spark-empty">{{ sparkFallback('noise_floor') }}</span>
+                <span v-else class="spark-empty">{{ sparkFallback(row.key) }}</span>
               </div>
             </div>
           </section>
-          <dl>
-            <dt>Unit</dt>
-            <dd>{{ selectedUnit.unit_id || selectedUnit.key }}</dd>
-            <dt>Site</dt>
-            <dd>{{ selectedUnit.site_name || formatSite(selectedUnit.site) }}</dd>
-            <dt>Firmware</dt>
-            <dd>{{ selectedUnit.firmware_version || '—' }} ({{ selectedUnit.firmware_platform || '?' }})</dd>
-            <dt>Bootloader</dt>
-            <dd>{{ selectedUnit.bootloader_version || '—' }}</dd>
-            <dt>Position</dt>
-            <dd>
-              <template v-if="selectedUnit.position">
-                {{ selectedUnit.position.lat.toFixed(5) }}, {{ selectedUnit.position.lon.toFixed(5) }}
-                ({{ selectedUnit.position.source }})
-              </template>
-              <template v-else>unmapped</template>
-            </dd>
-            <dt>Voltage</dt>
-            <dd>{{ formatBattery(selectedUnit.status?.battery_mv) }}</dd>
-            <dt>Temp</dt>
-            <dd>{{ formatTemp(selectedUnit.telemetry?.temperature) }}</dd>
-            <dt>Uptime</dt>
-            <dd>{{ formatUptime(selectedUnit.status?.uptime_secs) }}</dd>
-          </dl>
+          <section>
+            <dl>
+              <dt>Firmware</dt>
+              <dd>
+                {{ selectedUnit.firmware_version || '—' }}
+                <span v-if="selectedUnit.firmware_platform" class="dim">{{
+                  selectedUnit.firmware_platform
+                }}</span>
+              </dd>
+              <dt v-if="selectedUnit.bootloader_version">Bootloader</dt>
+              <dd v-if="selectedUnit.bootloader_version">{{ selectedUnit.bootloader_version }}</dd>
+              <dt>GPS</dt>
+              <dd>
+                <template v-if="selectedUnit.position">
+                  {{ selectedUnit.position.lat.toFixed(5) }}, {{ selectedUnit.position.lon.toFixed(5) }}
+                </template>
+                <template v-else>unmapped</template>
+              </dd>
+              <dt>Uptime</dt>
+              <dd>{{ formatUptime(selectedUnit.status?.uptime_secs) }}</dd>
+            </dl>
+          </section>
           <section v-if="hasTrafficStats(selectedUnit.status)">
-            <h3>Traffic since boot</h3>
-            <p class="sub">Packet counters reset when the node reboots.</p>
+            <h3>Since boot</h3>
             <dl>
               <dt>In / out</dt>
               <dd>
@@ -564,7 +579,7 @@ const App = {
                 {{ formatCount(selectedUnit.status?.packets_sent) }}
               </dd>
               <template v-if="selectedUnit.status?.recv_errors != null">
-                <dt>Unreadable RF</dt>
+                <dt>Unreadable</dt>
                 <dd>
                   {{ formatUnreadableRf(selectedUnit.status?.recv_errors, selectedUnit.status?.packets_recv) }}
                 </dd>
@@ -575,7 +590,7 @@ const App = {
                   selectedUnit.status?.recv_direct != null
                 "
               >
-                <dt>Recv flood / direct</dt>
+                <dt>Recv F / D</dt>
                 <dd>
                   {{ formatCount(selectedUnit.status?.recv_flood) }} /
                   {{ formatCount(selectedUnit.status?.recv_direct) }}
@@ -587,7 +602,7 @@ const App = {
                   selectedUnit.status?.sent_direct != null
                 "
               >
-                <dt>Sent flood / direct</dt>
+                <dt>Sent F / D</dt>
                 <dd>
                   {{ formatCount(selectedUnit.status?.sent_flood) }} /
                   {{ formatCount(selectedUnit.status?.sent_direct) }}
@@ -596,86 +611,75 @@ const App = {
               <template
                 v-if="
                   selectedUnit.status?.last_snr != null ||
-                  selectedUnit.status?.last_rssi != null ||
-                  selectedUnit.status?.noise_floor != null
+                  selectedUnit.status?.last_rssi != null
                 "
               >
-                <dt>Last SNR / RSSI</dt>
+                <dt>SNR / RSSI</dt>
                 <dd>
                   {{ formatSnr(selectedUnit.status?.last_snr) }} /
                   {{ formatRssi(selectedUnit.status?.last_rssi) }}
                 </dd>
-                <dt>Noise floor</dt>
-                <dd>{{ formatNoiseFloor(selectedUnit.status?.noise_floor) }}</dd>
-              </template>
-            </dl>
-          </section>
-          <section v-if="hasTrafficInterval(selectedUnit.traffic_interval)">
-            <h3>
-              Since last poll ({{
-                formatPollWindow(selectedUnit.traffic_interval?.duration_secs)
-              }})
-            </h3>
-            <p v-if="selectedUnit.traffic_interval?.reboot_reset" class="sub">
-              Node rebooted during this interval. The next poll will show a clean delta.
-            </p>
-            <dl v-else>
-              <dt>In / out</dt>
-              <dd>
-                {{ formatCount(selectedUnit.traffic_interval?.packets_recv) }} /
-                {{ formatCount(selectedUnit.traffic_interval?.packets_sent) }}
-              </dd>
-              <template v-if="selectedUnit.traffic_interval?.recv_errors != null">
-                <dt>Unreadable RF</dt>
-                <dd>
-                  {{
-                    formatUnreadableRf(
-                      selectedUnit.traffic_interval?.recv_errors,
-                      selectedUnit.traffic_interval?.packets_recv
-                    )
-                  }}
-                </dd>
-              </template>
-              <template
-                v-if="
-                  selectedUnit.traffic_interval?.recv_flood != null ||
-                  selectedUnit.traffic_interval?.recv_direct != null
-                "
-              >
-                <dt>Recv flood / direct</dt>
-                <dd>
-                  {{ formatCount(selectedUnit.traffic_interval?.recv_flood) }} /
-                  {{ formatCount(selectedUnit.traffic_interval?.recv_direct) }}
-                </dd>
-              </template>
-              <template
-                v-if="
-                  selectedUnit.traffic_interval?.sent_flood != null ||
-                  selectedUnit.traffic_interval?.sent_direct != null
-                "
-              >
-                <dt>Sent flood / direct</dt>
-                <dd>
-                  {{ formatCount(selectedUnit.traffic_interval?.sent_flood) }} /
-                  {{ formatCount(selectedUnit.traffic_interval?.sent_direct) }}
-                </dd>
-              </template>
-              <template v-if="selectedUnit.traffic_interval?.rx_airtime_pct != null">
-                <dt>Channel utilization</dt>
-                <dd>{{ formatAirtimePct(selectedUnit.traffic_interval?.rx_airtime_pct) }}</dd>
               </template>
             </dl>
           </section>
           <section v-if="selectedUnit.neighbors?.length">
-            <h3>Neighbors ({{ selectedUnit.neighbors.filter(n => n.unit_key).length }} in book)</h3>
+            <h3>Neighbors · {{ selectedUnit.neighbors.filter(n => n.unit_key).length }}</h3>
             <div
               v-for="(nb, i) in selectedUnit.neighbors.filter(n => n.unit_key)"
               :key="i"
               class="neighbor-row"
             >
-              {{ nb.label || nb.unit_id || nb.pubkey_prefix }} · {{ nb.snr ?? '?' }} dB · {{ formatAgo(nb.secs_ago) }}
+              {{ nb.label || nb.unit_id || nb.pubkey_prefix }}
+              · {{ nb.snr ?? '?' }} dB
+              · {{ formatAgo(nb.secs_ago) }}
             </div>
           </section>
+          <section v-if="pollLog.length" class="poll-log-section">
+            <details class="poll-log">
+              <summary>Polls · {{ pollLog.length }}</summary>
+              <table class="poll-table">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>V</th>
+                    <th>Temp</th>
+                    <th>In / out</th>
+                    <th>Gap</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(poll, pi) in pollLog" :key="pi" :class="{ 'poll-reboot': poll.reboot }">
+                    <td>{{ formatRelative(poll.ts) }}</td>
+                    <td class="poll-metric" :class="{ synthetic: isSynthetic(poll, 'voltage') }">
+                      {{ formatPollVoltage(poll) }}
+                      <span
+                        v-if="voltageStock(poll)"
+                        class="stock-delta"
+                        :class="'stock-' + voltageStock(poll).dir"
+                      >{{ voltageStock(poll).text }}</span>
+                    </td>
+                    <td class="poll-metric" :class="{ synthetic: isSynthetic(poll, 'temperature') }">
+                      {{ formatPollTemp(poll) }}
+                      <span
+                        v-if="tempStock(poll)"
+                        class="stock-delta"
+                        :class="'stock-' + tempStock(poll).dir"
+                      >{{ tempStock(poll).text }}</span>
+                    </td>
+                    <td>{{ formatPollDelta(poll.delta_packets_recv, poll.delta_packets_sent) }}</td>
+                    <td>
+                      <template v-if="poll.reboot">reboot</template>
+                      <template v-else-if="poll.since_prev_secs != null">{{
+                        formatPollWindow(poll.since_prev_secs)
+                      }}</template>
+                      <template v-else>—</template>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </details>
+          </section>
+          </div>
         </div>
       </main>
       <aside id="sidebar">

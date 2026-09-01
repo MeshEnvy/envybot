@@ -421,20 +421,28 @@ body {
   color: #ff9b6e;
 }
 
-.manual-actions {
+.detail-toolbar {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px 14px;
   margin-top: 8px;
 }
 
+.manual-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: auto;
+}
+
 .manual-btn {
-  padding: 6px 12px;
+  padding: 4px 10px;
   border: 1px solid #4ea1ff;
-  border-radius: 6px;
+  border-radius: 5px;
   background: #1a2e3d;
   color: #4ea1ff;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-weight: 600;
   cursor: pointer;
 }
@@ -470,10 +478,73 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 8px 0 0;
-  font-size: 0.8rem;
+  margin: 0;
+  font-size: 0.75rem;
   color: #c5d3df;
   cursor: pointer;
+  white-space: nowrap;
+}
+
+.book-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.book-toggle .switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: #0c1014;
+  border: 1px solid #3a4a5c;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.book-toggle .switch::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #8aa0b5;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.book-toggle input:checked + .switch {
+  background: #1a2e3d;
+  border-color: #4ea1ff;
+}
+
+.book-toggle input:checked + .switch::after {
+  transform: translateX(14px);
+  background: #4ea1ff;
+}
+
+.book-toggle-pause input:checked + .switch {
+  background: #3d2e1a;
+  border-color: #f0b86e;
+}
+
+.book-toggle-pause input:checked + .switch::after {
+  background: #f0b86e;
+}
+
+.book-toggle input:focus-visible + .switch {
+  box-shadow: 0 0 0 2px rgba(78, 161, 255, 0.25);
+}
+
+.book-toggle-pause input:focus-visible + .switch {
+  box-shadow: 0 0 0 2px rgba(240, 184, 110, 0.25);
 }
 
 @keyframes pulse {
@@ -486,29 +557,26 @@ body {
   }
 }
 
+.detail-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(8, 12, 16, 0.45);
+}
+
 .detail {
-  width: min(340px, calc(100vw - 420px));
-  max-height: min(420px, 55vh);
+  width: min(480px, 100%);
+  max-height: 100%;
   overflow: auto;
-  background: rgba(21, 27, 34, 0.96);
+  background: #151b22;
   border: 1px solid #2a3440;
   border-radius: 8px;
-  padding: 14px;
-  backdrop-filter: blur(8px);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
-  pointer-events: auto;
-}
-
-.detail.hidden {
-  display: none;
-}
-
-.detail.detail-unmapped {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  z-index: 2;
-  pointer-events: auto;
+  padding: 12px 14px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
 }
 
 .detail-head {
@@ -519,8 +587,9 @@ body {
 }
 
 .detail h2 {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 1rem;
+  line-height: 1.25;
   flex: 1;
 }
 
@@ -544,17 +613,23 @@ body {
 }
 
 .detail .sub {
-  margin: 0 0 12px;
-  font-size: 0.8rem;
+  margin: 2px 0 0;
+  font-size: 0.75rem;
   color: #8aa0b5;
+}
+
+.detail .dim {
+  margin-left: 6px;
+  color: #8aa0b5;
+  font-weight: 400;
 }
 
 .detail dl {
   margin: 0;
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 4px 12px;
-  font-size: 0.8rem;
+  grid-template-columns: 72px 1fr;
+  gap: 3px 10px;
+  font-size: 0.78rem;
 }
 
 .detail dt {
@@ -566,14 +641,14 @@ body {
 }
 
 .detail section {
-  margin-top: 12px;
-  padding-top: 12px;
+  margin-top: 10px;
+  padding-top: 10px;
   border-top: 1px solid #2a3440;
 }
 
 .detail h3 {
-  margin: 0 0 8px;
-  font-size: 0.75rem;
+  margin: 0 0 6px;
+  font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: #8aa0b5;
@@ -581,46 +656,15 @@ body {
 
 .neighbor-row {
   font-size: 0.75rem;
-  padding: 3px 0;
+  padding: 2px 0;
   color: #c5d3df;
 }
 
-.unit-detail-popup.maplibregl-popup {
-  z-index: 1;
-}
-
-.unit-detail-popup .maplibregl-popup-content {
-  padding: 0;
-  background: transparent;
-  border: none;
-  box-shadow: none;
-}
-
-.unit-detail-popup .maplibregl-popup-tip {
-  border-top-color: #151b22;
-}
-
-.maplibregl-popup-content {
-  background: #151b22;
-  color: #e7ecf1;
-  border: 1px solid #2a3440;
-  border-radius: 8px;
-  padding: 10px 12px;
-  font-size: 0.8rem;
-  line-height: 1.45;
-}
-
-.maplibregl-popup-tip {
-  border-top-color: #151b22;
-}
-
 .health-section .health-summary {
-  margin: 0 0 8px;
-  font-size: 0.8rem;
+  margin: 0 0 6px;
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
 }
 
 .health-chip {
@@ -676,21 +720,92 @@ body {
   color: #8aa0b5;
 }
 
-.spark-grid {
+.spark-grid,
+.metric-grid {
   display: grid;
-  gap: 6px;
+  gap: 2px;
 }
 
-.spark-row {
-  display: flex;
+.spark-row,
+.metric-row {
+  display: grid;
+  grid-template-columns: 72px 68px 1fr;
   align-items: center;
   gap: 8px;
   font-size: 0.72rem;
 }
 
-.spark-label {
-  flex: 0 0 88px;
+.spark-label,
+.metric-label {
   color: #8aa0b5;
+}
+
+.metric-now {
+  font-variant-numeric: tabular-nums;
+  color: #dce6f0;
+  text-align: right;
+}
+
+.poll-log {
+  margin: 0;
+  font-size: 0.72rem;
+}
+
+.poll-log summary {
+  cursor: pointer;
+  color: #8aa0b5;
+  user-select: none;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.poll-table {
+  width: 100%;
+  margin-top: 6px;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.poll-table th,
+.poll-table td {
+  padding: 3px 6px 3px 0;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid #2a3440;
+}
+
+.poll-table td.poll-metric {
+  white-space: nowrap;
+}
+
+.poll-table td.synthetic {
+  color: #8aa0b5;
+  font-style: italic;
+}
+
+.poll-table th {
+  color: #8aa0b5;
+  font-weight: 500;
+}
+
+.poll-table tr.poll-reboot td {
+  color: #f0b86e;
+}
+
+.stock-delta {
+  margin-left: 4px;
+  font-size: 0.65rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.stock-up {
+  color: #6ee7a0;
+}
+
+.stock-down {
+  color: #f06e6e;
 }
 
 .spark {

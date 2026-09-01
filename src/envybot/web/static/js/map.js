@@ -120,8 +120,6 @@ export function createMapController(containerId, onSelect, onClear) {
 
   let ready = false
   let fitted = false
-  /** @type {maplibregl.Popup | null} */
-  let detailPopup = null
   /** @type {Record<string, unknown> | null} */
   let pendingFleet = null
   /** @type {string | null} */
@@ -245,7 +243,6 @@ export function createMapController(containerId, onSelect, onClear) {
       return
     }
     ensureLayers()
-    map.resize()
 
     const units = /** @type {Record<string, Record<string, unknown>>} */ (fleet.units || {})
     /** @type {GeoJSON.Feature[]} */
@@ -322,27 +319,6 @@ export function createMapController(containerId, onSelect, onClear) {
   const wrap = container.parentElement
   if (wrap) ro.observe(wrap)
 
-  /** @param {HTMLElement} el @param {[number, number]} lngLat */
-  function attachDetail(el, lngLat) {
-    if (!ready) return
-    if (!detailPopup) {
-      detailPopup = new maplibregl.Popup({
-        closeButton: false,
-        closeOnClick: false,
-        anchor: 'bottom',
-        offset: [0, -16],
-        maxWidth: 'none',
-        className: 'unit-detail-popup',
-      })
-    }
-    detailPopup.setDOMContent(el)
-    detailPopup.setLngLat(lngLat).addTo(map)
-  }
-
-  function detachDetail() {
-    detailPopup?.remove()
-  }
-
   /** @param {string | null} key @param {Record<string, unknown>} fleet */
   function flyTo(key, fleet) {
     const unit = key ? /** @type {Record<string, unknown>} */ (fleet.units)?.[key] : null
@@ -350,17 +326,17 @@ export function createMapController(containerId, onSelect, onClear) {
     if (!hasMapPin(pos)) return
     const lat = Number(/** @type {{ lat?: unknown }} */ (pos).lat)
     const lon = Number(/** @type {{ lon?: unknown }} */ (pos).lon)
-    map.flyTo({ center: [lon, lat], zoom: 11, speed: 1.2 })
+    map.flyTo({
+      center: [lon, lat],
+      zoom: 11,
+      speed: 1.2,
+    })
   }
 
   return {
     sync,
     flyTo,
-    attachDetail,
-    detachDetail,
     destroy() {
-      detailPopup?.remove()
-      detailPopup = null
       ro.disconnect()
       map.remove()
     },

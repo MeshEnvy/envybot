@@ -58,9 +58,18 @@ export function pushUnit(key) {
   return postManualJob(key, 'push')
 }
 
-/** @param {string} unit @param {string} metric */
-export async function fetchHistory(unit, metric) {
-  const res = await fetch(`/api/history/${encodeURIComponent(unit)}?metric=${encodeURIComponent(metric)}`)
+/** @param {string} unit @param {string} metric @param {number} [hours] */
+export async function fetchHistory(unit, metric, hours = 72) {
+  const q = new URLSearchParams({ metric, hours: String(hours) })
+  const res = await fetch(`/api/history/${encodeURIComponent(unit)}?${q}`)
   if (!res.ok) throw new Error(`history ${res.status}`)
+  return res.json()
+}
+
+/** @param {string} unit @param {number} [hours] @param {number} [limit] */
+export async function fetchPolls(unit, hours = 72, limit = 48) {
+  const q = new URLSearchParams({ hours: String(hours), limit: String(limit) })
+  const res = await fetch(`/api/polls/${encodeURIComponent(unit)}?${q}`)
+  if (!res.ok) throw new Error(`polls ${res.status}`)
   return res.json()
 }
