@@ -178,6 +178,39 @@ class SnapshotTests(unittest.TestCase):
             self.assertNotIn("me0002", snap["units"])
             self.assertEqual(snap["counts"]["total"], 1)
 
+    def test_omits_meshtastic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            yaml = YAML()
+            yaml.dump({"sites": {}}, sites_path.open("w", encoding="utf-8"))
+            yaml.dump(
+                {
+                    "next_unit": 3,
+                    "nodes": {
+                        "me0001": {
+                            "unit_id": "ME0001",
+                            "name": "Live",
+                            "identity_pubkey": "a" * 64,
+                            "admin_password": "secret-admin",
+                        },
+                        "me0002": {
+                            "unit_id": "ME0002",
+                            "name": "MT leftover",
+                            "identity_pubkey": "b" * 64,
+                            "admin_password": "other",
+                            "firmware_platform": "meshtastic",
+                        },
+                    },
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
+            self.assertIn("me0001", snap["units"])
+            self.assertNotIn("me0002", snap["units"])
+            self.assertEqual(snap["counts"]["total"], 1)
+
     def test_drift_follows_profile_stamp(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             book = Path(tmp)

@@ -10,7 +10,13 @@ from typing import Any
 from envybot.apply import apply_is_due
 from envybot.history import all_last_seen, latest_neighbors, open_history
 from envybot.keys_doc import keys_path, load_keys
-from envybot.nodes_doc import is_decommissioned, is_public, load_nodes_doc, normalize_fleet_node
+from envybot.nodes_doc import (
+    is_decommissioned,
+    is_meshcore_platform,
+    is_public,
+    load_nodes_doc,
+    normalize_fleet_node,
+)
 from envybot.position import load_sites, resolve_book_position, site_binding
 
 SECRET_KEY_RE = re.compile(r"(password|secret)", re.I)
@@ -129,6 +135,8 @@ def build_pubkey_index(nodes: dict[str, Any]) -> dict[str, str]:
     index: dict[str, str] = {}
     for key, node in nodes.items():
         if not isinstance(node, dict) or is_decommissioned(node):
+            continue
+        if not is_meshcore_platform(node):
             continue
         pk = str(node.get("identity_pubkey") or "").lower()
         if not pk:
@@ -317,6 +325,8 @@ def build_fleet_snapshot(
         units: dict[str, dict[str, Any]] = {}
         for key, node in nodes.items():
             if not isinstance(node, dict) or is_decommissioned(node):
+                continue
+            if not is_meshcore_platform(node):
                 continue
             profile_ok = False
             if conn is not None:

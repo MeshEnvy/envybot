@@ -10,6 +10,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 - Fleet `leak` / `mismatch` follow the apply profile stamp (due vs OK),
   not heard name/GPS/advert in last-seen. Profile OK clears the badge.
+- Fleet UI omits `firmware_platform: meshtastic` units (poll/apply
+  already skipped them).
 
 - Apply stamps each SET field in sqlite (`applies.name`, `.lat`, …).
   Synced fields skip on the next run; `--force` clears stamps and re-SETs.

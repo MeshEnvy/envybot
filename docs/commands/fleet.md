@@ -9,7 +9,7 @@ Localhost fleet manager. Serves the map UI, GETs telemetry into
 
 Default: UI at `http://127.0.0.1:8787/` plus live GET (status/telemetry/neighbors),
 inventory gaps (fw/bl), and apply when the profile hash misses.
-`firmware_platform: meshtastic` is never polled or applied.
+`firmware_platform: meshtastic` is omitted from the UI and never polled or applied.
 
 ## Stores
 
@@ -93,4 +93,5 @@ Map pins use **book** position (`sites.yaml` loc for the bound unit), never
 device `0,0`. Detail shows book name + site name, a `public` toggle, and
 drift from the apply stamp (`leak` if a private profile is due, `mismatch`
 if a public profile is due). List cards show the same badge next to
-freshness. Rows with `decommissioned:` are omitted entirely.
+freshness. Rows with `decommissioned:` or `firmware_platform: meshtastic`
+are omitted entirely.

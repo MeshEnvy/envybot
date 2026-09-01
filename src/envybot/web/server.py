@@ -12,7 +12,7 @@ from typing import Any
 from aiohttp import web
 
 from envybot.history import history_series, open_history
-from envybot.nodes_doc import is_decommissioned, load_nodes_doc, write_nodes_doc
+from envybot.nodes_doc import is_decommissioned, is_meshcore_platform, load_nodes_doc, write_nodes_doc
 from envybot.position import bind_node_to_site, load_sites_doc, write_sites_doc
 from envybot.web.hub import FleetHub
 from envybot.web.snapshot import assert_no_secrets, build_fleet_snapshot, build_neighbor_edges
@@ -202,7 +202,7 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
     doc = load_nodes_doc(web_ctx.nodes_path)
     nodes = doc.get("nodes") or {}
     node = nodes.get(key)
-    if not isinstance(node, dict) or is_decommissioned(node):
+    if not isinstance(node, dict) or is_decommissioned(node) or not is_meshcore_platform(node):
         return web.json_response({"error": "unknown unit"}, status=404)
     if "name" in body:
         name = body["name"]

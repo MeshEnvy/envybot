@@ -42,7 +42,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   `site` / `lat` / `lon`. Apply SETs `0,0` unless `public: true`. Never
   GET device coords into YAML.
 - `fleet` / `trust` / `cmd` skip `firmware_platform: meshtastic` even
-  when leftover MeshCore pubkey/admin exist. Blank platform = meshcore.
+  when leftover MeshCore pubkey/admin exist. No UI, poll, apply, or
+  edits. Blank platform = meshcore.
 - `decommissioned:` (epoch) rows stay in `nodes.yaml` for the number
   but envybot ignores them: no UI, poll, apply, trust, cmd, or onboard.
 - `trust` imports every pollable MeshCore unit, including bag/bench
