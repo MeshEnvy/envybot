@@ -2159,7 +2159,8 @@ async def poll_one(
             if status:
                 uptime = status.get("uptime_secs")
                 bat = status.get("battery_mv")
-                log.step(f"status OK (uptime={uptime}s bat={bat}mV)")
+                bat_v = f"{bat / 1000:.2f} V" if bat is not None else "—"
+                log.step(f"status OK (uptime={uptime}s bat={bat_v})")
             else:
                 stat_errors.append("status: no response")
                 log.step("status: no response")
@@ -2790,7 +2791,7 @@ def poll_summary(res: PollResult) -> str:
         if uptime is not None:
             parts.append(f"uptime={uptime}s")
         if bat is not None:
-            parts.append(f"bat={bat}mV")
+            parts.append(f"bat={bat / 1000:.2f}V")
     if "advert" in res.polled_groups and res.advert_interval_min is not None:
         parts.append(f"adv={res.advert_interval_min}m")
     if "flood_advert" in res.polled_groups and res.flood_advert_interval_h is not None:
