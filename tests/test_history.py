@@ -22,6 +22,7 @@ from envybot.history import (
     open_history,
     poll_snapshots,
     record_poll,
+    source_histories,
     rolling_traffic,
     status_series,
 )
@@ -472,6 +473,38 @@ class HistoryTests(unittest.TestCase):
             unreadable = history_series(conn, "me0010", "unreadable_pct", since=0)
             self.assertEqual(len(unreadable), 2)
             self.assertAlmostEqual(unreadable[0]["value"], unreadable[1]["value"])
+
+    def test_source_histories_orthogonal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            now = int(time.time())
+            record_poll(
+                conn,
+                unit="me0015",
+                res=_Res(
+                    status={"battery_mv": 4050, "packets_recv": 10, "packets_sent": 2, "uptime_secs": 100},
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=now - 2000,
+            )
+            record_poll(
+                conn,
+                unit="me0015",
+                res=_Res(
+                    telemetry=[{"channel": 1, "type": "temperature", "value": 18.5}],
+                    polled_groups=frozenset({"telemetry"}),
+                ),
+                ts=now - 1000,
+            )
+            hist = source_histories(conn, "me0015", hours=72, limit=10)
+            self.assertEqual(len(hist["status"]), 1)
+            self.assertEqual(len(hist["telemetry"]), 1)
+            self.assertEqual(hist["status"][0]["ts"], now - 2000)
+            self.assertAlmostEqual(hist["status"][0]["voltage"], 4.05)
+            self.assertNotIn("temperature", hist["status"][0])
+            self.assertEqual(hist["telemetry"][0]["ts"], now - 1000)
+            self.assertAlmostEqual(hist["telemetry"][0]["temperature"], 18.5)
+            self.assertNotIn("packets_recv", hist["telemetry"][0])
 
     def test_poll_snapshots_newest_first(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

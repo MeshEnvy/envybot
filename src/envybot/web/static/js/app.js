@@ -1,5 +1,13 @@
-import { createApp, computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { createApp, computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { connectEvents, fetchFleet, fetchPolls, patchUnit, pullUnit, pushUnit, refreshUnit } from './api.js'
+import {
+  clearHistories,
+  fleetStore,
+  loadHistories,
+  patchSession,
+  patchUnit as storePatchUnit,
+  replaceSnapshot,
+} from './state.js?v=1'
 import {
   formatAgo,
   formatBattery,
@@ -23,21 +31,14 @@ import {
   unitTitle,
 } from './format.js?v=18'
 import { buildNeighborEdges, createMapController, unitStage, unitStatus } from './map.js?v=22'
-import { isSynthetic, seriesFromPolls, sparklineWallTime, SPARK_MIN_SPAN } from './sparklines.js?v=5'
+import { seriesFromHistories, sparklineWallTime, SPARK_MIN_SPAN } from './sparklines.js?v=6'
 
 const App = {
   setup() {
-    const fleet = reactive({
-      units: {},
-      counts: {},
-      poll: {},
-      companion: null,
-      edges: [],
-    })
+    const fleet = fleetStore
     const selectedKey = ref(null)
     const search = ref('')
     const listFilter = ref('all')
-    const pollLog = ref([])
     const historyHours = 72
 
     const METRIC_ROWS = [
@@ -53,31 +54,15 @@ const App = {
     let es = null
 
     function applyHello(snap) {
-      fleet.units = snap.units || {}
-      fleet.edges = edgeList(snap.edges)
-      fleet.counts = snap.counts || {}
-      fleet.poll = { ...(snap.poll || {}) }
-      if (snap.companion != null) fleet.companion = snap.companion
+      replaceSnapshot(snap)
     }
 
-    /** @param {unknown} value */
-    function edgeList(value) {
-      return Array.isArray(value) ? value : []
-    }
-
-    /** @param {Record<string, unknown>} unit */
     function applyUnit(unit) {
-      const key = String(unit.key)
-      fleet.units[key] = { ...(fleet.units[key] || {}), ...unit }
-      fleet.edges = buildNeighborEdges(
-        /** @type {Record<string, Record<string, unknown>>} */ (fleet.units)
-      )
+      storePatchUnit(unit)
     }
 
-    /** @param {Record<string, unknown>} poll */
     function applySession(poll) {
-      Object.assign(fleet.poll, poll)
-      if (poll.companion != null) fleet.companion = poll.companion
+      patchSession(poll)
     }
 
     const manualAccepting = computed(() => !!fleet.poll?.accepting)
@@ -153,16 +138,18 @@ const App = {
 
     const selectedUnit = computed(() => (selectedKey.value ? fleet.units[selectedKey.value] : null))
 
-    async function loadSparklines(key) {
+    const unitHistory = computed(() => selectedUnit.value?.history || null)
+
+    async function loadHistoriesFor(key) {
       try {
         const res = await fetchPolls(key, historyHours)
-        pollLog.value = res.polls || []
+        loadHistories(key, res.histories || {})
       } catch {
-        pollLog.value = []
+        clearHistories(key)
       }
     }
 
-    const sparkSeries = computed(() => seriesFromPolls(pollLog.value))
+    const sparkSeries = computed(() => seriesFromHistories(unitHistory.value || {}))
 
     const sparkModels = computed(() => {
       /** @type {Record<string, ReturnType<typeof sparklineWallTime>>} */
@@ -240,12 +227,11 @@ const App = {
       selectedKey.value = key
       mapCtrl?.flyTo(key, fleet)
       mapCtrl?.sync(fleet, key)
-      loadSparklines(key)
+      loadHistoriesFor(key)
     }
 
     function clearSelection() {
       selectedKey.value = null
-      pollLog.value = []
       mapCtrl?.sync(fleet, null)
     }
 
@@ -382,7 +368,7 @@ const App = {
       hasTrafficStats,
       healthTooltip,
       METRIC_ROWS,
-      pollLog,
+      unitHistory,
       historyHours,
       sparkModels,
       sparkFallback,
@@ -392,7 +378,6 @@ const App = {
       formatPollTemp,
       voltageStock,
       tempStock,
-      isSynthetic,
       unitLabel,
       unitTitle,
       togglePublic,
@@ -634,43 +619,136 @@ const App = {
               · {{ formatAgo(nb.secs_ago) }}
             </div>
           </section>
-          <section v-if="pollLog.length" class="poll-log-section">
+          <section v-if="unitHistory?.status?.length" class="poll-log-section">
+            <details class="poll-log" open>
+              <summary>Status · {{ unitHistory.status.length }}</summary>
+              <table class="poll-table">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>V</th>
+                    <th>In / out</th>
+                    <th>Gap</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr
+                    v-for="(row, pi) in unitHistory.status"
+                    :key="'st-' + pi"
+                    :class="{ 'poll-reboot': row.reboot }"
+                  >
+                    <td>{{ formatRelative(row.ts) }}</td>
+                    <td class="poll-metric">
+                      {{ formatPollVoltage(row) }}
+                      <span
+                        v-if="voltageStock(row)"
+                        class="stock-delta"
+                        :class="'stock-' + voltageStock(row).dir"
+                      >{{ voltageStock(row).text }}</span>
+                    </td>
+                    <td>{{ formatPollDelta(row.delta_packets_recv, row.delta_packets_sent) }}</td>
+                    <td>
+                      <template v-if="row.reboot">reboot</template>
+                      <template v-else-if="row.since_prev_secs != null">{{
+                        formatPollWindow(row.since_prev_secs)
+                      }}</template>
+                      <template v-else>—</template>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </details>
+          </section>
+          <section v-if="unitHistory?.telemetry?.length" class="poll-log-section">
             <details class="poll-log">
-              <summary>Polls · {{ pollLog.length }}</summary>
+              <summary>Telemetry · {{ unitHistory.telemetry.length }}</summary>
               <table class="poll-table">
                 <thead>
                   <tr>
                     <th>When</th>
                     <th>V</th>
                     <th>Temp</th>
-                    <th>In / out</th>
                     <th>Gap</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(poll, pi) in pollLog" :key="pi" :class="{ 'poll-reboot': poll.reboot }">
-                    <td>{{ formatRelative(poll.ts) }}</td>
-                    <td class="poll-metric" :class="{ synthetic: isSynthetic(poll, 'voltage') }">
-                      {{ formatPollVoltage(poll) }}
+                  <tr v-for="(row, pi) in unitHistory.telemetry" :key="'te-' + pi">
+                    <td>{{ formatRelative(row.ts) }}</td>
+                    <td class="poll-metric">
+                      {{ row.voltage != null ? Number(row.voltage).toFixed(2) + ' V' : '—' }}
                       <span
-                        v-if="voltageStock(poll)"
+                        v-if="voltageStock(row)"
                         class="stock-delta"
-                        :class="'stock-' + voltageStock(poll).dir"
-                      >{{ voltageStock(poll).text }}</span>
+                        :class="'stock-' + voltageStock(row).dir"
+                      >{{ voltageStock(row).text }}</span>
                     </td>
-                    <td class="poll-metric" :class="{ synthetic: isSynthetic(poll, 'temperature') }">
-                      {{ formatPollTemp(poll) }}
+                    <td class="poll-metric">
+                      {{ formatPollTemp(row) }}
                       <span
-                        v-if="tempStock(poll)"
+                        v-if="tempStock(row)"
                         class="stock-delta"
-                        :class="'stock-' + tempStock(poll).dir"
-                      >{{ tempStock(poll).text }}</span>
+                        :class="'stock-' + tempStock(row).dir"
+                      >{{ tempStock(row).text }}</span>
                     </td>
-                    <td>{{ formatPollDelta(poll.delta_packets_recv, poll.delta_packets_sent) }}</td>
                     <td>
-                      <template v-if="poll.reboot">reboot</template>
-                      <template v-else-if="poll.since_prev_secs != null">{{
-                        formatPollWindow(poll.since_prev_secs)
+                      <template v-if="row.since_prev_secs != null">{{
+                        formatPollWindow(row.since_prev_secs)
+                      }}</template>
+                      <template v-else>—</template>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </details>
+          </section>
+          <section v-if="unitHistory?.neighbors?.length" class="poll-log-section">
+            <details class="poll-log">
+              <summary>Neighbors · {{ unitHistory.neighbors.length }}</summary>
+              <table class="poll-table">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Count</th>
+                    <th>Δ</th>
+                    <th>Gap</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, pi) in unitHistory.neighbors" :key="'nb-' + pi">
+                    <td>{{ formatRelative(row.ts) }}</td>
+                    <td>{{ row.count ?? '—' }}</td>
+                    <td>{{ row.delta_count != null ? (row.delta_count >= 0 ? '+' : '') + row.delta_count : '—' }}</td>
+                    <td>
+                      <template v-if="row.since_prev_secs != null">{{
+                        formatPollWindow(row.since_prev_secs)
+                      }}</template>
+                      <template v-else>—</template>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </details>
+          </section>
+          <section v-if="unitHistory?.acl?.length" class="poll-log-section">
+            <details class="poll-log">
+              <summary>ACL · {{ unitHistory.acl.length }}</summary>
+              <table class="poll-table">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Keys</th>
+                    <th>Δ</th>
+                    <th>Gap</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(row, pi) in unitHistory.acl" :key="'ac-' + pi">
+                    <td>{{ formatRelative(row.ts) }}</td>
+                    <td>{{ row.count ?? '—' }}</td>
+                    <td>{{ row.delta_count != null ? (row.delta_count >= 0 ? '+' : '') + row.delta_count : '—' }}</td>
+                    <td>
+                      <template v-if="row.since_prev_secs != null">{{
+                        formatPollWindow(row.since_prev_secs)
                       }}</template>
                       <template v-else>—</template>
                     </td>

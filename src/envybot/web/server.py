@@ -13,7 +13,7 @@ from aiohttp import web
 
 from envybot.apply import apply_is_due
 from envybot.fleet_worker import build_manual_jobs
-from envybot.history import history_series, open_history, poll_snapshots
+from envybot.history import history_series, open_history, source_histories
 from envybot.jobs import FleetScheduler
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
@@ -202,6 +202,7 @@ class MonitorWeb:
         session_states: dict[str, dict[str, Any]] | None = None,
         companion: str | None = None,
         poll: dict[str, Any] | None = None,
+        sample: tuple[str, dict[str, Any]] | None = None,
     ) -> None:
         if session_states is not None:
             self._session_states = session_states
@@ -223,6 +224,9 @@ class MonitorWeb:
             return
         unit = dict(unit)
         unit["session"] = session
+        if sample is not None:
+            source, row = sample
+            unit["sample"] = {"source": source, "row": row}
         snap["units"][key] = unit
         await self.hub.replace_snapshot(snap)
         await self.hub.publish_unit(unit)
@@ -351,10 +355,10 @@ async def _handle_polls(request: web.Request) -> web.Response:
     web_ctx: MonitorWeb = request.app["web_ctx"]
     conn = open_history(web_ctx.nodes_path.parent)
     try:
-        polls = poll_snapshots(conn, unit, hours=hours, limit=limit)
+        histories = source_histories(conn, unit, hours=hours, limit=limit)
     finally:
         conn.close()
-    payload = {"unit": unit, "hours": hours, "polls": polls}
+    payload = {"unit": unit, "hours": hours, "histories": histories}
     assert_no_secrets(payload)
     return web.json_response(payload)
 

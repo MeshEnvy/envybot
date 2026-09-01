@@ -77,15 +77,17 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   on interval (neighbors = remote `discover.neighbors` + wait + GET;
   UI drops rows older than 7d); fw/bl once; name/gps/advert/acl
   audit-only (Pull / `--group` / `--force`).
-  **Fleet poll is a fair command queue:** each unit enqueues login, GET groups,
-  and SET fields as separate jobs. One companion exchange runs at a time; a
-  timeout parks that unit and the worker serves others. `--attempts` is the
-  per-command retry cap (scheduler-owned); attempt 2+ still floods. Neighbor
-  discover wait (default 12s) does not hold the radio. Manual Refresh/Pull/Push
-  share the same queue with priority over auto work. Sqlite stamps incrementally
-  per successful GET/SET. Apply GETs ACL when due to drop extras. Any due SET
-  failure aborts the rest for that unit this pass. Poll and apply password-login
-  every MeshCore unit. Live RTC from login timestamp or ``clock`` CLI.
+  **Fleet poll uses per-unit actors + one fair transport queue:** each unit runs
+  an asyncio actor (login, GET groups, SET fields). Actors submit one radio op
+  at a time to a shared transport mutex (least-recently-served among waiters).
+  Timeout parks that unit's head job; other actors keep sending. `--attempts` is
+  the per-command retry cap (scheduler-owned); logs show `N/max` not `N/1`.
+  Neighbor discover wait (default 12s) is actor-local sleep, not radio hold.
+  Manual Refresh/Pull/Push bump **one** submit for that unit, not the whole
+  deque. Sqlite stamps incrementally per successful GET/SET. Apply GETs ACL when
+  due to drop extras. Any due SET failure aborts the rest for that unit this
+  pass. Poll and apply password-login every MeshCore unit. Live RTC from login
+  timestamp or ``clock`` CLI.
 - Duty-cycle default is 100% (`nodes.yaml` `dutycycle` overrides).
   `set dutycycle` needs MeshCore 1.15+; older 1.x uses `set af`.
   Onboard also SETs `path.hash.mode` 1 (2-byte), same as fleet apply.
@@ -111,8 +113,10 @@ Separate USB OTA repeater for `motatool serve`.
   auto poll/apply on the next job boundary (in-flight exchange finishes).
   Sidebar fades paused rows and shows a paused badge.
   Units carry `health` (worst-of component checks) and interval traffic
-  deltas. Detail sparklines and the poll table share `/api/polls/{unit}`
-  (merged status+telemetry, interpolated gauges, per-field deltas).
+  deltas. Detail sparklines use native sqlite series; poll history is four
+  orthogonal sections (status, telemetry, neighbors, ACL) from
+  `/api/polls/{unit}` (`source_histories`). SSE `unit` events carry
+  `{ source, sample }` so the open card updates live via `state.js`.
   List meta line shows a headline mark: Paused, Healthy, Unreachable,
   Needs attention. In-flight cards show the current job stage (Logging in,
   Fetching ACL, …). `unreachable` is only after the scheduler gives up

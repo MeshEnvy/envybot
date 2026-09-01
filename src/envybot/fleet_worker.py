@@ -94,6 +94,7 @@ class WorkerContext:
     skip_discover: bool
     do_poll: bool
     do_apply: bool
+    max_attempts: int = 10
 
 
 @dataclass
@@ -152,6 +153,65 @@ class PollAccumulator:
         self.polled_groups.add(group)
         res = self.to_result(unit)
         record_poll(ctx.conn, unit=unit, res=res)
+
+
+def _attempt_cap(ctx: WorkerContext) -> int | None:
+    return ctx.max_attempts if ctx.max_attempts else None
+
+
+def job_sample(
+    job: RadioJob,
+    uq: UnitQueue,
+    outcome: JobOutcome,
+    payload: Any | None,
+) -> tuple[str, dict[str, Any]] | None:
+    """Build SSE sample for a successful GET group."""
+    if outcome not in (JobOutcome.HEARD, JobOutcome.TIMER_DONE):
+        return None
+    if job.kind == "get:neighbors_wait":
+        return None
+    ts = int(time.time())
+    acc = _poll_acc(uq)
+
+    if job.kind == "login":
+        return None
+    if job.kind == "get:status" and acc.status:
+        st = acc.status
+        battery = st.get("battery_mv")
+        return (
+            "status",
+            {
+                "ts": ts,
+                "battery_mv": battery,
+                "voltage": round(battery / 1000.0, 3) if battery is not None else None,
+                "packets_recv": st.get("packets_recv"),
+                "packets_sent": st.get("packets_sent"),
+                "uptime_secs": st.get("uptime_secs"),
+                "noise_floor": st.get("noise_floor"),
+            },
+        )
+    if job.kind == "get:telemetry" and acc.telemetry:
+        volt = None
+        temp = None
+        for item in acc.telemetry:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "voltage" and item.get("value") is not None:
+                volt = float(item["value"])
+            if item.get("type") == "temperature" and item.get("value") is not None:
+                temp = float(item["value"])
+        return (
+            "telemetry",
+            {"ts": ts, "voltage": volt, "temperature": temp},
+        )
+    if job.kind == "get:neighbors" and acc.neighbors is not None:
+        return (
+            "neighbors",
+            {"ts": ts, "count": len(acc.neighbors), "neighbors": acc.neighbors},
+        )
+    if job.kind == "get:acl" and acc.acl is not None:
+        return ("acl", {"ts": ts, "count": len(acc.acl), "acl": acc.acl})
+    return None
 
 
 def _poll_acc(uq: UnitQueue) -> PollAccumulator:
@@ -282,6 +342,7 @@ async def execute_job(
 ) -> tuple[JobOutcome, Any | None]:
     target = uq.target
     attempt_num = job.attempt + 1
+    attempt_cap = _attempt_cap(ctx)
     acc = _poll_acc(uq)
     node = ctx.nodes.get(target.key) or {}
 
@@ -293,6 +354,7 @@ async def execute_job(
             session=ctx.session,
             log=ctx.log,
             attempt_num=attempt_num,
+            attempt_cap=attempt_cap,
         )
         if ok:
             acc.node_clock = clock
@@ -319,6 +381,7 @@ async def execute_job(
             session=ctx.session,
             log=ctx.log,
             attempt_num=attempt_num,
+            attempt_cap=attempt_cap,
         )
         if ok:
             return JobOutcome.HEARD, True
@@ -326,7 +389,7 @@ async def execute_job(
 
     if job.kind == "get:status":
         status = await pull_repeater_status_once(
-            ctx, target, attempt_num=attempt_num
+            ctx, target, attempt_num=attempt_num, attempt_cap=attempt_cap
         )
         if status:
             acc.status = status
@@ -348,6 +411,7 @@ async def execute_job(
             wait_s=wait_cap,
             cap=ctx.cmd_timeout,
             attempt_num=attempt_num,
+            attempt_cap=attempt_cap,
         )
         if telem is not None:
             acc.telemetry = telem if isinstance(telem, list) else None
@@ -369,6 +433,7 @@ async def execute_job(
             wait_s=wait_cap,
             cap=ctx.cmd_timeout,
             attempt_num=attempt_num,
+            attempt_cap=attempt_cap,
         )
         acl = normalize_acl_payload(acl_raw)
         if acl is not None:
@@ -393,6 +458,7 @@ async def execute_job(
             wait_s=wait_cap,
             cap=ctx.cmd_timeout,
             attempt_num=attempt_num,
+            attempt_cap=attempt_cap,
         )
         neighbors = normalize_neighbors_payload(neigh_raw)
         if neighbors is not None:
@@ -403,7 +469,7 @@ async def execute_job(
 
     if job.kind.startswith("get:"):
         group = job.kind.split(":", 1)[1]
-        return await _execute_get_cli(job, uq, ctx, group, attempt_num)
+        return await _execute_get_cli(job, uq, ctx, group, attempt_num, attempt_cap)
 
     if job.kind.startswith("apply:"):
         return await _execute_apply(job, uq, ctx, node, attempt_num)
@@ -416,6 +482,7 @@ async def pull_repeater_status_once(
     target: RouterTarget,
     *,
     attempt_num: int,
+    attempt_cap: int | None = None,
 ) -> dict[str, Any] | None:
     wait_cap = mesh_wait_seconds(6000, cap=ctx.cmd_timeout)
 
@@ -434,6 +501,7 @@ async def pull_repeater_status_once(
         wait_s=wait_cap,
         cap=ctx.cmd_timeout,
         attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
         on_retry=flood_on_retry if attempt_num >= 2 else None,
     )
     from envybot.radio import normalize_status_payload
@@ -447,6 +515,7 @@ async def _execute_get_cli(
     ctx: WorkerContext,
     group: str,
     attempt_num: int,
+    attempt_cap: int | None = None,
 ) -> tuple[JobOutcome, Any | None]:
     target = uq.target
     acc = _poll_acc(uq)
@@ -471,6 +540,7 @@ async def _execute_get_cli(
         session=ctx.session,
         log=ctx.log,
         attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
     )
     if raw is None:
         return JobOutcome.TIMEOUT, None

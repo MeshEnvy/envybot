@@ -791,6 +791,167 @@ def _apply_poll_deltas(rows: list[dict[str, Any]]) -> None:
         prev = row
 
 
+def _reverse_limit(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    rows.reverse()
+    return rows[:limit]
+
+
+def status_history(
+    conn: sqlite3.Connection,
+    unit: str,
+    *,
+    limit: int = 48,
+    hours: int = 72,
+) -> list[dict[str, Any]]:
+    since = int(time.time()) - max(1, hours) * 3600
+    status_rows = conn.execute(
+        "SELECT ts, payload FROM status WHERE unit = ? AND ts >= ? ORDER BY ts ASC",
+        (unit, since),
+    ).fetchall()
+    chronological: list[dict[str, Any]] = []
+    for row in status_rows:
+        loaded = _load_status_payload(row)
+        if loaded is None:
+            continue
+        ts, payload = loaded
+        battery_mv = _status_int(payload, "battery_mv")
+        chronological.append(
+            {
+                "ts": ts,
+                "battery_mv": battery_mv,
+                "voltage": round(battery_mv / 1000.0, 3) if battery_mv is not None else None,
+                "packets_recv": _status_int(payload, "packets_recv"),
+                "packets_sent": _status_int(payload, "packets_sent"),
+                "recv_errors": _status_int(payload, "recv_errors"),
+                "noise_floor": _status_int(payload, "noise_floor"),
+                "uptime_secs": _status_int(payload, "uptime_secs"),
+            }
+        )
+    _apply_poll_deltas(chronological)
+    return _reverse_limit(chronological, limit)
+
+
+def telemetry_history(
+    conn: sqlite3.Connection,
+    unit: str,
+    *,
+    limit: int = 48,
+    hours: int = 72,
+) -> list[dict[str, Any]]:
+    since = int(time.time()) - max(1, hours) * 3600
+    tele_rows = conn.execute(
+        "SELECT ts, type, value FROM telemetry WHERE unit = ? AND ts >= ? "
+        "AND type IN ('voltage', 'temperature') ORDER BY ts ASC",
+        (unit, since),
+    ).fetchall()
+    by_ts: dict[int, dict[str, Any]] = {}
+    for row in tele_rows:
+        ts = int(row["ts"])
+        kind = str(row["type"])
+        num = _finite_number(row["value"])
+        if num is None:
+            continue
+        entry = by_ts.setdefault(ts, {"ts": ts, "voltage": None, "temperature": None})
+        if kind == "voltage":
+            entry["voltage"] = round(num, 3)
+        elif kind == "temperature":
+            entry["temperature"] = round(num, 1)
+    chronological = sorted(by_ts.values(), key=lambda r: r["ts"])
+    prev: dict[str, Any] | None = None
+    for row in chronological:
+        if prev is not None:
+            row["since_prev_secs"] = max(0, int(row["ts"]) - int(prev["ts"]))
+            for key, digits in (("voltage", 3), ("temperature", 1)):
+                curr = _finite_number(row.get(key))
+                prev_val = _finite_number(prev.get(key))
+                if curr is not None and prev_val is not None:
+                    row[f"delta_{key}"] = round(curr - prev_val, digits)
+        prev = row
+    return _reverse_limit(chronological, limit)
+
+
+def neighbors_history(
+    conn: sqlite3.Connection,
+    unit: str,
+    *,
+    limit: int = 48,
+    hours: int = 72,
+) -> list[dict[str, Any]]:
+    since = int(time.time()) - max(1, hours) * 3600
+    rows = conn.execute(
+        "SELECT ts, payload FROM neighbors WHERE unit = ? AND ts >= ? ORDER BY ts ASC",
+        (unit, since),
+    ).fetchall()
+    chronological: list[dict[str, Any]] = []
+    prev_count: int | None = None
+    prev_ts: int | None = None
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+        except json.JSONDecodeError:
+            continue
+        count = len(payload) if isinstance(payload, list) else 0
+        ts = int(row["ts"])
+        entry: dict[str, Any] = {"ts": ts, "count": count}
+        if prev_ts is not None:
+            entry["since_prev_secs"] = max(0, ts - prev_ts)
+        if prev_count is not None:
+            entry["delta_count"] = count - prev_count
+        chronological.append(entry)
+        prev_count = count
+        prev_ts = ts
+    return _reverse_limit(chronological, limit)
+
+
+def acl_history(
+    conn: sqlite3.Connection,
+    unit: str,
+    *,
+    limit: int = 48,
+    hours: int = 72,
+) -> list[dict[str, Any]]:
+    since = int(time.time()) - max(1, hours) * 3600
+    rows = conn.execute(
+        "SELECT ts, payload FROM acl_snapshots WHERE unit = ? AND ts >= ? ORDER BY ts ASC",
+        (unit, since),
+    ).fetchall()
+    chronological: list[dict[str, Any]] = []
+    prev_count: int | None = None
+    prev_ts: int | None = None
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+        except json.JSONDecodeError:
+            continue
+        count = len(payload) if isinstance(payload, list) else 0
+        ts = int(row["ts"])
+        entry: dict[str, Any] = {"ts": ts, "count": count}
+        if prev_ts is not None:
+            entry["since_prev_secs"] = max(0, ts - prev_ts)
+        if prev_count is not None:
+            entry["delta_count"] = count - prev_count
+        chronological.append(entry)
+        prev_count = count
+        prev_ts = ts
+    return _reverse_limit(chronological, limit)
+
+
+def source_histories(
+    conn: sqlite3.Connection,
+    unit: str,
+    *,
+    limit: int = 48,
+    hours: int = 72,
+) -> dict[str, list[dict[str, Any]]]:
+    """Orthogonal poll histories per GET source, newest-first within each list."""
+    return {
+        "status": status_history(conn, unit, limit=limit, hours=hours),
+        "telemetry": telemetry_history(conn, unit, limit=limit, hours=hours),
+        "neighbors": neighbors_history(conn, unit, limit=limit, hours=hours),
+        "acl": acl_history(conn, unit, limit=limit, hours=hours),
+    }
+
+
 def poll_snapshots(
     conn: sqlite3.Connection,
     unit: str,

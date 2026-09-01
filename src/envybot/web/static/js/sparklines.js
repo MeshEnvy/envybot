@@ -169,6 +169,68 @@ export const SPARK_MIN_SPAN = {
   noise_floor: 20,
 }
 
+/**
+ * Spark series from orthogonal status + telemetry histories (store).
+ * @param {{ status?: Array<Record<string, unknown>>, telemetry?: Array<Record<string, unknown>> }} history
+ */
+export function seriesFromHistories(history) {
+  const status = [...(history?.status || [])].sort((a, b) => Number(a.ts) - Number(b.ts))
+  const telemetry = [...(history?.telemetry || [])].sort((a, b) => Number(a.ts) - Number(b.ts))
+
+  /** @type {Record<string, Array<{ ts: number, value: number }>>} */
+  const out = {
+    battery_mv: [],
+    temperature: [],
+    noise_floor: [],
+    recv_rate: [],
+    unreadable_pct: [],
+  }
+  let lastRate = null
+  let lastUnreadable = null
+
+  for (const p of status) {
+    const ts = Number(p.ts)
+    const volts = pollVoltage(p)
+    if (volts != null) out.battery_mv.push({ ts, value: volts })
+    if (p.noise_floor != null && Number.isFinite(Number(p.noise_floor))) {
+      out.noise_floor.push({ ts, value: Number(p.noise_floor) })
+    }
+    if (p.reboot) {
+      lastRate = null
+      lastUnreadable = null
+      continue
+    }
+    const dRecv = p.delta_packets_recv
+    const dErr = p.delta_recv_errors
+    if (dRecv == null && dErr == null) continue
+    const recv = Number(dRecv ?? 0)
+    const err = Number(dErr ?? 0)
+    const dur = Number(p.since_prev_secs ?? 0)
+    if (recv === 0 && err === 0) {
+      if (lastRate != null) out.recv_rate.push({ ts, value: lastRate })
+      if (lastUnreadable != null) out.unreadable_pct.push({ ts, value: lastUnreadable })
+      continue
+    }
+    if (dur > 0 && recv >= 0) {
+      lastRate = recv / (dur / 3600)
+      out.recv_rate.push({ ts, value: lastRate })
+    }
+    const total = recv + err
+    if (total > 0) {
+      lastUnreadable = (err / total) * 100
+      out.unreadable_pct.push({ ts, value: lastUnreadable })
+    }
+  }
+
+  for (const p of telemetry) {
+    const ts = Number(p.ts)
+    if (p.temperature != null && Number.isFinite(Number(p.temperature))) {
+      out.temperature.push({ ts, value: Number(p.temperature) })
+    }
+  }
+  return out
+}
+
 /** Evenly spaced sparkline (legacy). */
 export function sparklinePath(points, width, height, padding = 2) {
   const values = validPoints(points).map((p) => p.value)

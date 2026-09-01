@@ -16,6 +16,7 @@ from envybot.fleet_worker import (
     build_manual_jobs,
     build_poll_jobs,
     execute_job,
+    job_sample,
 )
 from envybot.history import migrate_legacy
 from envybot.jobs import FleetScheduler, JobOutcome
@@ -301,6 +302,7 @@ async def run(args: argparse.Namespace) -> int:
         skip_discover=args.no_discover,
         do_poll=do_poll,
         do_apply=do_apply,
+        max_attempts=args.attempts or 10,
     )
     worker_ctx.skip_discover = args.no_discover
 
@@ -401,34 +403,50 @@ async def run(args: argparse.Namespace) -> int:
                 max_attempts=scheduler.max_attempts,
                 due_groups=due,
                 apply=bool(prev.get("apply")),
-                error=str(payload) if outcome == JobOutcome.TIMEOUT else None,
+                error=str(payload) if outcome == JobOutcome.TIMEOUT and payload else None,
                 queued=True,
             )
             if not args.quiet and outcome == JobOutcome.TIMEOUT:
-                print(f"  retrying: {payload}")
+                if uq.jobs and uq.jobs[0].kind == job.kind:
+                    if payload:
+                        print(f"  retrying: {payload}")
+                    elif scheduler.max_attempts:
+                        print(
+                            f"  retrying {job.kind} "
+                            f"({uq.jobs[0].attempt + 1}/{scheduler.max_attempts})"
+                        )
+                elif scheduler.max_attempts:
+                    print(f"  {job.kind}: gave up after {scheduler.max_attempts}, continuing")
         else:
             session_states[target.key] = {"state": "ok", "due_groups": []}
+            dropped = uq.session_extra.get("dropped_jobs") or []
             if not args.quiet and job.kind != "get:neighbors_wait":
                 acc = uq.session_extra.get("poll_acc")
                 if acc is not None:
                     res = acc.to_result(target.key)
                     remaining = gaps_from_poll(res)
-                    if remaining:
-                        print(f"  partial OK {poll_summary(res)} (gaps: {', '.join(remaining)})")
+                    if dropped or remaining:
+                        gaps = list(remaining)
+                        if dropped:
+                            gaps.extend(str(k) for k in dropped)
+                        print(f"  partial OK {poll_summary(res)} (gaps: {', '.join(gaps)})")
                     else:
                         print(f"  OK {poll_summary(res)}")
+            uq.session_extra.pop("dropped_jobs", None)
             manual_keys.discard(target.key)
 
         if str(node_record.get("guest_password") or "") != guest_before:
             yaml_dirty = True
 
         if web_ctx:
+            sample_evt = job_sample(job, uq, outcome, payload)
             await web_ctx.publish_unit(
                 target.key,
                 session=session_states.get(target.key, {}),
                 session_states=session_states,
                 companion=companion_short,
                 poll=web_ctx._poll_state,
+                sample=sample_evt,
             )
 
     async def execute_one(job: Any, uq: Any) -> tuple[JobOutcome, Any | None]:

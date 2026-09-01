@@ -66,7 +66,9 @@ export async function fetchHistory(unit, metric, hours = 72) {
   return res.json()
 }
 
-/** @param {string} unit @param {number} [hours] @param {number} [limit] */
+/** @typedef {{ status: unknown[], telemetry: unknown[], neighbors: unknown[], acl: unknown[] }} SourceHistories */
+
+/** @param {string} unit @param {number} [hours] @param {number} [limit] @returns {Promise<{ unit: string, hours: number, histories: SourceHistories }>} */
 export async function fetchPolls(unit, hours = 72, limit = 48) {
   const q = new URLSearchParams({ hours: String(hours), limit: String(limit) })
   const res = await fetch(`/api/polls/${encodeURIComponent(unit)}?${q}`)

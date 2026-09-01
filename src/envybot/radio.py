@@ -1803,6 +1803,7 @@ async def admin_login_attempt(
     session: FleetSession | None = None,
     log: PollLog | None = None,
     attempt_num: int = 1,
+    attempt_cap: int | None = None,
 ) -> tuple[bool, str | None, int | None]:
     """Single login send+wait. ``attempt_num >= 2`` triggers flood fallback."""
     log = log or PollLog()
@@ -1823,7 +1824,8 @@ async def admin_login_attempt(
     wait_s = mesh_wait_seconds(suggested_ms, cap=login_timeout)
     if session is not None:
         wait_s = session.stretch_wait(wait_s, target.unit_id, cap=login_timeout)
-    n_of = str(attempt_num)
+    cap = attempt_cap if attempt_cap else 0
+    n_of = attempt_label(attempt_num, cap)
     log.step(f"send login 0x1a {n_of} (≤{wait_s:.0f}s, no echo id) …")
 
     exp = None
@@ -1945,6 +1947,7 @@ async def send_cmd_sync(
     log: PollLog | None = None,
     session: FleetSession | None = None,
     attempt_num: int | None = None,
+    attempt_cap: int | None = None,
 ) -> str | None:
     log = log or PollLog()
     """Send CLI command; rides the direct path learned at login, floods as fallback."""
@@ -1953,6 +1956,7 @@ async def send_cmd_sync(
     attempt = 0
     single = attempt_num is not None
     max_attempts = 1 if single else attempts
+    label_cap = attempt_cap if (single and attempt_cap) else (attempts if attempts else 0)
 
     while max_attempts == 0 or attempt < max_attempts:
         attempt = attempt_num if single else attempt + 1
@@ -1975,7 +1979,7 @@ async def send_cmd_sync(
                     log.step("send aborted: companion not connected")
                     return None
                 log.step(
-                    f"send {framed!r} {attempt_label(attempt, attempts)}: "
+                    f"send {framed!r} {attempt_label(attempt, label_cap)}: "
                     f"send error ({err}), retrying …"
                 )
                 continue
@@ -1986,7 +1990,7 @@ async def send_cmd_sync(
         if session is not None:
             slack0 = session.dest_slack(target.unit_id)
             wait_s = session.stretch_wait(wait_s, target.unit_id, cap=timeout)
-        n_of = attempt_label(attempt, attempts)
+        n_of = attempt_label(attempt, label_cap)
         log.step(f"send {framed!r} {n_of} (≤{wait_s:.0f}s) …")
         log.detail(f"cli {framed!r} {n_of}: wait {wait_s:.0f}s")
 
@@ -2033,6 +2037,7 @@ async def send_cmd_once(
     log: PollLog | None = None,
     session: FleetSession | None = None,
     attempt_num: int = 1,
+    attempt_cap: int | None = None,
 ) -> str | None:
     """Single CLI send+wait. ``attempt_num >= 2`` triggers flood fallback."""
     return await send_cmd_sync(
@@ -2044,6 +2049,7 @@ async def send_cmd_once(
         log=log,
         session=session,
         attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
     )
 
 
@@ -2058,6 +2064,7 @@ async def binary_req_once(
     wait_s: float = 0.0,
     cap: float = 0.0,
     attempt_num: int = 1,
+    attempt_cap: int | None = None,
     on_retry: Callable[[], Awaitable[None]] | None = None,
     success: Callable[[Any], bool] | None = None,
 ) -> Any:
@@ -2080,6 +2087,7 @@ async def binary_req_once(
         wait_s=wait_s,
         cap=cap,
         attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
     )
 
 
@@ -2097,6 +2105,7 @@ async def retry_binary_req(
     wait_s: float = 0.0,
     cap: float = 0.0,
     attempt_num: int | None = None,
+    attempt_cap: int | None = None,
 ) -> Any:
     """Retry binary mesh requests (status, telemetry, neighbors, acl, …)."""
     def ok(val: Any) -> bool:
@@ -2107,6 +2116,7 @@ async def retry_binary_req(
     attempt = 0
     single = attempt_num is not None
     max_attempts = 1 if single else attempts
+    label_cap = attempt_cap if (single and attempt_cap) else (attempts if attempts else 0)
 
     while max_attempts == 0 or attempt < max_attempts:
         attempt = attempt_num if single else attempt + 1
@@ -2117,7 +2127,7 @@ async def retry_binary_req(
             await on_retry(attempt)
         if target is not None:
             log_contact_path(client, target, log=log)
-        n_of = attempt_label(attempt, max_attempts if max_attempts else attempts)
+        n_of = attempt_label(attempt, label_cap)
         dest_wait = wait_s
         if session is not None and target is not None:
             dest_wait = session.stretch_wait(wait_s, target.unit_id, cap=cap or 0.0)
@@ -2158,6 +2168,7 @@ async def trigger_neighbor_discover_once(
     session: FleetSession | None,
     log: PollLog,
     attempt_num: int = 1,
+    attempt_cap: int | None = None,
 ) -> bool:
     """Send discover.neighbors CLI once (no listen window)."""
     raw = await send_cmd_once(
@@ -2168,6 +2179,7 @@ async def trigger_neighbor_discover_once(
         log=log,
         session=session,
         attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
     )
     if raw is None:
         log.step("discover.neighbors: no response")

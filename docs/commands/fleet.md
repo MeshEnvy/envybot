@@ -48,23 +48,34 @@ takes effect at the next job boundary. `trust` / `cmd` do not honor pause.
 
 ## Job queue
 
-Fleet work is a **fair serial command queue** (`jobs.py` + `fleet_worker.py`):
+Fleet work is **per-unit asyncio actors** feeding one **fair transport queue**
+(`jobs.py` + `fleet_worker.py`):
 
-- Each unit gets a FIFO deque: login, then due GET groups (one exchange each),
+- Each unit actor owns a FIFO deque: login, due GET groups (one exchange each),
   then due SET fields. Neighbors = `discover.neighbors`, a **timer job** (default
-  12s, radio idle), then `GET_NEIGHBOURS`.
+  12s, actor-local sleep, radio idle), then `GET_NEIGHBOURS`.
 - One companion send+wait at a time across the whole fleet. Timeout **parks**
-  that unit (head job kept, backoff, retry later) instead of blocking everyone.
+  that unit's head job (backoff, retry later) while other actors keep sending.
   The UI badge stays on the current job stage (Logging in, Fetching ACL, …)
   while the unit is queued or retrying. `unreachable` only after `--attempts`
   is exhausted (or a hard fail).
-- Pick order: manual Refresh/Pull/Push, inventory gaps (fw/bl), then
-  least-recently-served among ready units.
+- Transport pick order: manual Refresh/Pull/Push **one-op bump** for that unit,
+  inventory gaps (fw/bl), then least-recently-served among waiting submitters.
 - `--attempts` (default 10) caps retries **per command** at the scheduler.
+  Logs show scheduler `N/max` (e.g. `8/10`), not inner one-shot `N/1`.
   Attempt 2+ still resets to flood on that destination. `--retry-delay` /
-  `--round-delay` control backoff between retries.
-- UI Refresh/Pull/Push enqueue onto the same scheduler (priority over auto poll).
+  `--round-delay` control backoff between retries. On drop: `gave up after N,
+  continuing`; on unit done with gaps: `partial OK`.
+- UI Refresh/Pull/Push enqueue onto the same scheduler (one submit priority).
 - Sqlite updates incrementally after each successful GET group or SET field.
+
+## Poll history (UI)
+
+Status, telemetry, neighbors, and ACL are **orthogonal** sqlite tables and UI
+sections. `/api/polls/{unit}` returns `{ histories: { status, telemetry,
+neighbors, acl } }` with per-source deltas (no merged status+telemetry spine).
+Sparklines use native `/api/history/{unit}?metric=`. SSE `unit` events include
+`sample` so the open detail card updates live without refetch.
 
 ## Manual jobs (UI)
 
