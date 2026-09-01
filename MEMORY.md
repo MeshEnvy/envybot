@@ -41,6 +41,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 - GPS lives only on `sites.yaml` (`loc` + `node: me####`). Nodes have no
   `site` / `lat` / `lon`. Apply SETs `0,0` unless `public: true`. Never
   GET device coords into YAML.
+- `fleet` / `trust` / `cmd` skip `firmware_platform: meshtastic` even
+  when leftover MeshCore pubkey/admin exist. Blank platform = meshcore.
 - `trust` imports every pollable MeshCore unit, including bag/bench
   (no site bind). Contact name is the site `name` (e.g. Ophir), else
   `unit_id`. Stale advert names are removed and re-added. `trust ben`
@@ -65,7 +67,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Apply GETs ACL when due to drop extras. SET fields use the full retry
   budget (login is the reachability check). Any due field failure aborts
   the rest for that unit this pass. Poll and apply password-login every
-  unit. Live RTC
+  MeshCore unit. Live RTC
   from login timestamp or ``clock`` CLI.
 - Duty-cycle default is 100% (`nodes.yaml` `dutycycle` overrides).
   `set dutycycle` needs MeshCore 1.15+; older 1.x uses `set af`.
@@ -87,4 +89,4 @@ Separate USB OTA repeater for `motatool serve`.
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-08-31
+Last updated: 2026-09-01

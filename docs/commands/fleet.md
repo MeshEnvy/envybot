@@ -9,6 +9,7 @@ Localhost fleet manager. Serves the map UI, GETs telemetry into
 
 Default: UI at `http://127.0.0.1:8787/` plus live GET (status/telemetry/neighbors),
 inventory gaps (fw/bl), and apply when the profile hash misses.
+`firmware_platform: meshtastic` is never polled or applied.
 
 ## Stores
 

@@ -16,6 +16,12 @@ UNIT_NUM_RE = re.compile(r"^me(\d+)$", re.I)
 PLACEHOLDER_PW = frozenset({"<mt>", "<bear changed to mt>"})
 MASK_NAME = "Repeater"
 
+
+def is_meshcore_platform(node: dict[str, Any] | None) -> bool:
+    """Fleet/trust/cmd only talk MeshCore. Blank platform counts as meshcore."""
+    platform = str((node or {}).get("firmware_platform") or "").strip().lower()
+    return platform in ("", "meshcore")
+
 OBSERVED_KEYS = (
     "status",
     "telemetry",

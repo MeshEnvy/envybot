@@ -39,6 +39,13 @@ def sample_doc() -> dict:
                 "identity_pubkey": "d" * 64,
                 "firmware_platform": "meshtastic",
             },
+            "me0001": {
+                "unit_id": "ME0001",
+                "name": "Spanish Benchmark East",
+                "identity_pubkey": "e" * 64,
+                "admin_password": "stale-mc-admin",
+                "firmware_platform": "meshtastic",
+            },
         },
     }
 
@@ -99,7 +106,12 @@ class ResolveSelectorTests(unittest.TestCase):
     def test_meshtastic_refused(self) -> None:
         res = resolve_selector(self.doc, "me0099")
         self.assertIsNone(res.target)
-        self.assertIn("no admin password", res.error or "")
+        self.assertIn("not meshcore", res.error or "")
+
+    def test_meshtastic_with_creds_refused(self) -> None:
+        res = resolve_selector(self.doc, "me0001")
+        self.assertIsNone(res.target)
+        self.assertIn("not meshcore", res.error or "")
 
     def test_unknown(self) -> None:
         res = resolve_selector(self.doc, "nosuch")

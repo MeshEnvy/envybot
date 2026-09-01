@@ -6,7 +6,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from envybot.nodes_doc import HEX_PUBKEY_RE, PLACEHOLDER_PW, UNIT_NUM_RE, normalize_fleet_node
+from envybot.nodes_doc import (
+    HEX_PUBKEY_RE,
+    PLACEHOLDER_PW,
+    UNIT_NUM_RE,
+    is_meshcore_platform,
+    normalize_fleet_node,
+)
 from envybot.position import site_binding
 from envybot.radio import RouterTarget, target_label
 
@@ -58,6 +64,8 @@ def iter_cmd_eligible(doc: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
             continue
         if node.get("decommissioned"):
             continue
+        if not is_meshcore_platform(node):
+            continue
         notes = str(node.get("notes") or "")
         if "RETIRED" in notes.upper():
             continue
@@ -92,6 +100,8 @@ def _ineligible_reason(doc: dict[str, Any], selector: str) -> str | None:
         )
         if not matched:
             continue
+        if not is_meshcore_platform(node):
+            return f"{unit_id}: firmware_platform is not meshcore (remote CLI unavailable)"
         admin_pw = node.get("admin_password")
         if not admin_pw or not isinstance(admin_pw, str) or not str(admin_pw).strip():
             platform = node.get("firmware_platform") or "meshtastic"

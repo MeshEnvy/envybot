@@ -17,6 +17,7 @@ from envybot.nodes_doc import (
     HEX_PUBKEY_RE,
     PLACEHOLDER_PW,
     UNIT_NUM_RE,
+    is_meshcore_platform,
     load_nodes_doc,
     normalize_fleet_node,
 )
@@ -787,6 +788,8 @@ def load_targets(
         bind = site_binding(key, node, sites)
         site = bind[0] if bind else None
         if node.get("decommissioned"):
+            continue
+        if not is_meshcore_platform(node):
             continue
         if deployed_only and not site:
             continue
