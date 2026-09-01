@@ -239,7 +239,13 @@ async def run(args: argparse.Namespace) -> int:
                         session=session_states[target.key],
                         session_states=session_states,
                         companion=companion_short,
-                        poll={"phase": "polling", "round": round_num, "unit": target.key},
+                        poll={
+                            "phase": "polling",
+                            "round": round_num,
+                            "unit": target.key,
+                            "pending": len(pending),
+                            "total": len(work),
+                        },
                     )
                 heard_acl = None
                 fw = node_record.get("firmware_version")
@@ -276,7 +282,12 @@ async def run(args: argparse.Namespace) -> int:
                                 session=session_states[target.key],
                                 session_states=session_states,
                                 companion=companion_short,
-                                poll={"phase": "polling", "round": round_num},
+                                poll={
+                                    "phase": "polling",
+                                    "round": round_num,
+                                    "pending": len(pending),
+                                    "total": len(work),
+                                },
                             )
                         continue
                     record_poll(conn, unit=target.key, res=res)
@@ -340,7 +351,12 @@ async def run(args: argparse.Namespace) -> int:
                         session=session_states[target.key],
                         session_states=session_states,
                         companion=companion_short,
-                        poll={"phase": "polling", "round": round_num},
+                        poll={
+                            "phase": "polling",
+                            "round": round_num,
+                            "pending": len(pending),
+                            "total": len(work),
+                        },
                     )
             pending = sorted(next_pending, key=poll_staleness_key)
             if not pending or args.once:

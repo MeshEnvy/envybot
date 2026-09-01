@@ -24,7 +24,16 @@ class FleetHub:
             self._snapshot = snapshot
         await self._broadcast("hello", snapshot)
 
+    async def replace_snapshot(self, snapshot: dict[str, Any]) -> None:
+        """Store snapshot without a hello (live clients get unit/session events)."""
+        async with self._lock:
+            self._snapshot = snapshot
+
     async def publish_unit(self, unit: dict[str, Any]) -> None:
+        key = unit.get("key")
+        if self._snapshot is not None and isinstance(key, str) and key:
+            units = self._snapshot.setdefault("units", {})
+            units[key] = unit
         await self._broadcast("unit", unit)
 
     async def publish_session(self, session: dict[str, Any]) -> None:

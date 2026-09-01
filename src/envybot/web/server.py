@@ -73,11 +73,14 @@ class MonitorWeb:
             companion=companion,
             poll=poll,
         )
+        snap["edges"] = build_neighbor_edges(snap["units"])
         unit = snap["units"].get(key)
         if unit is None:
             return
         unit = dict(unit)
         unit["session"] = session
+        snap["units"][key] = unit
+        await self.hub.replace_snapshot(snap)
         await self.hub.publish_unit(unit)
 
     async def publish_session(self, poll: dict[str, Any]) -> None:
