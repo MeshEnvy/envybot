@@ -28,6 +28,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/poll.py` | GET cadence (live / inventory / audit) → sqlite |
 | `src/envybot/apply.py` | SET mask unless `public: true`; `v1:` profile hash |
 | `src/envybot/passwords.py` | Password strength + uniqueness (no shared defaults) |
+| `src/envybot/jobs.py` | Fair serial job queue (one radio exchange at a time) |
+| `src/envybot/fleet_worker.py` | Per-command job build + execute |
 | `src/envybot/commands/fleet.py` | Localhost manager |
 | `src/envybot/commands/trust.py` | Contacts + channels + keys.yaml / ACL login |
 | `src/envybot/commands/cmd.py` | Remote MeshCore CLI |
@@ -75,11 +77,15 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   on interval (neighbors = remote `discover.neighbors` + wait + GET;
   UI drops rows older than 7d); fw/bl once; name/gps/advert/acl
   audit-only (Pull / `--group` / `--force`).
-  Apply GETs ACL when due to drop extras. SET fields use the full retry
-  budget (login is the reachability check). Any due field failure aborts
-  the rest for that unit this pass. Poll and apply password-login every
-  MeshCore unit. Live RTC
-  from login timestamp or ``clock`` CLI.
+  **Fleet poll is a fair command queue:** each unit enqueues login, GET groups,
+  and SET fields as separate jobs. One companion exchange runs at a time; a
+  timeout parks that unit and the worker serves others. `--attempts` is the
+  per-command retry cap (scheduler-owned); attempt 2+ still floods. Neighbor
+  discover wait (default 12s) does not hold the radio. Manual Refresh/Pull/Push
+  share the same queue with priority over auto work. Sqlite stamps incrementally
+  per successful GET/SET. Apply GETs ACL when due to drop extras. Any due SET
+  failure aborts the rest for that unit this pass. Poll and apply password-login
+  every MeshCore unit. Live RTC from login timestamp or ``clock`` CLI.
 - Duty-cycle default is 100% (`nodes.yaml` `dutycycle` overrides).
   `set dutycycle` needs MeshCore 1.15+; older 1.x uses `set af`.
   Onboard also SETs `path.hash.mode` 1 (2-byte), same as fleet apply.
@@ -102,7 +108,7 @@ Separate USB OTA repeater for `motatool serve`.
   `paused`. Refresh is live GET only; Pull adds sticky GET; Push force-SETs
   profile (including passwords). CLI `--force` is Pull plus Push.
   **Pause** (detail checkbox) writes `paused: true` and drops the unit from
-  auto poll/apply on the next unit boundary (in-flight login finishes).
+  auto poll/apply on the next job boundary (in-flight exchange finishes).
   Sidebar fades paused rows and shows a paused badge.
   Units carry `health` (worst-of component checks) and interval traffic
   deltas; detail sparklines use `/api/history/{unit}?metric=`.

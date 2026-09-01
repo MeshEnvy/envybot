@@ -9,8 +9,13 @@ from pathlib import Path
 
 from ruamel.yaml import YAML
 
+from envybot.fleet_worker import build_manual_jobs
+from envybot.history import open_history
+from envybot.jobs import FleetScheduler
+from envybot.poll import GET_GROUP_ORDER, refresh_due_groups
+from envybot.radio import load_targets
 from envybot.web.hub import FleetHub
-from envybot.web.server import MonitorWeb, make_app
+from envybot.web.server import MonitorWeb
 from aiohttp.test_utils import TestClient, TestServer
 
 
@@ -42,12 +47,28 @@ class MonitorWebManualJobTests(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         book = Path(self.tmp.name)
         nodes_path, sites_path = _write_book(book)
+        self.scheduler = FleetScheduler()
+        self.manual_keys: set[str] = set()
+        self.conn = open_history(book)
         self.web_ctx = MonitorWeb(
             hub=FleetHub(),
             nodes_path=nodes_path,
             sites_path=sites_path,
             stale_secs=86400.0,
             url="http://127.0.0.1:8787/",
+        )
+        self.web_ctx.bind_scheduler(
+            self.scheduler,
+            manual_keys=self.manual_keys,
+            conn=self.conn,
+            nodes={"me0003": {}},
+            sites={},
+            doc={"nodes": {"me0003": {}}},
+            keys={},
+            do_poll=True,
+            do_apply=True,
+            skip_discover=False,
+            discover_wait=12.0,
         )
 
     async def asyncTearDown(self) -> None:
@@ -64,13 +85,16 @@ class MonitorWebManualJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, 404)
         self.assertEqual(err, "unknown unit")
 
-    async def test_enqueue_puts_job_on_queue(self) -> None:
+    async def test_enqueue_puts_job_on_scheduler(self) -> None:
         self.web_ctx.set_worker_active(True)
         status, err = await self.web_ctx.enqueue_job("me0003", "pull")
         self.assertEqual(status, 200)
         self.assertIsNone(err)
-        jobs = await self.web_ctx.drain_manual_queue()
-        self.assertEqual(jobs, [("me0003", "pull")])
+        uq = self.scheduler.units.get("me0003")
+        self.assertIsNotNone(uq)
+        assert uq is not None
+        self.assertTrue(uq.manual)
+        self.assertEqual(uq.manual_job, "pull")
 
     async def test_enqueue_noop_when_busy(self) -> None:
         self.web_ctx.set_worker_active(True)
@@ -78,26 +102,25 @@ class MonitorWebManualJobTests(unittest.IsolatedAsyncioTestCase):
         status, err = await self.web_ctx.enqueue_job("me0003", "refresh")
         self.assertEqual(status, 200)
         self.assertIsNone(err)
-        self.assertEqual(await self.web_ctx.drain_manual_queue(), [])
+        self.assertNotIn("me0003", self.scheduler.units)
 
-    async def test_drain_dedupes(self) -> None:
-        self.web_ctx._manual_queue.put_nowait(("me0003", "refresh"))
-        self.web_ctx._manual_queue.put_nowait(("me0003", "pull"))
-        jobs = await self.web_ctx.drain_manual_queue()
-        self.assertEqual(jobs, [("me0003", "refresh")])
+    async def test_wait_for_work(self) -> None:
+        from envybot.jobs import RadioJob
+        from envybot.radio import RouterTarget
 
-    async def test_wait_manual_queue(self) -> None:
-        self.web_ctx.set_worker_active(True)
-
-        async def enqueue_later() -> None:
-            await asyncio.sleep(0.05)
-            self.web_ctx._manual_queue.put_nowait(("me0003", "push"))
-            self.web_ctx._wake_idle.set()
-
-        task = asyncio.create_task(enqueue_later())
-        jobs = await self.web_ctx.wait_manual_queue()
-        await task
-        self.assertEqual(jobs, [("me0003", "push")])
+        sched = FleetScheduler()
+        task = asyncio.create_task(sched.wait_for_work())
+        await asyncio.sleep(0.02)
+        t = RouterTarget(
+            key="me0003",
+            unit_id="ME0003",
+            name="Test",
+            site=None,
+            pubkey_hex="b" * 64,
+            admin_password="x",
+        )
+        sched.enqueue_jobs(t, [RadioJob(kind="login", unit_key="me0003")])
+        await asyncio.wait_for(task, timeout=1.0)
 
 
 class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
@@ -105,12 +128,26 @@ class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         book = Path(self.tmp.name)
         nodes_path, sites_path = _write_book(book)
+        self.scheduler = FleetScheduler()
         self.web_ctx = MonitorWeb(
             hub=FleetHub(),
             nodes_path=nodes_path,
             sites_path=sites_path,
             stale_secs=86400.0,
             url="http://127.0.0.1:8787/",
+        )
+        self.web_ctx.bind_scheduler(
+            self.scheduler,
+            manual_keys=set(),
+            conn=open_history(book),
+            nodes={"me0003": {}},
+            sites={},
+            doc={"nodes": {"me0003": {}}},
+            keys={},
+            do_poll=True,
+            do_apply=True,
+            skip_discover=False,
+            discover_wait=12.0,
         )
         await self.web_ctx.refresh_snapshot()
         app = make_app(self.web_ctx)
@@ -135,26 +172,27 @@ class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status, 200)
         body = await resp.json()
         self.assertEqual(body.get("session", {}).get("state"), "refreshing")
-        jobs = await self.web_ctx.drain_manual_queue()
-        self.assertEqual(jobs, [("me0003", "refresh")])
+        uq = self.scheduler.units.get("me0003")
+        self.assertIsNotNone(uq)
+        assert uq is not None
+        self.assertEqual(uq.manual_job, "refresh")
 
     async def test_post_pull_and_push(self) -> None:
         self.web_ctx.set_worker_active(True)
         resp = await self.client.post("/api/pull/me0003")
         self.assertEqual(resp.status, 200)
-        self.assertEqual(
-            (await self.web_ctx.drain_manual_queue()),
-            [("me0003", "pull")],
-        )
+        uq = self.scheduler.units.get("me0003")
+        assert uq is not None
+        self.assertEqual(uq.manual_job, "pull")
+        self.scheduler.units.pop("me0003", None)
         self.web_ctx._session_states.pop("me0003", None)
         resp = await self.client.post("/api/push/me0003")
         self.assertEqual(resp.status, 200)
         body = await resp.json()
         self.assertEqual(body.get("session", {}).get("state"), "pushing")
-        self.assertEqual(
-            (await self.web_ctx.drain_manual_queue()),
-            [("me0003", "push")],
-        )
+        uq = self.scheduler.units.get("me0003")
+        assert uq is not None
+        self.assertEqual(uq.manual_job, "push")
 
     async def test_post_unit_paused(self) -> None:
         resp = await self.client.post("/api/unit/me0003", json={"paused": True})
@@ -175,18 +213,13 @@ class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
         )
         resp = await self.client.post("/api/refresh/me0003")
         self.assertEqual(resp.status, 200)
-        jobs = await self.web_ctx.drain_manual_queue()
-        self.assertEqual(jobs, [("me0003", "refresh")])
+        uq = self.scheduler.units.get("me0003")
+        assert uq is not None
+        self.assertTrue(uq.manual)
 
 
-class FleetManualJobTargetsTests(unittest.TestCase):
+class FleetManualJobBuildTests(unittest.TestCase):
     def test_refresh_pull_push_due_groups(self) -> None:
-        from ruamel.yaml import YAML
-
-        from envybot.commands.fleet import _manual_job_targets
-        from envybot.history import open_history
-        from envybot.poll import GET_GROUP_ORDER, refresh_due_groups
-
         with tempfile.TemporaryDirectory() as tmp:
             book = Path(tmp)
             nodes_path = book / "nodes.yaml"
@@ -205,61 +238,28 @@ class FleetManualJobTargetsTests(unittest.TestCase):
                     },
                     fh,
                 )
-            conn = open_history(book)
-            apply_keys: set[str] = set()
-            manual_keys: set[str] = set()
-            manual_jobs: dict[str, str] = {}
-            session_states: dict[str, dict] = {}
-            refresh = _manual_job_targets(
-                [("me0003", "refresh")],
-                nodes_path=nodes_path,
-                conn=conn,
-                nodes={"me0003": {}},
-                sites={},
-                doc={"nodes": {"me0003": {}}},
-                keys={},
-                session_states=session_states,
-                apply_keys=apply_keys,
-                manual_keys=manual_keys,
-                manual_jobs=manual_jobs,
-                do_poll=True,
-                do_apply=True,
-                attempt_counts={},
+            target = load_targets(nodes_path, deployed_only=False, include={"me0003"})[0]
+            refresh = build_manual_jobs(
+                target, "refresh", do_poll=True, do_apply=True, apply_due=False, skip_discover=False
             )
-            self.assertEqual(refresh[0].due_groups, refresh_due_groups())
-            self.assertEqual(manual_jobs["me0003"], "refresh")
-            pull = _manual_job_targets(
-                [("me0003", "pull")],
-                nodes_path=nodes_path,
-                conn=conn,
-                nodes={"me0003": {}},
-                sites={},
-                doc={"nodes": {"me0003": {}}},
-                keys={},
-                session_states=session_states,
-                apply_keys=apply_keys,
-                manual_keys=manual_keys,
-                manual_jobs=manual_jobs,
-                do_poll=True,
-                do_apply=True,
-                attempt_counts={},
+            refresh_get = {j.kind for j in refresh if j.kind.startswith("get:")}
+            for g in refresh_due_groups():
+                if g == "neighbors":
+                    self.assertIn("get:neighbors", refresh_get)
+                else:
+                    self.assertIn(f"get:{g}", refresh_get)
+            pull = build_manual_jobs(
+                target, "pull", do_poll=True, do_apply=True, apply_due=False, skip_discover=False
             )
-            self.assertEqual(pull[0].due_groups, list(GET_GROUP_ORDER))
-            push = _manual_job_targets(
-                [("me0003", "push")],
-                nodes_path=nodes_path,
-                conn=conn,
-                nodes={"me0003": {}},
-                sites={},
-                doc={"nodes": {"me0003": {}}},
-                keys={},
-                session_states=session_states,
-                apply_keys=apply_keys,
-                manual_keys=manual_keys,
-                manual_jobs=manual_jobs,
-                do_poll=True,
-                do_apply=True,
-                attempt_counts={},
+            pull_kinds = [j.kind for j in pull if j.kind.startswith("get:")]
+            self.assertIn("get:neighbors_discover", pull_kinds)
+            push = build_manual_jobs(
+                target, "push", do_poll=True, do_apply=True, apply_due=True, skip_discover=False
             )
-            self.assertEqual(push[0].due_groups, [])
-            self.assertIn("me0003", apply_keys)
+            get_kinds = [j.kind for j in push if j.kind.startswith("get:")]
+            self.assertEqual(get_kinds, [])
+            apply_kinds = [j.kind for j in push if j.kind.startswith("apply:")]
+            self.assertTrue(apply_kinds)
+
+
+from envybot.web.server import make_app  # noqa: E402

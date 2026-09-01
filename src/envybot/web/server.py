@@ -11,9 +11,20 @@ from typing import Any
 
 from aiohttp import web
 
+from envybot.apply import apply_is_due
+from envybot.fleet_worker import build_manual_jobs
 from envybot.history import history_series, open_history
-from envybot.nodes_doc import is_decommissioned, is_meshcore_platform, load_nodes_doc, write_nodes_doc
+from envybot.jobs import FleetScheduler
+from envybot.keys_doc import keys_path, load_keys
+from envybot.nodes_doc import (
+    is_decommissioned,
+    is_meshcore_platform,
+    load_nodes_doc,
+    load_sites_for_book,
+    write_nodes_doc,
+)
 from envybot.position import bind_node_to_site, load_sites_doc, write_sites_doc
+from envybot.radio import load_targets
 from envybot.web.hub import FleetHub
 from envybot.web.snapshot import assert_no_secrets, build_fleet_snapshot, build_neighbor_edges
 
@@ -21,6 +32,21 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
+
+
+@dataclass
+class FleetWebBinding:
+    scheduler: FleetScheduler
+    manual_keys: set[str]
+    conn: Any
+    nodes: dict[str, Any]
+    sites: dict[str, Any]
+    doc: dict[str, Any]
+    keys: dict[str, list[str]]
+    do_poll: bool
+    do_apply: bool
+    skip_discover: bool
+    discover_wait: float
 
 
 @dataclass
@@ -36,14 +62,40 @@ class MonitorWeb:
     site: web.TCPSite | None = None
     _watch_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _stop: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
-    _manual_queue: asyncio.Queue[tuple[str, str]] = field(
-        default_factory=asyncio.Queue, repr=False
-    )
+    _binding: FleetWebBinding | None = field(default=None, repr=False)
     _accepting: bool = field(default=False, repr=False)
     _session_states: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
     _poll_state: dict[str, Any] = field(default_factory=dict, repr=False)
     _companion: str | None = field(default=None, repr=False)
-    _wake_idle: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+
+    def bind_scheduler(
+        self,
+        scheduler: FleetScheduler,
+        *,
+        manual_keys: set[str],
+        conn: Any,
+        nodes: dict[str, Any],
+        sites: dict[str, Any],
+        doc: dict[str, Any],
+        keys: dict[str, list[str]],
+        do_poll: bool,
+        do_apply: bool,
+        skip_discover: bool,
+        discover_wait: float,
+    ) -> None:
+        self._binding = FleetWebBinding(
+            scheduler=scheduler,
+            manual_keys=manual_keys,
+            conn=conn,
+            nodes=nodes,
+            sites=sites,
+            doc=doc,
+            keys=keys,
+            do_poll=do_poll,
+            do_apply=do_apply,
+            skip_discover=skip_discover,
+            discover_wait=discover_wait,
+        )
 
     def set_worker_active(self, active: bool) -> None:
         self._accepting = active
@@ -82,50 +134,38 @@ class MonitorWeb:
         busy = ("refreshing", "pulling", "pushing", "polling")
         if state in busy:
             return 200, None
-        self._manual_queue.put_nowait((key, job))
-        self._wake_idle.set()
+        if self._binding is None:
+            return 409, "fleet worker not accepting manual jobs"
+        binding = self._binding
+        targets = load_targets(
+            self.nodes_path, deployed_only=False, include={key}, skip=None
+        )
+        if not targets:
+            return 404, "unknown unit"
+        target = targets[0]
+        apply_due = binding.do_apply and apply_is_due(
+            binding.conn,
+            key,
+            node,
+            binding.sites,
+            force=job == "push",
+            doc=binding.doc,
+            keys=binding.keys,
+        )
+        jobs = build_manual_jobs(
+            target,
+            job,
+            do_poll=binding.do_poll,
+            do_apply=binding.do_apply,
+            apply_due=apply_due,
+            skip_discover=binding.skip_discover,
+            discover_wait=binding.discover_wait,
+        )
+        status, err = binding.scheduler.enqueue_manual(target, job, jobs)
+        binding.manual_keys.add(key)
         pending_state = manual_job_session_state(job)
         self._session_states[key] = {"state": pending_state, "manual": True, "job": job}
-        return 200, None
-
-    async def drain_manual_queue(self) -> list[tuple[str, str]]:
-        items: list[tuple[str, str]] = []
-        while True:
-            try:
-                items.append(self._manual_queue.get_nowait())
-            except asyncio.QueueEmpty:
-                break
-        seen: set[str] = set()
-        out: list[tuple[str, str]] = []
-        for key, job in items:
-            k = key.lower()
-            if k in seen:
-                continue
-            seen.add(k)
-            out.append((k, job))
-        return out
-
-    async def wait_manual_queue(self) -> list[tuple[str, str]]:
-        """Block until manual jobs arrive or shutdown."""
-        while not self._stop.is_set():
-            items = await self.drain_manual_queue()
-            if items:
-                return items
-            self._wake_idle.clear()
-            get_task = asyncio.create_task(self._manual_queue.get())
-            stop_task = asyncio.create_task(self._stop.wait())
-            done, pending = await asyncio.wait(
-                {get_task, stop_task}, return_when=asyncio.FIRST_COMPLETED
-            )
-            for task in pending:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
-            if stop_task in done:
-                return []
-            key, job = get_task.result()
-            return [(key.lower(), job)] + await self.drain_manual_queue()
-        return []
+        return status, err
 
     async def refresh_snapshot(
         self,

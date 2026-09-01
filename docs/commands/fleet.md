@@ -44,7 +44,24 @@ follow the apply profile stamp, not a heard-identity GET.
 `paused: true` on a node skips auto GET and apply. The unit stays on the
 map. **Refresh**, **Pull**, and **Push** still work from the UI. Unpause
 (or delete the key) returns the unit to the next fleet run. Mid-run pause
-takes effect at the next unit boundary. `trust` / `cmd` do not honor pause.
+takes effect at the next job boundary. `trust` / `cmd` do not honor pause.
+
+## Job queue
+
+Fleet work is a **fair serial command queue** (`jobs.py` + `fleet_worker.py`):
+
+- Each unit gets a FIFO deque: login, then due GET groups (one exchange each),
+  then due SET fields. Neighbors = `discover.neighbors`, a **timer job** (default
+  12s, radio idle), then `GET_NEIGHBOURS`.
+- One companion send+wait at a time across the whole fleet. Timeout **parks**
+  that unit (head job kept, backoff, retry later) instead of blocking everyone.
+- Pick order: manual Refresh/Pull/Push, inventory gaps (fw/bl), then
+  least-recently-served among ready units.
+- `--attempts` (default 10) caps retries **per command** at the scheduler.
+  Attempt 2+ still resets to flood on that destination. `--retry-delay` /
+  `--round-delay` control backoff between retries.
+- UI Refresh/Pull/Push enqueue onto the same scheduler (priority over auto poll).
+- Sqlite updates incrementally after each successful GET group or SET field.
 
 ## Manual jobs (UI)
 
@@ -85,9 +102,8 @@ stamps and re-SETs everything. Each attempt (including retries) prints
 assign. Heard name/GPS/adverts do **not** trigger apply. Edit a hashed field in `nodes.yaml` (or run `trust`) and restart fleet.
 
 When apply runs, GET ACL once to drop keys not in the book allowlist.
-SET fields use the full `--attempts` budget. Login is the reachability
-check. If a SET gets no response, apply aborts for that unit
-(no lat/lon/guest/…).
+Each SET is one queued command. Login is the reachability check. If a SET
+gets no response, apply aborts for that unit (no lat/lon/guest/…).
 
 Hashed: public/name/gps/adverts, guest + admin (tokens), identity pubkey,
 path.hash, dutycycle, resolved ACL (pubkey + perm). Not hashed / not pushed here:
@@ -109,7 +125,9 @@ Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
 | `--force` | Pull every GET group and Push profile |
 | `--live` | Periodic GET only (status/telemetry/neighbors) |
 | `--no-discover` | GET neighbor table without remote `discover.neighbors` |
-| `--discover-wait SEC` | Listen after discover (default 12) |
+| `--discover-wait SEC` | Listen after discover (default 12; timer job, radio idle) |
+| `--retry-delay SEC` | Backoff after a command timeout before retry |
+| `--round-delay SEC` | Pause between scheduler retry rounds |
 | `--poll-only` | GET only |
 | `--apply-only` | SET only |
 | `--deployed-only` | Site-bound units only (skip bag/bench) |

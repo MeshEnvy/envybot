@@ -1795,6 +1795,72 @@ async def admin_login(
     return False, f"login failed after {attempts} attempts", None
 
 
+async def admin_login_attempt(
+    client: MeshCore,
+    target: RouterTarget,
+    *,
+    login_timeout: float,
+    session: FleetSession | None = None,
+    log: PollLog | None = None,
+    attempt_num: int = 1,
+) -> tuple[bool, str | None, int | None]:
+    """Single login send+wait. ``attempt_num >= 2`` triggers flood fallback."""
+    log = log or PollLog()
+    dst = target.pubkey_hex
+    prefix = dst[:12]
+    async with client.commands._mesh_request_lock:
+        await ensure_contact_on_device(client, target, log=log)
+        if attempt_num >= 2:
+            await reset_to_flood(client, target, log=log)
+        log_contact_path(client, target, log=log)
+        sent = await send_login_frame(client, dst, target.admin_password)
+        if sent is None or sent.type == EventType.ERROR:
+            err = sent.payload if sent else "no response"
+            log.step(f"login {attempt_num}: send error ({err})")
+            return False, err, None
+        suggested_ms = sent.payload.get("suggested_timeout", 60000)
+
+    wait_s = mesh_wait_seconds(suggested_ms, cap=login_timeout)
+    if session is not None:
+        wait_s = session.stretch_wait(wait_s, target.unit_id, cap=login_timeout)
+    n_of = str(attempt_num)
+    log.step(f"send login 0x1a {n_of} (≤{wait_s:.0f}s, no echo id) …")
+
+    exp = None
+    if session is not None:
+        exp = session.track_expect(
+            kind="login",
+            label="login",
+            unit=target.unit_id,
+            pubkey_prefix=prefix,
+            deadline=time.monotonic() + wait_s,
+            n_of=n_of,
+        )
+    status, event = await wait_login_response(client, prefix, timeout=wait_s)
+    if exp is not None and status != "timeout":
+        session.resolve_expect(exp)
+    if status == "success":
+        node_clock: int | None = None
+        if event and event.payload:
+            ts = event.payload.get("server_timestamp")
+            if ts is not None:
+                node_clock = int(ts)
+        if node_clock is not None:
+            log.step(f"login OK (clock={node_clock})")
+        else:
+            log.step("login OK")
+        if session is not None:
+            session.mark_authed(target.key)
+        return True, None, node_clock
+    if status == "failed":
+        log.step("login rejected")
+        if session is not None:
+            session.clear_auth(target.key)
+        return False, "login rejected (bad password?)", None
+    log.step(f"login {n_of}: timeout after {wait_s:.0f}s")
+    return False, f"login timeout after {wait_s:.0f}s", None
+
+
 async def fetch_repeater_clock(
     client: MeshCore,
     target: RouterTarget,
@@ -1878,22 +1944,25 @@ async def send_cmd_sync(
     attempts: int = DEFAULT_MESH_ATTEMPTS,
     log: PollLog | None = None,
     session: FleetSession | None = None,
+    attempt_num: int | None = None,
 ) -> str | None:
     log = log or PollLog()
     """Send CLI command; rides the direct path learned at login, floods as fallback."""
     dst_hex = target.pubkey_hex
     pubkey_prefix = dst_hex[:12]
     attempt = 0
+    single = attempt_num is not None
+    max_attempts = 1 if single else attempts
 
-    while attempts == 0 or attempt < attempts:
-        attempt += 1
+    while max_attempts == 0 or attempt < max_attempts:
+        attempt = attempt_num if single else attempt + 1
         if session is not None and not await session.ensure_companion_connected(log=log):
             log.step("send aborted: companion not connected")
             return None
         prefix_token = next_cli_prefix()
         framed = f"{prefix_token}{cmd}"
         async with client.commands._mesh_request_lock:
-            if attempt == 2:
+            if attempt >= 2:
                 # Saved direct path didn't answer — fall back to flood (same as login).
                 await reset_to_flood(client, target, log=log)
             log_contact_path(client, target, log=log)
@@ -1947,12 +2016,71 @@ async def send_cmd_sync(
         if text:
             log.detail(f"cli reply {prefix_token}{text[:120]}")
             return text
-        if attempts and attempt >= attempts:
+        if single or (attempts and attempt >= attempts):
             log.step(f"send {framed!r} {n_of}: timeout after {wait_s:.0f}s")
             break
         log.step(f"send {framed!r} {n_of}: timeout after {wait_s:.0f}s, retrying …")
 
     return None
+
+
+async def send_cmd_once(
+    client: MeshCore,
+    target: RouterTarget,
+    cmd: str,
+    *,
+    timeout: float,
+    log: PollLog | None = None,
+    session: FleetSession | None = None,
+    attempt_num: int = 1,
+) -> str | None:
+    """Single CLI send+wait. ``attempt_num >= 2`` triggers flood fallback."""
+    return await send_cmd_sync(
+        client,
+        target,
+        cmd,
+        timeout=timeout,
+        attempts=1,
+        log=log,
+        session=session,
+        attempt_num=attempt_num,
+    )
+
+
+async def binary_req_once(
+    label: str,
+    fetch: Callable[[float], Awaitable[Any]],
+    *,
+    client: MeshCore,
+    target: RouterTarget,
+    log: PollLog,
+    session: FleetSession | None = None,
+    wait_s: float = 0.0,
+    cap: float = 0.0,
+    attempt_num: int = 1,
+    on_retry: Callable[[], Awaitable[None]] | None = None,
+    success: Callable[[Any], bool] | None = None,
+) -> Any:
+    """Single binary mesh request attempt."""
+
+    async def on_retry_num(_: int) -> None:
+        if on_retry is not None:
+            await on_retry()
+
+    return await retry_binary_req(
+        label,
+        fetch,
+        client=client,
+        attempts=1,
+        log=log,
+        success=success,
+        on_retry=on_retry_num if attempt_num >= 2 and on_retry else None,
+        session=session,
+        target=target,
+        wait_s=wait_s,
+        cap=cap,
+        attempt_num=attempt_num,
+    )
 
 
 async def retry_binary_req(
@@ -1968,6 +2096,7 @@ async def retry_binary_req(
     target: RouterTarget | None = None,
     wait_s: float = 0.0,
     cap: float = 0.0,
+    attempt_num: int | None = None,
 ) -> Any:
     """Retry binary mesh requests (status, telemetry, neighbors, acl, …)."""
     def ok(val: Any) -> bool:
@@ -1976,14 +2105,19 @@ async def retry_binary_req(
         return val is not None
 
     attempt = 0
-    while attempts == 0 or attempt < attempts:
-        attempt += 1
+    single = attempt_num is not None
+    max_attempts = 1 if single else attempts
+
+    while max_attempts == 0 or attempt < max_attempts:
+        attempt = attempt_num if single else attempt + 1
         if session is not None and not await session.ensure_companion_connected(log=log):
             log.step(f"{label}: aborted — companion not connected")
             break
+        if target is not None and attempt >= 2 and on_retry is not None:
+            await on_retry(attempt)
         if target is not None:
             log_contact_path(client, target, log=log)
-        n_of = attempt_label(attempt, attempts)
+        n_of = attempt_label(attempt, max_attempts if max_attempts else attempts)
         dest_wait = wait_s
         if session is not None and target is not None:
             dest_wait = session.stretch_wait(wait_s, target.unit_id, cap=cap or 0.0)
@@ -2007,13 +2141,45 @@ async def retry_binary_req(
             if attempt > 1:
                 log.detail(f"{label} succeeded on {n_of}")
             return result
-        if attempts and attempt >= attempts:
+        if single or (attempts and attempt >= attempts):
             log.step(f"{label} {n_of}: no response")
             break
         if on_retry is not None:
             await on_retry(attempt)
         log.step(f"{label} {n_of}: no response, retrying …")
     return None
+
+
+async def trigger_neighbor_discover_once(
+    client: MeshCore,
+    target: RouterTarget,
+    *,
+    cmd_timeout: float,
+    session: FleetSession | None,
+    log: PollLog,
+    attempt_num: int = 1,
+) -> bool:
+    """Send discover.neighbors CLI once (no listen window)."""
+    raw = await send_cmd_once(
+        client,
+        target,
+        "discover.neighbors",
+        timeout=cmd_timeout,
+        log=log,
+        session=session,
+        attempt_num=attempt_num,
+    )
+    if raw is None:
+        log.step("discover.neighbors: no response")
+        return False
+    if cli_suggests_auth_failure(raw) or cli_error_reply(raw):
+        if session is not None and cli_suggests_auth_failure(raw):
+            session.clear_auth(target.key)
+            log.step("auth cleared (CLI denied)")
+        log.step("discover.neighbors: error")
+        return False
+    log.step("discover.neighbors OK")
+    return True
 
 
 def normalize_force_groups(groups: list[str] | None) -> frozenset[str]:
