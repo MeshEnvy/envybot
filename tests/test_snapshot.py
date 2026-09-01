@@ -346,6 +346,60 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(interval["packets_recv"], 300)
             self.assertEqual(interval["recv_errors"], 60)
 
+    def test_health_in_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            yaml = YAML()
+            yaml.dump({"sites": {}}, sites_path.open("w", encoding="utf-8"))
+            yaml.dump(
+                {
+                    "next_unit": 2,
+                    "nodes": {
+                        "me0001": {
+                            "unit_id": "ME0001",
+                            "name": "Healthy",
+                            "identity_pubkey": "a" * 64,
+                            "admin_password": "secret-admin",
+                            "guest_password": "secret-guest",
+                        },
+                    },
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            conn = open_history(book)
+
+            class _Res:
+                polled_groups = frozenset({"status", "telemetry"})
+
+            _Res.status = {
+                "packets_recv": 100,
+                "packets_sent": 10,
+                "recv_errors": 5,
+                "battery_mv": 4200,
+                "uptime_secs": 1000,
+            }
+            _Res.telemetry = [
+                {"type": "voltage", "value": 4.2},
+                {"type": "temperature", "value": 22.0},
+            ]
+            record_poll(conn, unit="me0001", res=_Res(), ts=1000)
+            _Res.status = {
+                "packets_recv": 150,
+                "packets_sent": 20,
+                "recv_errors": 8,
+                "battery_mv": 4190,
+                "uptime_secs": 2000,
+            }
+            record_poll(conn, unit="me0001", res=_Res(), ts=2000)
+            conn.close()
+            snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
+            health = snap["units"]["me0001"]["health"]
+            self.assertIn("grade", health)
+            self.assertIn("checks", health)
+            self.assertIn("summary", health)
+
 
 class DriftStateTests(unittest.TestCase):
     def test_profile_ok_clears_drift(self) -> None:

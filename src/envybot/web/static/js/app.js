@@ -1,6 +1,7 @@
 import { createApp, computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { connectEvents, fetchFleet, patchUnit } from './api.js'
+import { connectEvents, fetchFleet, fetchHistory, patchUnit } from './api.js'
 import {
+  formatAirtimePct,
   formatBattery,
   formatCount,
   formatNoiseFloor,
@@ -12,12 +13,15 @@ import {
   formatSnr,
   formatTemp,
   formatUptime,
+  hasHealthIssues,
   hasTrafficInterval,
   hasTrafficStats,
+  healthTooltip,
   unitLabel,
   unitTitle,
-} from './format.js?v=8'
+} from './format.js?v=9'
 import { createMapController, unitStatus } from './map.js?v=11'
+import { healthStroke, sparklinePath } from './sparklines.js?v=1'
 
 const SESSION_RANK = {
   polling: 0,
@@ -41,6 +45,12 @@ const App = {
     })
     const selectedKey = ref(null)
     const search = ref('')
+    const sparkData = reactive({
+      voltage: [],
+      temperature: [],
+      unreadable_pct: [],
+      recv_rate: [],
+    })
     /** @type {import('vue').Ref<HTMLElement | null>} */
     const detailEl = ref(null)
     /** @type {ReturnType<typeof createMapController> | null} */
@@ -123,10 +133,22 @@ const App = {
       mapCtrl.attachDetail(el, [lon, lat])
     }
 
-    function clearSelection() {
-      selectedKey.value = null
-      mapCtrl?.detachDetail()
-      mapCtrl?.sync(fleet, null)
+    async function loadSparklines(key) {
+      const metrics = ['voltage', 'temperature', 'unreadable_pct', 'recv_rate']
+      const results = await Promise.all(
+        metrics.map((m) =>
+          fetchHistory(key, m)
+            .then((r) => r.points || [])
+            .catch(() => [])
+        )
+      )
+      metrics.forEach((m, i) => {
+        sparkData[m] = results[i]
+      })
+    }
+
+    function sparkPath(metric) {
+      return sparklinePath(sparkData[metric] || [], 120, 28)
     }
 
     async function selectUnit(key) {
@@ -137,8 +159,19 @@ const App = {
       selectedKey.value = key
       mapCtrl?.flyTo(key, fleet)
       mapCtrl?.sync(fleet, key)
+      loadSparklines(key)
       await nextTick()
       syncDetailPopup()
+    }
+
+    function clearSelection() {
+      selectedKey.value = null
+      sparkData.voltage = []
+      sparkData.temperature = []
+      sparkData.unreadable_pct = []
+      sparkData.recv_rate = []
+      mapCtrl?.detachDetail()
+      mapCtrl?.sync(fleet, null)
     }
 
     function cardMeta(unit) {
@@ -219,6 +252,7 @@ const App = {
       cardMeta,
       formatRelative,
       formatSite,
+      formatAirtimePct,
       formatBattery,
       formatCount,
       formatNoiseFloor,
@@ -228,8 +262,12 @@ const App = {
       formatUptime,
       formatRssi,
       formatSnr,
+      hasHealthIssues,
       hasTrafficInterval,
       hasTrafficStats,
+      healthStroke,
+      healthTooltip,
+      sparkPath,
       unitLabel,
       unitTitle,
       togglePublic,
@@ -276,6 +314,57 @@ const App = {
             <input type="checkbox" :checked="!!selectedUnit.public" @change="togglePublic(selectedUnit, $event)" />
             public (push book name + GPS)
           </label>
+          <section v-if="selectedUnit.health" class="health-section">
+            <h3>Health</h3>
+            <p class="health-summary">
+              <span
+                class="health-chip"
+                :class="'health-' + (selectedUnit.health.grade || 'unknown')"
+              >
+                {{ selectedUnit.health.grade || 'unknown' }}
+              </span>
+              {{ selectedUnit.health.summary }}
+            </p>
+            <ul v-if="hasHealthIssues(selectedUnit.health)" class="health-issues">
+              <li
+                v-for="(issue, i) in selectedUnit.health.issues"
+                :key="i"
+                :class="'health-' + issue.status"
+              >
+                {{ issue.name }}: {{ issue.reason || issue.status }}
+              </li>
+            </ul>
+            <div class="spark-grid">
+              <div class="spark-row">
+                <span class="spark-label">Voltage</span>
+                <svg v-if="sparkPath('voltage')" class="spark" width="120" height="28" viewBox="0 0 120 28" aria-hidden="true">
+                  <polyline fill="none" stroke="#6ee7a0" stroke-width="1.5" :points="sparkPath('voltage')" />
+                </svg>
+                <span v-else class="spark-empty">—</span>
+              </div>
+              <div class="spark-row">
+                <span class="spark-label">Temp</span>
+                <svg v-if="sparkPath('temperature')" class="spark" width="120" height="28" viewBox="0 0 120 28" aria-hidden="true">
+                  <polyline fill="none" stroke="#f0b86e" stroke-width="1.5" :points="sparkPath('temperature')" />
+                </svg>
+                <span v-else class="spark-empty">—</span>
+              </div>
+              <div class="spark-row">
+                <span class="spark-label">Unreadable %</span>
+                <svg v-if="sparkPath('unreadable_pct')" class="spark" width="120" height="28" viewBox="0 0 120 28" aria-hidden="true">
+                  <polyline fill="none" stroke="#f06e6e" stroke-width="1.5" :points="sparkPath('unreadable_pct')" />
+                </svg>
+                <span v-else class="spark-empty">—</span>
+              </div>
+              <div class="spark-row">
+                <span class="spark-label">In rate / h</span>
+                <svg v-if="sparkPath('recv_rate')" class="spark" width="120" height="28" viewBox="0 0 120 28" aria-hidden="true">
+                  <polyline fill="none" stroke="#4ea1ff" stroke-width="1.5" :points="sparkPath('recv_rate')" />
+                </svg>
+                <span v-else class="spark-empty">—</span>
+              </div>
+            </div>
+          </section>
           <dl>
             <dt>Book name</dt>
             <dd>{{ selectedUnit.name || '—' }}</dd>
@@ -382,6 +471,34 @@ const App = {
                   }}
                 </dd>
               </template>
+              <template
+                v-if="
+                  selectedUnit.traffic_interval?.recv_flood != null ||
+                  selectedUnit.traffic_interval?.recv_direct != null
+                "
+              >
+                <dt>Recv flood / direct</dt>
+                <dd>
+                  {{ formatCount(selectedUnit.traffic_interval?.recv_flood) }} /
+                  {{ formatCount(selectedUnit.traffic_interval?.recv_direct) }}
+                </dd>
+              </template>
+              <template
+                v-if="
+                  selectedUnit.traffic_interval?.sent_flood != null ||
+                  selectedUnit.traffic_interval?.sent_direct != null
+                "
+              >
+                <dt>Sent flood / direct</dt>
+                <dd>
+                  {{ formatCount(selectedUnit.traffic_interval?.sent_flood) }} /
+                  {{ formatCount(selectedUnit.traffic_interval?.sent_direct) }}
+                </dd>
+              </template>
+              <template v-if="selectedUnit.traffic_interval?.rx_airtime_pct != null">
+                <dt>Channel utilization</dt>
+                <dd>{{ formatAirtimePct(selectedUnit.traffic_interval?.rx_airtime_pct) }}</dd>
+              </template>
             </dl>
           </section>
           <section v-if="selectedUnit.neighbors?.length">
@@ -414,6 +531,12 @@ const App = {
               </span>
             </div>
             <div class="unit-meta">{{ cardMeta(unit) }}</div>
+            <div
+              v-if="unit.health"
+              class="health-bar"
+              :class="'health-' + (unit.health.grade || 'unknown')"
+              :title="healthTooltip(unit.health)"
+            ></div>
           </div>
         </div>
       </aside>

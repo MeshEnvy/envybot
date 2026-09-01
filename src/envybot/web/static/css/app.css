@@ -339,6 +339,109 @@ body {
   border-top-color: #151b22;
 }
 
+.health-bar {
+  margin-top: 6px;
+  height: 3px;
+  border-radius: 2px;
+  background: #2a3440;
+}
+
+.health-bar.health-ok {
+  background: #6ee7a0;
+}
+
+.health-bar.health-warn {
+  background: #f0b86e;
+}
+
+.health-bar.health-bad {
+  background: #f06e6e;
+}
+
+.health-bar.health-unknown {
+  background: #3a4654;
+}
+
+.health-section .health-summary {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.health-chip {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.health-chip.health-ok {
+  background: #1a3d2e;
+  color: #6ee7a0;
+}
+
+.health-chip.health-warn {
+  background: #3d2e1a;
+  color: #f0b86e;
+}
+
+.health-chip.health-bad {
+  background: #3d1a1a;
+  color: #f06e6e;
+}
+
+.health-chip.health-unknown {
+  background: #2a3440;
+  color: #8aa0b5;
+}
+
+.health-issues {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  font-size: 0.75rem;
+  color: #c5d3df;
+}
+
+.health-issues li.health-warn {
+  color: #f0b86e;
+}
+
+.health-issues li.health-bad {
+  color: #f06e6e;
+}
+
+.spark-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.spark-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.72rem;
+}
+
+.spark-label {
+  flex: 0 0 88px;
+  color: #8aa0b5;
+}
+
+.spark {
+  flex-shrink: 0;
+}
+
+.spark-empty {
+  color: #5a6a7a;
+  font-size: 0.75rem;
+}
+
 @media (max-width: 900px) {
   #layout {
     grid-template-columns: 1fr;

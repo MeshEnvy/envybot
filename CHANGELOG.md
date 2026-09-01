@@ -33,6 +33,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- Fleet **node health**: per-unit grade (ok/warn/bad) from reachability,
+  power, stability, traffic, RF quality, channel utilization, config drift,
+  and temperature. Sidebar cards show a colored health bar; detail popup
+  lists failing checks with reasons.
+- Fleet detail **sparklines** (voltage, temperature, unreadable %, in-rate/h)
+  from sqlite poll history via `/api/history/{unit}?metric=`.
+- Since-last-poll interval deltas now include flood/direct, dup counters,
+  and RX airtime utilization %.
 - Fleet node detail shows traffic since boot (in/out packets,
   unreadable RF frames, flood/direct split, last SNR/RSSI/noise) from
   the latest status poll.

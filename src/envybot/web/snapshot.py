@@ -8,7 +8,15 @@ from pathlib import Path
 from typing import Any
 
 from envybot.apply import apply_is_due
-from envybot.history import all_last_seen, interval_traffic, latest_neighbors, latest_status, open_history
+from envybot.health import compute_health
+from envybot.history import (
+    all_last_seen,
+    interval_traffic,
+    latest_neighbors,
+    latest_status,
+    open_history,
+    status_series,
+)
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
     is_decommissioned,
@@ -342,6 +350,7 @@ def build_fleet_snapshot(
     neighbors_map: dict[str, Any] = {}
     status_map: dict[str, dict[str, Any]] = {}
     interval_map: dict[str, dict[str, Any]] = {}
+    status_rows_map: dict[str, list[dict[str, Any]]] = {}
     conn = None
     try:
         conn = open_history(book_dir)
@@ -357,6 +366,7 @@ def build_fleet_snapshot(
             interval = interval_traffic(conn, key)
             if interval is not None:
                 interval_map[key] = interval
+            status_rows_map[key] = status_series(conn, key)
     except OSError:
         seen_map = seen_map or {}
         conn = None
@@ -387,6 +397,15 @@ def build_fleet_snapshot(
                 status_raw=status_map.get(key),
                 traffic_interval=interval_map.get(key),
                 profile_ok=profile_ok,
+            )
+            units[key]["health"] = compute_health(
+                freshness=units[key]["freshness"],
+                session=states.get(key),
+                drift=units[key].get("drift"),
+                status=units[key].get("status"),
+                telemetry=units[key].get("telemetry"),
+                traffic_interval=interval_map.get(key),
+                status_rows=status_rows_map.get(key, []),
             )
     finally:
         if conn is not None:

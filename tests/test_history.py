@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 from envybot.history import (
+    count_reboots,
     get_last_seen,
     history_series,
     import_jsonl,
@@ -19,6 +21,7 @@ from envybot.history import (
     migrate_legacy,
     open_history,
     record_poll,
+    status_series,
 )
 
 
@@ -220,6 +223,112 @@ class HistoryTests(unittest.TestCase):
             assert interval is not None
             self.assertTrue(interval["reboot_reset"])
             self.assertNotIn("packets_recv", interval)
+
+    def test_interval_traffic_extended_deltas(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            base = {
+                "packets_recv": 100,
+                "packets_sent": 10,
+                "recv_errors": 5,
+                "recv_flood": 80,
+                "recv_direct": 20,
+                "sent_flood": 8,
+                "sent_direct": 2,
+                "flood_dups": 3,
+                "direct_dups": 1,
+                "tx_airtime_secs": 100,
+                "rx_airtime_secs": 200,
+                "uptime_secs": 1000,
+            }
+            record_poll(
+                conn,
+                unit="me0007",
+                res=_Res(status=dict(base), polled_groups=frozenset({"status"})),
+                ts=1000,
+            )
+            record_poll(
+                conn,
+                unit="me0007",
+                res=_Res(
+                    status={
+                        **base,
+                        "packets_recv": 150,
+                        "recv_flood": 120,
+                        "rx_airtime_secs": 500,
+                        "uptime_secs": 2000,
+                    },
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=3000,
+            )
+            interval = interval_traffic(conn, "me0007")
+            assert interval is not None
+            self.assertEqual(interval["packets_recv"], 50)
+            self.assertEqual(interval["recv_flood"], 40)
+            self.assertEqual(interval["rx_airtime_secs"], 300)
+            self.assertAlmostEqual(interval["rx_airtime_pct"], 15.0)
+
+    def test_status_series_and_reboot_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            base_ts = int(time.time()) - 7200
+            for i, uptime in enumerate([1000, 2000, 100]):
+                record_poll(
+                    conn,
+                    unit="me0008",
+                    res=_Res(
+                        status={"uptime_secs": uptime, "packets_recv": i},
+                        polled_groups=frozenset({"status"}),
+                    ),
+                    ts=base_ts + i * 3600,
+                )
+            rows = status_series(conn, "me0008", days=7)
+            self.assertEqual(len(rows), 3)
+            self.assertEqual(count_reboots(rows), 1)
+
+    def test_history_derived_series(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            record_poll(
+                conn,
+                unit="me0009",
+                res=_Res(
+                    status={
+                        "packets_recv": 100,
+                        "recv_errors": 10,
+                        "rx_airtime_secs": 0,
+                        "uptime_secs": 1000,
+                    },
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=1000,
+            )
+            record_poll(
+                conn,
+                unit="me0009",
+                res=_Res(
+                    status={
+                        "packets_recv": 200,
+                        "recv_errors": 30,
+                        "rx_airtime_secs": 360,
+                        "uptime_secs": 2000,
+                    },
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=4600,
+            )
+            unreadable = history_series(conn, "me0009", "unreadable_pct", since=0)
+            self.assertEqual(len(unreadable), 1)
+            self.assertAlmostEqual(unreadable[0]["value"], 16.67, places=1)
+            recv_rate = history_series(conn, "me0009", "recv_rate", since=0)
+            self.assertEqual(len(recv_rate), 1)
+            self.assertAlmostEqual(recv_rate[0]["value"], 100.0)
+            airtime = history_series(conn, "me0009", "airtime_pct", since=0)
+            self.assertEqual(len(airtime), 1)
+            self.assertAlmostEqual(airtime[0]["value"], 10.0)
+            temps = history_series(conn, "me0009", "temperature", since=0)
+            self.assertEqual(temps, [])
 
 
 if __name__ == "__main__":

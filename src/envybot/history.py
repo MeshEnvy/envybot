@@ -242,6 +242,80 @@ def _status_int(payload: dict[str, Any], key: str) -> int | None:
         return None
 
 
+INTERVAL_DELTA_KEYS = (
+    "packets_recv",
+    "packets_sent",
+    "recv_errors",
+    "recv_flood",
+    "recv_direct",
+    "sent_flood",
+    "sent_direct",
+    "flood_dups",
+    "direct_dups",
+    "tx_airtime_secs",
+    "rx_airtime_secs",
+)
+
+
+def _parse_status_row(row: sqlite3.Row) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(row["payload"])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    out: dict[str, Any] = {"ts": int(row["ts"])}
+    for key in (
+        *INTERVAL_DELTA_KEYS,
+        "battery_mv",
+        "uptime_secs",
+        "noise_floor",
+        "last_snr",
+        "last_rssi",
+        "tx_queue_len",
+    ):
+        val = payload.get(key)
+        if val is not None:
+            out[key] = val
+    return out
+
+
+def status_series(
+    conn: sqlite3.Connection,
+    unit: str,
+    *,
+    days: int = 7,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
+    """Chronological status samples for health checks and derived series."""
+    since = int(time.time()) - max(1, days) * 86400
+    rows = conn.execute(
+        "SELECT ts, payload FROM status WHERE unit = ? AND ts >= ? "
+        "ORDER BY ts ASC LIMIT ?",
+        (unit, since, limit),
+    ).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        parsed = _parse_status_row(row)
+        if parsed is not None:
+            out.append(parsed)
+    return out
+
+
+def count_reboots(status_rows: list[dict[str, Any]]) -> int:
+    """Reboot count from uptime drops across chronological status rows."""
+    reboots = 0
+    prev_uptime: int | None = None
+    for row in status_rows:
+        uptime = _status_int(row, "uptime_secs") if isinstance(row, dict) else None
+        if uptime is None:
+            continue
+        if prev_uptime is not None and uptime < prev_uptime:
+            reboots += 1
+        prev_uptime = uptime
+    return reboots
+
+
 def interval_traffic(conn: sqlite3.Connection, unit: str) -> dict[str, Any] | None:
     """Delta traffic between the last two status polls (since last fleet GET)."""
     rows = conn.execute(
@@ -285,17 +359,17 @@ def interval_traffic(conn: sqlite3.Connection, unit: str) -> dict[str, Any] | No
         d = c - p
         return d if d >= 0 else None
 
-    packets_recv = delta("packets_recv")
-    packets_sent = delta("packets_sent")
-    recv_errors = delta("recv_errors")
-    if packets_recv is None and packets_sent is None and recv_errors is None:
+    any_delta = False
+    for key in INTERVAL_DELTA_KEYS:
+        val = delta(key)
+        if val is not None:
+            base[key] = val
+            any_delta = True
+    if not any_delta:
         return None
-    if packets_recv is not None:
-        base["packets_recv"] = packets_recv
-    if packets_sent is not None:
-        base["packets_sent"] = packets_sent
-    if recv_errors is not None:
-        base["recv_errors"] = recv_errors
+    rx_air = base.get("rx_airtime_secs")
+    if rx_air is not None and duration_secs > 0:
+        base["rx_airtime_pct"] = round((rx_air / duration_secs) * 100, 1)
     return base
 
 
@@ -365,6 +439,90 @@ def insert_command(
     conn.commit()
 
 
+def _unreadable_pct(recv_errors: int | None, packets_recv: int | None) -> float | None:
+    if recv_errors is None:
+        return None
+    recv = packets_recv or 0
+    total = recv_errors + recv
+    if total <= 0:
+        return 0.0
+    return round((recv_errors / total) * 100, 2)
+
+
+def _derived_status_series(
+    rows: list[dict[str, Any]],
+    metric: str,
+) -> list[dict[str, Any]]:
+    """Build per-interval derived points from chronological status rows."""
+    out: list[dict[str, Any]] = []
+    if len(rows) < 2:
+        return out
+    prev = rows[0]
+    for row in rows[1:]:
+        ts = row.get("ts")
+        prev_ts = prev.get("ts")
+        if ts is None or prev_ts is None:
+            prev = row
+            continue
+        duration = max(0, int(ts) - int(prev_ts))
+        if duration <= 0:
+            prev = row
+            continue
+        prev_uptime = prev.get("uptime_secs")
+        curr_uptime = row.get("uptime_secs")
+        if (
+            prev_uptime is not None
+            and curr_uptime is not None
+            and int(curr_uptime) < int(prev_uptime)
+        ):
+            prev = row
+            continue
+        if metric == "unreadable_pct":
+            prev_err = prev.get("recv_errors")
+            curr_err = row.get("recv_errors")
+            prev_recv = prev.get("packets_recv")
+            curr_recv = row.get("packets_recv")
+            if prev_err is None or curr_err is None or prev_recv is None or curr_recv is None:
+                prev = row
+                continue
+            d_err = int(curr_err) - int(prev_err)
+            d_recv = int(curr_recv) - int(prev_recv)
+            if d_err < 0 or d_recv < 0:
+                prev = row
+                continue
+            pct = _unreadable_pct(d_err, d_recv)
+            if pct is not None:
+                out.append({"ts": ts, "value": pct})
+        elif metric == "recv_rate":
+            prev_recv = prev.get("packets_recv")
+            curr_recv = row.get("packets_recv")
+            if prev_recv is None or curr_recv is None:
+                prev = row
+                continue
+            d_recv = int(curr_recv) - int(prev_recv)
+            if d_recv < 0:
+                prev = row
+                continue
+            hours = duration / 3600.0
+            if hours <= 0:
+                prev = row
+                continue
+            out.append({"ts": ts, "value": round(d_recv / hours, 2)})
+        elif metric == "airtime_pct":
+            prev_rx = prev.get("rx_airtime_secs")
+            curr_rx = row.get("rx_airtime_secs")
+            if prev_rx is None or curr_rx is None:
+                prev = row
+                continue
+            d_rx = int(curr_rx) - int(prev_rx)
+            if d_rx < 0:
+                prev = row
+                continue
+            out.append({"ts": ts, "value": round((d_rx / duration) * 100, 2)})
+        prev = row
+    return out
+
+
 def history_series(
     conn: sqlite3.Connection,
     unit: str,
@@ -373,7 +531,7 @@ def history_series(
     since: int | None = None,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
-    """Time series for the fleet UI. metric: battery_mv|packets|errors|voltage."""
+    """Time series for the fleet UI sparklines."""
     since = since or 0
     if metric == "voltage":
         rows = conn.execute(
@@ -382,32 +540,51 @@ def history_series(
             (unit, since, limit),
         ).fetchall()
         return [{"ts": r["ts"], "value": r["value"]} for r in reversed(rows)]
+    if metric == "temperature":
+        rows = conn.execute(
+            "SELECT ts, value FROM telemetry WHERE unit = ? AND type = 'temperature' "
+            "AND ts >= ? ORDER BY ts DESC LIMIT ?",
+            (unit, since, limit),
+        ).fetchall()
+        return [{"ts": r["ts"], "value": r["value"]} for r in reversed(rows)]
     if metric == "battery_mv":
         key = "battery_mv"
-    elif metric == "packets":
-        key = "packets_recv"
-    elif metric == "errors":
-        key = "err_events"
-    else:
-        return []
-    rows = conn.execute(
-        "SELECT ts, payload FROM status WHERE unit = ? AND ts >= ? "
-        "ORDER BY ts DESC LIMIT ?",
-        (unit, since, limit),
-    ).fetchall()
-    out: list[dict[str, Any]] = []
-    for row in reversed(rows):
-        try:
-            payload = json.loads(row["payload"])
-        except json.JSONDecodeError:
-            continue
-        val = payload.get(key)
-        if metric == "packets":
+        rows = conn.execute(
+            "SELECT ts, payload FROM status WHERE unit = ? AND ts >= ? "
+            "ORDER BY ts DESC LIMIT ?",
+            (unit, since, limit),
+        ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in reversed(rows):
+            try:
+                payload = json.loads(row["payload"])
+            except json.JSONDecodeError:
+                continue
+            val = payload.get(key)
+            if val is not None:
+                out.append({"ts": row["ts"], "value": val})
+        return out
+    if metric == "packets":
+        rows = conn.execute(
+            "SELECT ts, payload FROM status WHERE unit = ? AND ts >= ? "
+            "ORDER BY ts DESC LIMIT ?",
+            (unit, since, limit),
+        ).fetchall()
+        out = []
+        for row in reversed(rows):
+            try:
+                payload = json.loads(row["payload"])
+            except json.JSONDecodeError:
+                continue
+            val = payload.get("packets_recv")
             sent = payload.get("packets_sent")
             out.append({"ts": row["ts"], "recv": val, "sent": sent})
-        elif val is not None:
-            out.append({"ts": row["ts"], "value": val})
-    return out
+        return out
+    if metric in ("unreadable_pct", "recv_rate", "airtime_pct"):
+        rows = status_series(conn, unit, days=max(1, (int(time.time()) - since) // 86400 + 1), limit=limit)
+        filtered = [r for r in rows if r.get("ts", 0) >= since]
+        return _derived_status_series(filtered, metric)
+    return []
 
 
 def _upsert_last_seen(conn: sqlite3.Connection, unit: str, fields: dict[str, Any]) -> None:

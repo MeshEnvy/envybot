@@ -65,7 +65,37 @@ export function formatPollWindow(secs) {
 export function hasTrafficInterval(interval) {
   if (!interval) return false
   if (interval.reboot_reset) return true
-  return ['packets_recv', 'packets_sent', 'recv_errors'].some((k) => interval[k] != null)
+  return [
+    'packets_recv',
+    'packets_sent',
+    'recv_errors',
+    'recv_flood',
+    'recv_direct',
+    'sent_flood',
+    'sent_direct',
+    'flood_dups',
+    'direct_dups',
+    'rx_airtime_pct',
+  ].some((k) => interval[k] != null)
+}
+
+/** @param {number | null | undefined} pct */
+export function formatAirtimePct(pct) {
+  if (pct == null) return '—'
+  return `${Number(pct).toFixed(1)}% RX`
+}
+
+/** @param {Record<string, unknown> | null | undefined} health */
+export function healthTooltip(health) {
+  if (!health) return 'Health unknown'
+  const summary = health.summary
+  if (typeof summary === 'string' && summary) return summary
+  return String(health.grade || 'unknown')
+}
+
+/** @param {Record<string, unknown> | null | undefined} health */
+export function hasHealthIssues(health) {
+  return Array.isArray(health?.issues) && health.issues.length > 0
 }
 
 /** @param {number | null | undefined} snr */

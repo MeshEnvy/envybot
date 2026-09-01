@@ -22,6 +22,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/channels_doc.py` | `channels.yaml` catalog + companion slot planner |
 | `src/envybot/nodes_doc.py` | Desired `nodes.yaml` load/write/migrate |
 | `src/envybot/history.py` | `data/fleet/history.sqlite` |
+| `src/envybot/health.py` | Per-node health checks (snapshot + UI grade) |
 | `src/envybot/position.py` | Book GPS from `sites.yaml` (`node:` bind + `loc`) |
 | `src/envybot/radio.py` | Companion session, login, CLI/binary |
 | `src/envybot/poll.py` | GET cadence (live / inventory / audit) → sqlite |
@@ -90,6 +91,8 @@ Separate USB OTA repeater for `motatool serve`.
 
 - **Fleet UI:** `./envybot fleet` serves `127.0.0.1:8787` by default.
   `--web-only` browses the book without a radio. Never expose secrets.
+  Units carry `health` (worst-of component checks) and interval traffic
+  deltas; detail sparklines use `/api/history/{unit}?metric=`.
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
