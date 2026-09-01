@@ -1,5 +1,5 @@
 import { createApp, computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { connectEvents, fetchFleet, fetchHistory, patchUnit, queueUnit as postQueue } from './api.js'
+import { connectEvents, fetchFleet, fetchHistory, patchUnit, pullUnit, pushUnit, refreshUnit } from './api.js'
 import {
   formatAgo,
   formatAirtimePct,
@@ -21,19 +21,20 @@ import {
   unitLabel,
   unitTitle,
 } from './format.js?v=10'
-import { createMapController, hasMapPin, unitStatus } from './map.js?v=13'
+import { buildNeighborEdges, createMapController, hasMapPin, unitStatus } from './map.js?v=16'
 import { healthStroke, sparklinePath } from './sparklines.js?v=1'
 
 const SESSION_RANK = {
   polling: 0,
   unreachable: 1,
-  queued: 2,
+  refreshing: 2,
+  pulling: 2,
+  pushing: 2,
   paused: 3,
-  ok: 4,
-  fresh: 5,
-  stale: 6,
-  never: 7,
-  unmapped: 8,
+  fresh: 4,
+  stale: 5,
+  never: 6,
+  unmapped: 7,
 }
 
 const App = {
@@ -78,6 +79,9 @@ const App = {
     function applyUnit(unit) {
       const key = String(unit.key)
       fleet.units[key] = { ...(fleet.units[key] || {}), ...unit }
+      fleet.edges = buildNeighborEdges(
+        /** @type {Record<string, Record<string, unknown>>} */ (fleet.units)
+      )
     }
 
     /** @param {Record<string, unknown>} poll */
@@ -95,13 +99,29 @@ const App = {
       return parts.join(' · ')
     })
 
-    const queueAccepting = computed(() => !!fleet.poll?.accepting)
+    const manualAccepting = computed(() => !!fleet.poll?.accepting)
+
+    const MANUAL_BUSY = new Set(['refreshing', 'pulling', 'pushing', 'polling'])
 
     /** @param {Record<string, unknown> | undefined} unit */
-    function canQueueUnit(unit) {
-      if (!unit || !queueAccepting.value) return false
+    function canManualUnit(unit) {
+      if (!unit || !manualAccepting.value) return false
       const st = unitStatus(unit)
-      return st !== 'queued' && st !== 'polling'
+      return !MANUAL_BUSY.has(st)
+    }
+
+    /** @param {Record<string, unknown>} unit @param {'refresh' | 'pull' | 'push'} job @param {Event} [ev] */
+    async function runManualJob(unit, job, ev) {
+      ev?.stopPropagation?.()
+      if (!canManualUnit(unit)) return
+      const fn = job === 'refresh' ? refreshUnit : job === 'pull' ? pullUnit : pushUnit
+      try {
+        const updated = await fn(String(unit.key))
+        applyUnit(updated)
+        pushMap()
+      } catch (err) {
+        console.error(err)
+      }
     }
 
     const sortedUnits = computed(() => {
@@ -249,20 +269,6 @@ const App = {
         console.error(err)
       }
     }
-
-    /** @param {Record<string, unknown>} unit @param {Event} [ev] */
-    async function queueUnit(unit, ev) {
-      ev?.stopPropagation?.()
-      if (!canQueueUnit(unit)) return
-      try {
-        const updated = await postQueue(String(unit.key))
-        applyUnit(updated)
-        pushMap()
-      } catch (err) {
-        console.error(err)
-      }
-    }
-
     function pushMap() {
       mapCtrl?.sync(fleet, selectedKey.value)
       syncDetailPopup()
@@ -316,8 +322,9 @@ const App = {
       detailEl,
       detailHasMapPin,
       pollLine,
-      queueAccepting,
-      canQueueUnit,
+      manualAccepting,
+      canManualUnit,
+      runManualJob,
       selectUnit,
       clearSelection,
       unitStatus,
@@ -346,7 +353,7 @@ const App = {
       unitTitle,
       togglePublic,
       togglePaused,
-      queueUnit,
+      runManualJob,
     }
   },
   template: `
@@ -394,17 +401,34 @@ const App = {
           </label>
           <label class="book-toggle">
             <input type="checkbox" :checked="!!selectedUnit.paused" @change="togglePaused(selectedUnit, $event)" />
-            pause auto poll/apply (Queue still works)
+            pause auto poll/apply (Refresh, Pull, and Push still work)
           </label>
-          <button
-            v-if="queueAccepting"
-            type="button"
-            class="queue-btn"
-            :disabled="!canQueueUnit(selectedUnit)"
-            @click="queueUnit(selectedUnit, $event)"
-          >
-            Queue
-          </button>
+          <div v-if="manualAccepting" class="manual-actions">
+            <button
+              type="button"
+              class="manual-btn"
+              :disabled="!canManualUnit(selectedUnit)"
+              @click="runManualJob(selectedUnit, 'refresh', $event)"
+            >
+              Refresh
+            </button>
+            <button
+              type="button"
+              class="manual-btn"
+              :disabled="!canManualUnit(selectedUnit)"
+              @click="runManualJob(selectedUnit, 'pull', $event)"
+            >
+              Pull
+            </button>
+            <button
+              type="button"
+              class="manual-btn manual-btn-push"
+              :disabled="!canManualUnit(selectedUnit)"
+              @click="runManualJob(selectedUnit, 'push', $event)"
+            >
+              Push
+            </button>
+          </div>
           <section v-if="selectedUnit.health" class="health-section">
             <h3>Health</h3>
             <p class="health-summary">
@@ -628,13 +652,13 @@ const App = {
                 <span v-if="unit.paused && unitStatus(unit) !== 'paused'" class="badge badge-paused">paused</span>
                 <span v-if="unit.drift" class="badge" :class="'badge-' + unit.drift">{{ unit.drift }}</span>
                 <button
-                  v-if="queueAccepting"
+                  v-if="manualAccepting"
                   type="button"
-                  class="queue-btn queue-btn-inline"
-                  :disabled="!canQueueUnit(unit)"
-                  @click.stop="queueUnit(unit, $event)"
+                  class="manual-btn manual-btn-inline"
+                  :disabled="!canManualUnit(unit)"
+                  @click.stop="runManualJob(unit, 'refresh', $event)"
                 >
-                  Queue
+                  Refresh
                 </button>
               </span>
             </div>

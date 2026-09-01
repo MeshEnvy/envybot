@@ -8,6 +8,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Replace fleet UI **Queue** with **Refresh**, **Pull**, and **Push**.
+  Refresh is live GET only (status/telemetry/neighbors) plus apply-if-due.
+  Pull is Refresh plus every sticky GET (fw, bootloader, name, GPS, advert,
+  acl). Push force-SETs the book profile including guest/admin passwords
+  without re-GETing sticky fields. CLI `--force` is Pull plus Push.
 - Drop `name` from `nodes.yaml`. UI and apply derive labels from site
   `name` when bound, else `unit_id`. Map pins and list cards follow the
   same rule; detail shows both unit id and site.
@@ -45,7 +50,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 - Fleet **pause**: `paused: true` in `nodes.yaml` skips auto poll/apply.
   Toggle lives on the detail card. Sidebar rows fade and show a paused
-  badge. Queue still forces a one-shot GET+apply. Mid-run pause drops
+  badge. Refresh, Pull, and Push still work while paused. Mid-run pause drops
   the unit on the next unit boundary. Trust/cmd ignore the flag.
 - Fleet **node health**: per-unit grade (ok/warn/bad) from reachability,
   power, stability, traffic, RF quality, channel utilization, config drift,

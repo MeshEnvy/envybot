@@ -36,7 +36,9 @@ class MonitorWeb:
     site: web.TCPSite | None = None
     _watch_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _stop: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
-    _manual_queue: asyncio.Queue[str] = field(default_factory=asyncio.Queue, repr=False)
+    _manual_queue: asyncio.Queue[tuple[str, str]] = field(
+        default_factory=asyncio.Queue, repr=False
+    )
     _accepting: bool = field(default=False, repr=False)
     _session_states: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
     _poll_state: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -60,11 +62,16 @@ class MonitorWeb:
         if companion is not None:
             self._companion = companion
 
-    async def enqueue(self, key: str) -> tuple[int, str | None]:
-        """Queue a unit for a forced poll/apply. Returns (http_status, error)."""
+    async def enqueue_job(self, key: str, job: str) -> tuple[int, str | None]:
+        """Enqueue a manual Refresh, Pull, or Push. Returns (http_status, error)."""
+        from envybot.poll import MANUAL_JOBS, manual_job_session_state
+
         key = key.lower()
+        job = job.lower()
+        if job not in MANUAL_JOBS:
+            return 400, f"unknown job {job}"
         if not self._accepting:
-            return 409, "fleet worker not accepting manual queue"
+            return 409, "fleet worker not accepting manual jobs"
         doc = load_nodes_doc(self.nodes_path)
         nodes = doc.get("nodes") or {}
         node = nodes.get(key)
@@ -72,35 +79,38 @@ class MonitorWeb:
             return 404, "unknown unit"
         session = self._session_states.get(key) or {}
         state = session.get("state")
-        if state in ("queued", "polling"):
+        busy = ("refreshing", "pulling", "pushing", "polling")
+        if state in busy:
             return 200, None
-        self._manual_queue.put_nowait(key)
+        self._manual_queue.put_nowait((key, job))
         self._wake_idle.set()
+        pending_state = manual_job_session_state(job)
+        self._session_states[key] = {"state": pending_state, "manual": True, "job": job}
         return 200, None
 
-    async def drain_manual_queue(self) -> list[str]:
-        keys: list[str] = []
+    async def drain_manual_queue(self) -> list[tuple[str, str]]:
+        items: list[tuple[str, str]] = []
         while True:
             try:
-                keys.append(self._manual_queue.get_nowait())
+                items.append(self._manual_queue.get_nowait())
             except asyncio.QueueEmpty:
                 break
         seen: set[str] = set()
-        out: list[str] = []
-        for key in keys:
+        out: list[tuple[str, str]] = []
+        for key, job in items:
             k = key.lower()
             if k in seen:
                 continue
             seen.add(k)
-            out.append(k)
+            out.append((k, job))
         return out
 
-    async def wait_manual_queue(self) -> list[str]:
-        """Block until manual keys arrive or shutdown."""
+    async def wait_manual_queue(self) -> list[tuple[str, str]]:
+        """Block until manual jobs arrive or shutdown."""
         while not self._stop.is_set():
-            keys = await self.drain_manual_queue()
-            if keys:
-                return keys
+            items = await self.drain_manual_queue()
+            if items:
+                return items
             self._wake_idle.clear()
             get_task = asyncio.create_task(self._manual_queue.get())
             stop_task = asyncio.create_task(self._stop.wait())
@@ -113,8 +123,8 @@ class MonitorWeb:
                     await task
             if stop_task in done:
                 return []
-            key = get_task.result()
-            return [key.lower()] + await self.drain_manual_queue()
+            key, job = get_task.result()
+            return [(key.lower(), job)] + await self.drain_manual_queue()
         return []
 
     async def refresh_snapshot(
@@ -288,16 +298,17 @@ async def _handle_history(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
-async def _handle_queue(request: web.Request) -> web.Response:
+async def _handle_manual_job(request: web.Request, job: str) -> web.Response:
     key = request.match_info["key"].lower()
     web_ctx: MonitorWeb = request.app["web_ctx"]
-    status, err = await web_ctx.enqueue(key)
+    status, err = await web_ctx.enqueue_job(key, job)
     if status == 404:
         return web.json_response({"error": err}, status=404)
     if status == 409:
         return web.json_response({"error": err}, status=409)
-    session = {"state": "queued", "manual": True}
-    web_ctx._session_states[key] = session
+    if status == 400:
+        return web.json_response({"error": err}, status=400)
+    session = dict(web_ctx._session_states.get(key) or {})
     await web_ctx.publish_unit(
         key,
         session=session,
@@ -374,7 +385,9 @@ def make_app(web_ctx: MonitorWeb) -> web.Application:
     app["web_ctx"] = web_ctx
     app.router.add_get("/api/fleet", _handle_fleet)
     app.router.add_post("/api/unit/{key}", _handle_unit_edit)
-    app.router.add_post("/api/queue/{key}", _handle_queue)
+    app.router.add_post("/api/refresh/{key}", lambda r: _handle_manual_job(r, "refresh"))
+    app.router.add_post("/api/pull/{key}", lambda r: _handle_manual_job(r, "pull"))
+    app.router.add_post("/api/push/{key}", lambda r: _handle_manual_job(r, "push"))
     app.router.add_get("/api/history/{unit}", _handle_history)
     app.router.add_get("/events", _handle_events)
     app.router.add_get("/", _handle_index)

@@ -34,7 +34,7 @@ PULLED_AT_SUFFIX = "_pulled_at"
 DEFAULT_STALE_SECS = 86400.0
 NEIGHBOR_FRESH_SECS = 7 * 24 * 3600
 
-SessionState = str  # idle | queued | polling | ok | unreachable | paused
+SessionState = str  # idle | refreshing | pulling | pushing | polling | ok | unreachable | paused
 
 STATUS_PUBLIC_KEYS = (
     "battery_mv",

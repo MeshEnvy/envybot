@@ -2,14 +2,45 @@ import maplibregl from 'maplibre-gl'
 
 const STATUS_COLOR = {
   polling: '#4ea1ff',
-  ok: '#6ee7a0',
   unreachable: '#f06e6e',
-  queued: '#a896ff',
+  refreshing: '#a896ff',
+  pulling: '#9b8cff',
+  pushing: '#c49bff',
   paused: '#8aa0b5',
   fresh: '#6ee7a0',
   stale: '#f0b86e',
   never: '#8aa0b5',
   unmapped: '#667788',
+}
+
+/** @param {Record<string, Record<string, unknown>> | undefined} units */
+export function buildNeighborEdges(units) {
+  /** @type {Array<{ from: string, to: string, coordinates: number[][] }>} */
+  const edges = []
+  const seen = new Set()
+  for (const [key, unit] of Object.entries(units || {})) {
+    if (!hasMapPin(unit.position)) continue
+    const pos = /** @type {{ lon: number, lat: number }} */ (unit.position)
+    for (const nb of /** @type {Array<{ unit_key?: string }>} */ (unit.neighbors || [])) {
+      const peerKey = nb.unit_key
+      if (!peerKey || !units[peerKey]) continue
+      const peer = units[peerKey]
+      if (!hasMapPin(peer.position)) continue
+      const peerPos = /** @type {{ lon: number, lat: number }} */ (peer.position)
+      const pair = [key, peerKey].sort().join('\0')
+      if (seen.has(pair)) continue
+      seen.add(pair)
+      edges.push({
+        from: key,
+        to: peerKey,
+        coordinates: [
+          [pos.lon, pos.lat],
+          [peerPos.lon, peerPos.lat],
+        ],
+      })
+    }
+  }
+  return edges
 }
 
 /** @param {unknown} pos */
@@ -27,9 +58,10 @@ export function unitStatus(unit) {
   const s = unit?.session
   const state = s && typeof s === 'object' && 'state' in s ? s.state : null
   if (state === 'polling') return 'polling'
-  if (state === 'queued') return 'queued'
+  if (state === 'refreshing') return 'refreshing'
+  if (state === 'pulling') return 'pulling'
+  if (state === 'pushing') return 'pushing'
   if (unit?.paused) return 'paused'
-  if (state === 'ok') return 'ok'
   if (state === 'unreachable') return 'unreachable'
   if (!unit?.mapped) return 'unmapped'
   return typeof unit?.freshness === 'string' ? unit.freshness : 'never'
@@ -81,12 +113,14 @@ export function createMapController(containerId, onSelect, onClear) {
     ['get', 'status'],
     'polling',
     STATUS_COLOR.polling,
-    'ok',
-    STATUS_COLOR.ok,
     'unreachable',
     STATUS_COLOR.unreachable,
-    'queued',
-    STATUS_COLOR.queued,
+    'refreshing',
+    STATUS_COLOR.refreshing,
+    'pulling',
+    STATUS_COLOR.pulling,
+    'pushing',
+    STATUS_COLOR.pushing,
     'paused',
     STATUS_COLOR.paused,
     'fresh',

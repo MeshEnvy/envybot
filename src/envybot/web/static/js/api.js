@@ -36,11 +36,26 @@ export async function patchUnit(key, body) {
   return res.json()
 }
 
-/** @param {string} key */
-export async function queueUnit(key) {
-  const res = await fetch(`/api/queue/${encodeURIComponent(key)}`, { method: 'POST' })
-  if (!res.ok) throw new Error(`queue ${res.status}`)
+/** @param {string} key @param {'refresh' | 'pull' | 'push'} job */
+async function postManualJob(key, job) {
+  const res = await fetch(`/api/${job}/${encodeURIComponent(key)}`, { method: 'POST' })
+  if (!res.ok) throw new Error(`${job} ${res.status}`)
   return res.json()
+}
+
+/** @param {string} key */
+export function refreshUnit(key) {
+  return postManualJob(key, 'refresh')
+}
+
+/** @param {string} key */
+export function pullUnit(key) {
+  return postManualJob(key, 'pull')
+}
+
+/** @param {string} key */
+export function pushUnit(key) {
+  return postManualJob(key, 'push')
 }
 
 /** @param {string} unit @param {string} metric */

@@ -31,7 +31,7 @@ First run imports leftover `polls.jsonl` (then deletes it) and YAML
 |------|--------|------|
 | periodic | `status`, `telemetry`, `neighbors` | `--min-interval` (default 24h) |
 | inventory | `firmware`, `bootloader` | until sqlite stamp exists |
-| audit | `name`, `lat`, `lon`, `advert`, `flood_advert`, `acl` | `--force` or `--group` only |
+| audit | `name`, `lat`, `lon`, `advert`, `flood_advert`, `acl` | **Pull**, `--group`, or `--force` only |
 
 Neighbors: remote `discover.neighbors` (zero-hop CTL) then `GET_NEIGHBOURS`.
 `--no-discover` skips the search. `--discover-wait SEC` changes the listen
@@ -42,9 +42,22 @@ Default runs never GET sticky identity fields. Leak / mismatch in the UI
 follow the apply profile stamp, not a heard-identity GET.
 
 `paused: true` on a node skips auto GET and apply. The unit stays on the
-map. **Queue** still forces one GET+apply. Unpause (or delete the key)
-returns the unit to the next fleet run. Mid-run pause takes effect at the
-next unit boundary. `trust` / `cmd` do not honor pause.
+map. **Refresh**, **Pull**, and **Push** still work from the UI. Unpause
+(or delete the key) returns the unit to the next fleet run. Mid-run pause
+takes effect at the next unit boundary. `trust` / `cmd` do not honor pause.
+
+## Manual jobs (UI)
+
+While the companion worker is live:
+
+| Action | GET | SET |
+|--------|-----|-----|
+| **Refresh** | status, telemetry, neighbors (ignore interval) | only if profile is due |
+| **Pull** | Refresh plus fw, bootloader, name, lat, lon, advert, acl | only if profile is due |
+| **Push** | none | force re-SET profile (incl. guest/admin passwords) |
+
+List cards expose **Refresh** only. Detail adds **Pull** and **Push** (Push
+is visually distinct; it rewrites passwords). CLI `--force` is Pull plus Push.
 
 ## Apply
 
@@ -93,7 +106,7 @@ Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
 | `--web-only` | Browse the book. No radio. |
 | `--no-web` | Headless poll/apply |
 | `--unit KEY` | One unit (repeatable) |
-| `--force` | Re-GET every group (incl. audit); re-SET profile |
+| `--force` | Pull every GET group and Push profile |
 | `--live` | Periodic GET only (status/telemetry/neighbors) |
 | `--no-discover` | GET neighbor table without remote `discover.neighbors` |
 | `--discover-wait SEC` | Listen after discover (default 12) |
@@ -108,8 +121,9 @@ device `0,0`. Pin labels are site name when bound, else unit id. Detail
 shows unit id and site name, a `public` toggle, and drift from the apply
 stamp (`leak` if a private profile is due, `mismatch` if a public profile
 is due). List cards show site name with unit id when bound, or unit id
-alone for bag/bench. While the companion worker is live, **Queue** on a unit forces
-that unit back through GET+apply (overrides `--skip`, `paused`, and
+alone for bag/bench. While the companion worker is live, **Refresh** on a
+unit pulls live telemetry now; **Pull** also GETs fw/name/GPS/advert/acl;
+**Push** force-SETs the book profile (overrides `--skip`, `paused`, and
 up-to-date skips). Pause is a checkbox on the detail card
 (`paused: true`). Sidebar rows fade and badge as paused. Rows with
 `decommissioned:` or `firmware_platform: meshtastic` are omitted

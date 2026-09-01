@@ -29,6 +29,20 @@ class _Res:
         self.polled_groups = kwargs.get("polled_groups", frozenset())
 
 
+class ManualDueGroupsTests(unittest.TestCase):
+    def test_refresh_is_periodic_only(self) -> None:
+        from envybot.poll import GET_GROUP_ORDER, PERIODIC_GROUPS, refresh_due_groups
+
+        self.assertEqual(refresh_due_groups(), list(PERIODIC_GROUPS))
+        for group in refresh_due_groups():
+            self.assertIn(group, GET_GROUP_ORDER)
+
+    def test_pull_is_all_groups(self) -> None:
+        from envybot.poll import GET_GROUP_ORDER, pull_due_groups
+
+        self.assertEqual(pull_due_groups(), list(GET_GROUP_ORDER))
+
+
 class PollCadenceTests(unittest.TestCase):
     def test_audit_groups_skip_by_default(self) -> None:
         policy = PollPolicy(force=False, min_interval=86400.0)

@@ -62,7 +62,7 @@ NODES_YAML_HEADER = (
     "# admin1_pubkey / admin1_secret: Meshtastic remote-admin. Not MC ACL.\n"
     "# firmware_platform: meshcore | meshtastic. Meshtastic rows stay in the\n"
     "#   book; envybot ignores them (no UI, poll, apply, trust, cmd).\n"
-    "# paused: true skips auto fleet poll/apply. Still in the UI. Queue overrides.\n"
+    "# paused: true skips auto fleet poll/apply. Still in the UI. Refresh/Pull/Push override.\n"
     "# decommissioned: unix epoch when pulled from service. Envybot ignores the row.\n"
     "# next_unit: next free ME number (never reuse).\n"
     "# admin_password / guest_password: unique + strong per unit. Privacy apply\n"

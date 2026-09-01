@@ -192,17 +192,14 @@ body {
   animation: pulse 1.2s ease infinite;
 }
 
-.badge-ok {
-  background: #1a3d2e;
-  color: #6ee7a0;
-}
-
 .badge-unreachable {
   background: #3d1a1a;
   color: #f06e6e;
 }
 
-.badge-queued {
+.badge-refreshing,
+.badge-pulling,
+.badge-pushing {
   background: #2a283d;
   color: #a896ff;
 }
@@ -223,8 +220,14 @@ body {
   color: #ff9b6e;
 }
 
-.queue-btn {
+.manual-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 8px;
+}
+
+.manual-btn {
   padding: 6px 12px;
   border: 1px solid #4ea1ff;
   border-radius: 6px;
@@ -235,7 +238,7 @@ body {
   cursor: pointer;
 }
 
-.queue-btn-inline {
+.manual-btn-inline {
   margin-top: 0;
   padding: 2px 6px;
   font-size: 0.6rem;
@@ -243,11 +246,21 @@ body {
   text-transform: uppercase;
 }
 
-.queue-btn:hover:not(:disabled) {
+.manual-btn-push {
+  border-color: #c49bff;
+  background: #2a1f3d;
+  color: #c49bff;
+}
+
+.manual-btn:hover:not(:disabled) {
   background: #243a4d;
 }
 
-.queue-btn:disabled {
+.manual-btn-push:hover:not(:disabled) {
+  background: #352a4d;
+}
+
+.manual-btn:disabled {
   opacity: 0.45;
   cursor: default;
 }

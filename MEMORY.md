@@ -45,8 +45,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 - `fleet` / `trust` / `cmd` skip `firmware_platform: meshtastic` even
   when leftover MeshCore pubkey/admin exist. No UI, poll, apply, or
   edits. Blank platform = meshcore.
-- `paused: true` stays in the UI. Fleet skips auto poll/apply. Queue
-  still hits the radio. Trust/cmd ignore the flag.
+- `paused: true` stays in the UI. Fleet skips auto poll/apply. Refresh,
+  Pull, and Push still hit the radio. Trust/cmd ignore the flag.
 - `decommissioned:` (epoch) rows stay in `nodes.yaml` for the number
   but envybot ignores them: no UI, poll, apply, trust, cmd, or onboard.
 - `fleet` and `trust` poll every pollable MeshCore unit, including
@@ -69,12 +69,12 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   invented by apply. Apply SETs book admin (`password`) after ACL/login.
 - Apply due = `profile_id` vs last ok sqlite stamp, or weak guest assign.
   Per-field stamps in sqlite `applies` (name, lat, lon, …). Legacy
-  `profile` ok row still counts as fully synced. `--force` clears stamps.
+  `profile` ok row still counts as fully synced. `--force` is Pull plus Push.
   UI leak / mismatch is the inverse of that stamp (private due / public
   due), not heard last-seen identity. Poll default: status/telemetry/neighbors
   on interval (neighbors = remote `discover.neighbors` + wait + GET;
   UI drops rows older than 7d); fw/bl once; name/gps/advert/acl
-  audit-only (`--force`).
+  audit-only (Pull / `--group` / `--force`).
   Apply GETs ACL when due to drop extras. SET fields use the full retry
   budget (login is the reachability check). Any due field failure aborts
   the rest for that unit this pass. Poll and apply password-login every
@@ -97,8 +97,10 @@ Separate USB OTA repeater for `motatool serve`.
 
 - **Fleet UI:** `./envybot fleet` serves `127.0.0.1:8787` by default.
   `--web-only` browses the book without a radio. Never expose secrets.
-  **Queue** (detail + list) re-enqueues one unit for forced GET+apply while
-  the companion worker is idle or polling; overrides `--skip` and `paused`.
+  **Refresh** (list + detail), **Pull**, and **Push** (detail) enqueue manual
+  jobs while the companion worker is idle or polling; overrides `--skip` and
+  `paused`. Refresh is live GET only; Pull adds sticky GET; Push force-SETs
+  profile (including passwords). CLI `--force` is Pull plus Push.
   **Pause** (detail checkbox) writes `paused: true` and drops the unit from
   auto poll/apply on the next unit boundary (in-flight login finishes).
   Sidebar fades paused rows and shows a paused badge.

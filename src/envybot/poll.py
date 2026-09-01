@@ -39,6 +39,23 @@ GET_GROUPS: dict[str, PullGroupSpec] = {
 }
 
 GET_GROUP_ORDER = tuple(GET_GROUPS.keys())
+PERIODIC_GROUPS = tuple(g for g in GET_GROUP_ORDER if GET_GROUPS[g].mode == "periodic")
+MANUAL_JOBS = frozenset({"refresh", "pull", "push"})
+
+
+def refresh_due_groups() -> list[str]:
+    """Live GET groups for a manual Refresh (interval ignored)."""
+    return list(PERIODIC_GROUPS)
+
+
+def pull_due_groups() -> list[str]:
+    """All GET groups for a manual Pull."""
+    return list(GET_GROUP_ORDER)
+
+
+def manual_job_session_state(job: str) -> str:
+    """UI/worker session state for a pending manual job."""
+    return {"refresh": "refreshing", "pull": "pulling", "push": "pushing"}[job]
 
 
 @dataclass
@@ -135,7 +152,7 @@ def partition_paused(
     *,
     forced_keys: set[str] | None = None,
 ) -> tuple[list[RouterTarget], list[RouterTarget]]:
-    """Split auto-work targets from paused ones. Forced (Queue) stays active."""
+    """Split auto-work targets from paused ones. Manual Refresh/Pull/Push stays active."""
     forced = forced_keys or set()
     active: list[RouterTarget] = []
     paused: list[RouterTarget] = []
@@ -224,12 +241,17 @@ def gaps_from_poll(res: PollResult) -> list[str]:
 __all__ = [
     "GET_GROUP_ORDER",
     "GET_GROUPS",
+    "MANUAL_JOBS",
+    "PERIODIC_GROUPS",
     "PULL_GROUP_ORDER",
     "PULL_GROUPS",
     "PollPolicy",
     "PollResult",
     "PullPolicy",
     "due_groups",
+    "manual_job_session_state",
+    "pull_due_groups",
+    "refresh_due_groups",
     "format_get_plan",
     "format_interval",
     "format_pull_plan",

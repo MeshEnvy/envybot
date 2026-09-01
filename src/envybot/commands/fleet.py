@@ -28,10 +28,13 @@ from envybot.poll import (
     format_get_plan,
     format_interval,
     gaps_from_poll,
+    manual_job_session_state,
     partition_due,
     partition_paused,
     poll_one,
     poll_summary,
+    pull_due_groups,
+    refresh_due_groups,
 )
 from envybot.radio import (
     DEFAULT_MESH_ATTEMPTS,
@@ -77,29 +80,49 @@ def _migrate_book(nodes_path: Path) -> tuple[dict[str, Any], Any]:
     return doc, conn
 
 
-def _manual_targets(nodes_path: Path, keys: list[str]) -> list[Any]:
-    include = {k.lower() for k in keys}
-    return load_targets(nodes_path, deployed_only=False, include=include, skip=None)
-
-
-def _queue_manual_targets(
-    keys: list[str],
+def _manual_job_targets(
+    jobs: list[tuple[str, str]],
     *,
     nodes_path: Path,
+    conn: Any,
+    nodes: dict[str, Any],
+    sites: dict[str, Any],
+    doc: dict[str, Any],
+    keys: dict[str, list[str]],
     session_states: dict[str, dict[str, Any]],
     apply_keys: set[str],
-    forced_keys: set[str],
+    manual_keys: set[str],
+    manual_jobs: dict[str, str],
     do_poll: bool,
     do_apply: bool,
     attempt_counts: dict[str, int],
 ) -> list[Any]:
     out: list[Any] = []
-    for target in _manual_targets(nodes_path, keys):
-        target.due_groups = list(GET_GROUP_ORDER) if do_poll else []
-        forced_keys.add(target.key)
-        if do_apply:
+    include = {k for k, _ in jobs}
+    for target in load_targets(nodes_path, deployed_only=False, include=include, skip=None):
+        job = next(j for k, j in jobs if k == target.key)
+        manual_jobs[target.key] = job
+        manual_keys.add(target.key)
+        if do_poll:
+            if job == "pull":
+                target.due_groups = pull_due_groups()
+            elif job == "refresh":
+                target.due_groups = refresh_due_groups()
+            else:
+                target.due_groups = []
+        else:
+            target.due_groups = []
+        if do_apply and job == "push":
             apply_keys.add(target.key)
-        session_states[target.key] = {"state": "queued", "manual": True}
+        elif do_apply and job in ("refresh", "pull") and apply_is_due(
+            conn, target.key, nodes.get(target.key) or {}, sites, doc=doc, keys=keys
+        ):
+            apply_keys.add(target.key)
+        session_states[target.key] = {
+            "state": manual_job_session_state(job),
+            "manual": True,
+            "job": job,
+        }
         attempt_counts.pop(target.key, None)
         out.append(target)
     return out
@@ -110,25 +133,37 @@ async def _drain_manual_into(
     pending: list[Any],
     *,
     nodes_path: Path,
+    conn: Any,
+    nodes: dict[str, Any],
+    sites: dict[str, Any],
+    doc: dict[str, Any],
+    keys: dict[str, list[str]],
     session_states: dict[str, dict[str, Any]],
     apply_keys: set[str],
-    forced_keys: set[str],
+    manual_keys: set[str],
+    manual_jobs: dict[str, str],
     do_poll: bool,
     do_apply: bool,
     attempt_counts: dict[str, int],
 ) -> None:
     if web_ctx is None:
         return
-    keys = await web_ctx.drain_manual_queue()
-    if not keys:
+    jobs = await web_ctx.drain_manual_queue()
+    if not jobs:
         return
     existing = {t.key for t in pending}
-    for target in _queue_manual_targets(
-        keys,
+    for target in _manual_job_targets(
+        jobs,
         nodes_path=nodes_path,
+        conn=conn,
+        nodes=nodes,
+        sites=sites,
+        doc=doc,
+        keys=keys,
         session_states=session_states,
         apply_keys=apply_keys,
-        forced_keys=forced_keys,
+        manual_keys=manual_keys,
+        manual_jobs=manual_jobs,
         do_poll=do_poll,
         do_apply=do_apply,
         attempt_counts=attempt_counts,
@@ -143,12 +178,12 @@ def _drop_auto_paused(
     *,
     nodes_path: Path,
     nodes: dict[str, Any],
-    forced_keys: set[str],
+    manual_keys: set[str],
     session_states: dict[str, dict[str, Any]],
 ) -> tuple[list[Any], list[Any]]:
-    """Drop book-paused units from auto work. Queue (forced) stays."""
+    """Drop book-paused units from auto work. Manual Refresh/Pull/Push stays."""
     sync_paused(nodes_path, nodes)
-    kept, dropped = partition_paused(pending, nodes, forced_keys=forced_keys)
+    kept, dropped = partition_paused(pending, nodes, forced_keys=manual_keys)
     for target in dropped:
         session_states[target.key] = {"state": "paused"}
     return kept, dropped
@@ -194,7 +229,7 @@ async def run(args: argparse.Namespace) -> int:
     if paused_targets and not args.quiet:
         print(
             f"Paused {len(paused_targets)} unit(s): "
-            f"{', '.join(t.key for t in paused_targets)} (Queue still works)"
+            f"{', '.join(t.key for t in paused_targets)} (Refresh, Pull, and Push still work)"
         )
     if not all_targets:
         print("No pollable routers matched filters.", file=sys.stderr)
@@ -257,10 +292,10 @@ async def run(args: argparse.Namespace) -> int:
     if not work:
         if paused_targets and not auto_targets:
             print(
-                f"All {len(paused_targets)} matched unit(s) are paused — idle for manual queue."
+                f"All {len(paused_targets)} matched unit(s) are paused — idle for manual Refresh/Pull/Push."
             )
         else:
-            print(f"All {len(all_targets)} router(s) up to date — idle for manual queue.")
+            print(f"All {len(all_targets)} router(s) up to date — idle for manual Refresh/Pull/Push.")
 
     retry_mode = not args.once
     if work:
@@ -269,7 +304,7 @@ async def run(args: argparse.Namespace) -> int:
             + (" — retries until all succeed (Ctrl+C to stop) …" if retry_mode else " — single pass …")
         )
     elif retry_mode:
-        print("Fleet idle — Queue units in the UI or Ctrl+C to exit.")
+        print("Fleet idle — Refresh, Pull, or Push units in the UI or Ctrl+C to exit.")
 
     log = PollLog(progress=not args.quiet, verbose=args.verbose)
     session = FleetSession()
@@ -284,7 +319,8 @@ async def run(args: argparse.Namespace) -> int:
     if work:
         await sync_fleet_contacts(client, work, log=log)
     pending = list(work)
-    forced_keys: set[str] = set()
+    manual_keys: set[str] = set()
+    manual_jobs: dict[str, str] = {}
     succeeded: dict[str, bool] = {}
     attempt_counts: dict[str, int] = {}
     round_num = 0
@@ -308,15 +344,21 @@ async def run(args: argparse.Namespace) -> int:
                     companion=companion_short,
                 )
                 await web_ctx.publish_session(idle_poll)
-                manual_keys = await web_ctx.wait_manual_queue()
-                if not manual_keys:
+                manual_jobs_list = await web_ctx.wait_manual_queue()
+                if not manual_jobs_list:
                     break
-                manual = _queue_manual_targets(
-                    manual_keys,
+                manual = _manual_job_targets(
+                    manual_jobs_list,
                     nodes_path=nodes_path,
+                    conn=conn,
+                    nodes=nodes,
+                    sites=sites,
+                    doc=doc,
+                    keys=keys,
                     session_states=session_states,
                     apply_keys=apply_keys,
-                    forced_keys=forced_keys,
+                    manual_keys=manual_keys,
+                    manual_jobs=manual_jobs,
                     do_poll=do_poll,
                     do_apply=do_apply,
                     attempt_counts=attempt_counts,
@@ -326,14 +368,14 @@ async def run(args: argparse.Namespace) -> int:
                 pending = manual
                 total = max(total, len({t.key for t in pending} | set(succeeded)))
                 await sync_fleet_contacts(client, manual, log=log)
-                print(f"Manual queue: {len(manual)} unit(s)")
+                print(f"Manual jobs: {len(manual)} unit(s)")
                 continue
 
             pending, newly_paused = _drop_auto_paused(
                 pending,
                 nodes_path=nodes_path,
                 nodes=nodes,
-                forced_keys=forced_keys,
+                manual_keys=manual_keys,
                 session_states=session_states,
             )
             if newly_paused and not args.quiet:
@@ -360,7 +402,8 @@ async def run(args: argparse.Namespace) -> int:
             next_pending = []
             for target in pending:
                 sync_paused(nodes_path, nodes)
-                if is_paused(nodes.get(target.key)) and target.key not in forced_keys:
+                job = manual_jobs.get(target.key)
+                if is_paused(nodes.get(target.key)) and target.key not in manual_keys:
                     session_states[target.key] = {"state": "paused"}
                     print(f"{target_label(target)} paused — skip")
                     if web_ctx:
@@ -375,21 +418,47 @@ async def run(args: argparse.Namespace) -> int:
                         web_ctx,
                         next_pending,
                         nodes_path=nodes_path,
+                        conn=conn,
+                        nodes=nodes,
+                        sites=sites,
+                        doc=doc,
+                        keys=keys,
                         session_states=session_states,
                         apply_keys=apply_keys,
-                        forced_keys=forced_keys,
+                        manual_keys=manual_keys,
+                        manual_jobs=manual_jobs,
                         do_poll=do_poll,
                         do_apply=do_apply,
                         attempt_counts=attempt_counts,
                     )
                     continue
-                unit_force = args.force or target.key in forced_keys
-                unit_policy = PollPolicy(
-                    force=unit_force,
-                    live_only=args.live and not unit_force,
-                    force_groups=frozenset(args.group or ()),
-                    min_interval=args.min_interval,
-                )
+                unit_force_apply = args.force or job == "push"
+                if args.force:
+                    unit_policy = PollPolicy(
+                        force=True,
+                        live_only=False,
+                        force_groups=frozenset(args.group or ()),
+                        min_interval=args.min_interval,
+                    )
+                elif job == "pull":
+                    unit_policy = PollPolicy(
+                        force=False,
+                        force_groups=frozenset(GET_GROUP_ORDER),
+                        min_interval=args.min_interval,
+                    )
+                elif job == "refresh":
+                    unit_policy = PollPolicy(
+                        force=False,
+                        force_groups=frozenset(refresh_due_groups()),
+                        min_interval=args.min_interval,
+                    )
+                else:
+                    unit_policy = PollPolicy(
+                        force=False,
+                        live_only=args.live,
+                        force_groups=frozenset(args.group or ()),
+                        min_interval=args.min_interval,
+                    )
                 attempt_counts[target.key] = attempt_counts.get(target.key, 0) + 1
                 n = attempt_counts[target.key]
                 if args.max_attempts and n > args.max_attempts:
@@ -397,6 +466,16 @@ async def run(args: argparse.Namespace) -> int:
                     continue
                 prefix = f"[{n}] " if retry_mode and n > 1 else ""
                 print(f"{prefix}{target_label(target)} …", flush=True)
+                node_record = nodes.get(target.key) or {}
+                apply_due_now = job == "push" or apply_is_due(
+                    conn,
+                    target.key,
+                    node_record,
+                    sites,
+                    force=unit_force_apply,
+                    doc=doc,
+                    keys=keys,
+                )
                 if not args.quiet:
                     if do_poll and target.due_groups:
                         need, skip_plan = format_get_plan(
@@ -408,17 +487,29 @@ async def run(args: argparse.Namespace) -> int:
                         )
                         print(f"  poll need: {need}")
                         print(f"  poll skip: {skip_plan}")
-                    if target.key in apply_keys:
+                    if do_apply and apply_due_now:
                         apply_need, apply_have = format_apply_plan(
                             conn,
                             target.key,
-                            nodes.get(target.key) or {},
+                            node_record,
                             sites,
-                            force=unit_force,
+                            force=unit_force_apply,
                             doc=doc,
                             keys=keys,
                         )
                         print(f"  apply need: {apply_need}")
+                        print(f"  apply skip: {apply_have}")
+                    elif do_apply:
+                        _, apply_have = format_apply_plan(
+                            conn,
+                            target.key,
+                            node_record,
+                            sites,
+                            force=False,
+                            doc=doc,
+                            keys=keys,
+                        )
+                        print("  apply need: none")
                         print(f"  apply skip: {apply_have}")
                 if not await session.ensure_companion_connected(log=log):
                     print("  companion disconnected (reconnect failed)")
@@ -427,20 +518,26 @@ async def run(args: argparse.Namespace) -> int:
                         web_ctx,
                         next_pending,
                         nodes_path=nodes_path,
+                        conn=conn,
+                        nodes=nodes,
+                        sites=sites,
+                        doc=doc,
+                        keys=keys,
                         session_states=session_states,
                         apply_keys=apply_keys,
-                        forced_keys=forced_keys,
+                        manual_keys=manual_keys,
+                        manual_jobs=manual_jobs,
                         do_poll=do_poll,
                         do_apply=do_apply,
                         attempt_counts=attempt_counts,
                     )
                     continue
-                node_record = nodes.get(target.key) or {}
                 guest_before = str(node_record.get("guest_password") or "")
                 session_states[target.key] = {
                     "state": "polling",
                     "due_groups": list(target.due_groups),
-                    "apply": target.key in apply_keys,
+                    "apply": apply_due_now,
+                    "job": job,
                 }
                 if web_ctx:
                     active_poll = {
@@ -514,9 +611,15 @@ async def run(args: argparse.Namespace) -> int:
                             web_ctx,
                             next_pending,
                             nodes_path=nodes_path,
+                            conn=conn,
+                            nodes=nodes,
+                            sites=sites,
+                            doc=doc,
+                            keys=keys,
                             session_states=session_states,
                             apply_keys=apply_keys,
-                            forced_keys=forced_keys,
+                            manual_keys=manual_keys,
+                            manual_jobs=manual_jobs,
                             do_poll=do_poll,
                             do_apply=do_apply,
                             attempt_counts=attempt_counts,
@@ -531,7 +634,7 @@ async def run(args: argparse.Namespace) -> int:
                     print(f"  OK {poll_summary(res)}")
                     poll_ok = not remaining
                 sync_paused(nodes_path, nodes)
-                if is_paused(nodes.get(target.key)) and target.key not in forced_keys:
+                if is_paused(nodes.get(target.key)) and target.key not in manual_keys:
                     apply_keys.discard(target.key)
                     session_states[target.key] = {"state": "paused"}
                     print("  paused — skip apply")
@@ -547,16 +650,22 @@ async def run(args: argparse.Namespace) -> int:
                         web_ctx,
                         next_pending,
                         nodes_path=nodes_path,
+                        conn=conn,
+                        nodes=nodes,
+                        sites=sites,
+                        doc=doc,
+                        keys=keys,
                         session_states=session_states,
                         apply_keys=apply_keys,
-                        forced_keys=forced_keys,
+                        manual_keys=manual_keys,
+                        manual_jobs=manual_jobs,
                         do_poll=do_poll,
                         do_apply=do_apply,
                         attempt_counts=attempt_counts,
                     )
                     continue
                 apply_ok = True
-                if do_apply and target.key in apply_keys:
+                if do_apply and apply_due_now:
                     apply_clock = login_clock
                     if apply_clock is None:
                         ok, err, apply_clock = await admin_login(
@@ -586,13 +695,16 @@ async def run(args: argparse.Namespace) -> int:
                             firmware_version=fw,
                             login_clock=apply_clock,
                             keys=keys,
-                            force=unit_force,
+                            force=unit_force_apply,
                         )
                     if str(node_record.get("guest_password") or "") != guest_before:
                         yaml_dirty = True
                     if apply_ok:
                         apply_keys.discard(target.key)
-                        forced_keys.discard(target.key)
+                job_done = poll_ok and (not apply_due_now or apply_ok)
+                if job_done:
+                    manual_keys.discard(target.key)
+                    manual_jobs.pop(target.key, None)
                 if poll_ok and apply_ok:
                     succeeded[target.key] = True
                     session_states[target.key] = {"state": "ok", "due_groups": list(target.due_groups)}
@@ -622,9 +734,15 @@ async def run(args: argparse.Namespace) -> int:
                     web_ctx,
                     next_pending,
                     nodes_path=nodes_path,
+                    conn=conn,
+                    nodes=nodes,
+                    sites=sites,
+                    doc=doc,
+                    keys=keys,
                     session_states=session_states,
                     apply_keys=apply_keys,
-                    forced_keys=forced_keys,
+                    manual_keys=manual_keys,
+                    manual_jobs=manual_jobs,
                     do_poll=do_poll,
                     do_apply=do_apply,
                     attempt_counts=attempt_counts,
@@ -633,7 +751,7 @@ async def run(args: argparse.Namespace) -> int:
                 next_pending,
                 nodes_path=nodes_path,
                 nodes=nodes,
-                forced_keys=forced_keys,
+                manual_keys=manual_keys,
                 session_states=session_states,
             )
             pending = sorted(pending, key=poll_staleness_key)
@@ -699,7 +817,7 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_MIN_POLL_INTERVAL,
         metavar="SECS",
     )
-    parser.add_argument("--force", action="store_true", help="Poll every GET group; re-SET profile")
+    parser.add_argument("--force", action="store_true", help="Pull every GET group and Push profile")
     parser.add_argument("--live", action="store_true", help="Periodic GET groups only")
     parser.add_argument(
         "--no-discover",
