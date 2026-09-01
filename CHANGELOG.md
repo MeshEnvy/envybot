@@ -8,10 +8,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
-- Fleet scheduler: **per-unit asyncio actors** + one fair **transport queue**.
-  Discover wait is actor-local (does not hold the radio). Manual
-  Refresh/Pull/Push bump one submit, not the whole unit deque. Timeouts park
-  the head job while other units interleave.
+- Fleet scheduler: **swim-lane round-robin** — one radio command per unit per
+  turn, then rotate. Discover wait is a background timer (does not hold the
+  radio). Manual Refresh/Pull/Push bump one command, then that unit rejoins
+  rotation. Timeouts park the head job while other lanes interleave. Startup
+  line counts **units** queued (commands in parentheses).
 - Fleet attempt logs show scheduler **`N/max`** (e.g. `8/10`); drop empty
   `retrying: None`. On per-command cap: `gave up after N, continuing`; on unit
   done with dropped groups: `partial OK`.

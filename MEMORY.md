@@ -28,7 +28,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/poll.py` | GET cadence (live / inventory / audit) → sqlite |
 | `src/envybot/apply.py` | SET mask unless `public: true`; `v1:` profile hash |
 | `src/envybot/passwords.py` | Password strength + uniqueness (no shared defaults) |
-| `src/envybot/jobs.py` | Fair serial job queue (one radio exchange at a time) |
+| `src/envybot/jobs.py` | Swim-lane job queue (one radio command per unit per turn) |
 | `src/envybot/fleet_worker.py` | Per-command job build + execute |
 | `src/envybot/commands/fleet.py` | Localhost manager |
 | `src/envybot/commands/trust.py` | Contacts + channels + keys.yaml / ACL login |
@@ -78,14 +78,14 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   on interval (neighbors = remote `discover.neighbors` + wait + GET;
   UI drops rows older than 7d); fw/bl once; name/gps/advert/acl
   audit-only (Pull / `--group` / `--force`).
-  **Fleet poll uses per-unit actors + one fair transport queue:** each unit runs
-  an asyncio actor (login, GET groups, SET fields). Actors submit one radio op
-  at a time to a shared transport mutex (least-recently-served among waiters).
-  Timeout parks that unit's head job; other actors keep sending. `--attempts` is
-  the per-command retry cap (scheduler-owned); logs show `N/max` not `N/1`.
-  Neighbor discover wait (default 12s) is actor-local sleep, not radio hold.
-  Manual Refresh/Pull/Push bump **one** submit for that unit, not the whole
-  deque. Sqlite stamps incrementally per successful GET/SET. Apply GETs ACL when
+  **Fleet poll uses swim-lane round-robin:** each unit owns a FIFO deque
+  (login, GET groups, SET fields). One dispatcher sends one radio command per
+  unit per turn, then rotates to the least-recently-served ready lane. Timeout
+  parks that unit's head job; other lanes keep sending. `--attempts` is the
+  per-command retry cap (scheduler-owned); logs show `N/max` not `N/1`.
+  Neighbor discover wait (default 12s) is a background timer, not radio hold.
+  Manual Refresh/Pull/Push bump **one** command for that unit, then it rejoins
+  rotation. Sqlite stamps incrementally per successful GET/SET. Apply GETs ACL when
   due to drop extras. Any due SET failure aborts the rest for that unit this
   pass. Poll and apply password-login every MeshCore unit. Live RTC from login
   timestamp or ``clock`` CLI.

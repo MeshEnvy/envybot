@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import sys
 import time
 from pathlib import Path
@@ -245,19 +246,20 @@ async def run(args: argparse.Namespace) -> int:
         discover_wait=args.discover_wait,
     )
 
-    initial_pending = scheduler.pending_count()
+    initial_units = scheduler.active_unit_count()
     if web_ctx:
         await web_ctx.refresh_snapshot(
             session_states=session_states,
             poll={
-                "phase": "starting" if initial_pending else "idle",
-                "pending": initial_pending,
+                "phase": "starting" if initial_units else "idle",
+                "pending": scheduler.pending_count(),
+                "units": initial_units,
                 "total": len(all_targets),
                 "accepting": True,
             },
         )
 
-    if initial_pending == 0 and args.once:
+    if initial_units == 0 and args.once:
         print(f"All {len(all_targets)} router(s) up to date.")
         if web_ctx:
             await web_ctx.publish_session(
@@ -266,9 +268,10 @@ async def run(args: argparse.Namespace) -> int:
             return await _serve_web_until_stop(web_ctx, 0)
         return 0
 
-    if initial_pending:
+    if initial_units:
+        cmd_count = scheduler.pending_count()
         print(
-            f"Fleet {initial_pending} unit(s) queued"
+            f"Fleet {initial_units} unit(s) queued ({cmd_count} command(s))"
             + (
                 " — retries until all succeed (Ctrl+C to stop) …"
                 if not args.once
@@ -308,7 +311,7 @@ async def run(args: argparse.Namespace) -> int:
 
     if web_ctx:
         web_ctx.set_worker_active(True)
-    if initial_pending:
+    if initial_units:
         work_targets = [t for t in auto_targets if scheduler.units.get(t.key, None) and scheduler.units[t.key].jobs]
         if work_targets:
             await sync_fleet_contacts(client, work_targets, log=log)
@@ -317,7 +320,7 @@ async def run(args: argparse.Namespace) -> int:
     interrupted = False
     yaml_dirty = False
     round_num = 0
-    total = max(initial_pending, len(all_targets))
+    total = max(initial_units, len(all_targets))
 
     async def on_job_start(uq: Any, job: Any) -> None:
         target = uq.target
@@ -357,6 +360,7 @@ async def run(args: argparse.Namespace) -> int:
                 "round": round_num,
                 "unit": target.key,
                 "pending": scheduler.pending_count(),
+                "units": scheduler.active_unit_count(),
                 "total": total,
                 "companion": companion_short,
             }
@@ -460,15 +464,20 @@ async def run(args: argparse.Namespace) -> int:
         uq.session_extra["force_apply"] = args.force or uq.manual_job == "push"
         return await execute_job(job, uq, worker_ctx)
 
-    try:
-        while True:
+    async def pause_watch() -> None:
+        while not scheduler._stop:
             paused_keys = {
                 t.key for t in auto_targets if is_paused(nodes.get(t.key)) and t.key not in manual_keys
             }
             dropped = scheduler.drop_auto_paused(paused_keys, manual_keys=manual_keys)
             for key in dropped:
                 session_states[key] = {"state": "paused"}
+            await asyncio.sleep(0.5)
 
+    pause_task = asyncio.create_task(pause_watch())
+
+    try:
+        while True:
             if scheduler.pending_count() == 0:
                 if args.once or web_ctx is None:
                     break
@@ -493,7 +502,9 @@ async def run(args: argparse.Namespace) -> int:
                 if new_units:
                     await sync_fleet_contacts(client, new_units, log=log)
                 if not args.quiet:
-                    print(f"Manual jobs: {scheduler.pending_count()} command(s) queued")
+                    units = scheduler.active_unit_count()
+                    cmds = scheduler.pending_count()
+                    print(f"Manual jobs: {units} unit(s), {cmds} command(s) queued")
                 continue
 
             round_num += 1
@@ -502,18 +513,18 @@ async def run(args: argparse.Namespace) -> int:
                 on_job_start=on_job_start,
                 on_job_done=on_job_done,
                 once=True,
-                max_rounds=1,
             )
             succeeded.update(batch)
 
             if args.once:
                 break
-            if scheduler.pending_count() == 0 and not args.once:
+            if scheduler.pending_count() == 0:
                 continue
-            if args.round_delay > 0 and scheduler.pending_count() > 0:
+            if args.round_delay > 0:
                 if not args.quiet:
                     print(
                         f"Waiting {args.round_delay:.0f}s before retrying "
+                        f"{scheduler.active_unit_count()} unit(s), "
                         f"{scheduler.pending_count()} command(s) …"
                     )
                 await asyncio.sleep(args.round_delay)
@@ -523,6 +534,9 @@ async def run(args: argparse.Namespace) -> int:
         print("\nInterrupted — keeping progress from successful units.")
     finally:
         scheduler.stop()
+        pause_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await pause_task
         if web_ctx:
             web_ctx.set_worker_active(False)
         await client.stop_auto_message_fetching()

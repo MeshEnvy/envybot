@@ -1,4 +1,4 @@
-"""Fair serial job queue for fleet poll/apply. One radio exchange at a time."""
+"""Swim-lane job queue for fleet poll/apply. One radio command per unit per turn."""
 
 from __future__ import annotations
 
@@ -60,81 +60,17 @@ JobStartFn = Callable[[UnitQueue, RadioJob], Awaitable[None]] | None
 JobDoneFn = Callable[[UnitQueue, RadioJob, JobOutcome, Any | None], Awaitable[None]] | None
 
 
-class TransportQueue:
-    """Fair mutex: one MeshCore send+wait at a time across all unit actors."""
-
-    def __init__(self) -> None:
-        self._lock = asyncio.Lock()
-        self._cond = asyncio.Condition(self._lock)
-        self._holder: str | None = None
-        self._waiting: dict[str, tuple[bool, bool, float]] = {}
-        self._last_served: dict[str, float] = {}
-        self._last_holder: str | None = None
-
-    @property
-    def holder(self) -> str | None:
-        return self._holder
-
-    def _pick_grantee(self) -> str | None:
-        if not self._waiting:
-            return None
-        rows: list[tuple[int, int, int, float, str]] = []
-        for key, (manual_bump, inventory, _) in self._waiting.items():
-            tier = 0 if manual_bump else 1
-            inv = 0 if inventory else 1
-            prefer_other = 1 if key == self._last_holder else 0
-            lrs = self._last_served.get(key, 0.0)
-            rows.append((tier, inv, prefer_other, lrs, key))
-        rows.sort()
-        return rows[0][4]
-
-    async def acquire(
-        self,
-        unit_key: str,
-        *,
-        manual_bump: bool = False,
-        inventory: bool = False,
-    ) -> None:
-        async with self._cond:
-            if self._holder is None:
-                self._holder = unit_key
-                self._last_served[unit_key] = time.monotonic()
-                self._last_holder = unit_key
-                return
-            if self._holder == unit_key:
-                return
-            self._waiting[unit_key] = (manual_bump, inventory, time.monotonic())
-            try:
-                while True:
-                    if self._holder is None and self._pick_grantee() == unit_key:
-                        self._waiting.pop(unit_key, None)
-                        self._holder = unit_key
-                        self._last_served[unit_key] = time.monotonic()
-                        self._last_holder = unit_key
-                        return
-                    await self._cond.wait()
-            finally:
-                self._waiting.pop(unit_key, None)
-
-    async def release(self, unit_key: str) -> None:
-        async with self._cond:
-            if self._holder == unit_key:
-                self._holder = None
-            self._cond.notify_all()
-
-
 @dataclass
 class FleetScheduler:
-    """Fair scheduler: per-unit actors share one transport queue."""
+    """Swim-lane scheduler: one radio command per unit per turn, then rotate."""
 
     units: dict[str, UnitQueue] = field(default_factory=dict)
     max_attempts: int = 10
     retry_delay: float = 0.0
     round_delay: float = 0.0
-    transport: TransportQueue = field(default_factory=TransportQueue)
     _idle_waiters: list[asyncio.Future[None]] = field(default_factory=list, repr=False)
     _stop: bool = False
-    _actors: dict[str, asyncio.Task[None]] = field(default_factory=dict, repr=False)
+    _timer_tasks: set[asyncio.Task[None]] = field(default_factory=set, repr=False)
 
     def get_or_create(self, target: RouterTarget) -> UnitQueue:
         key = target.key
@@ -143,6 +79,11 @@ class FleetScheduler:
         else:
             self.units[key].target = target
         return self.units[key]
+
+    def _cancel_timer(self, uq: UnitQueue) -> None:
+        task = uq.session_extra.pop("timer_task", None)
+        if task is not None and not task.done():
+            task.cancel()
 
     def enqueue_jobs(self, target: RouterTarget, jobs: list[RadioJob]) -> None:
         if not jobs:
@@ -169,6 +110,7 @@ class FleetScheduler:
         state = uq.session_extra.get("state")
         if state in busy_states and uq.jobs:
             return 200, None
+        self._cancel_timer(uq)
         uq.manual = True
         uq.manual_job = manual_job
         uq.manual_bump = True
@@ -197,12 +139,16 @@ class FleetScheduler:
             if uq.manual:
                 continue
             if uq.jobs:
+                self._cancel_timer(uq)
                 uq.jobs.clear()
                 dropped.append(key)
         return dropped
 
     def pending_count(self) -> int:
         return sum(len(uq.jobs) for uq in self.units.values())
+
+    def active_unit_count(self) -> int:
+        return sum(1 for uq in self.units.values() if uq.jobs)
 
     def _wake_idle(self) -> None:
         for fut in self._idle_waiters:
@@ -226,23 +172,10 @@ class FleetScheduler:
     def stop(self) -> None:
         self._stop = True
         self._wake_idle()
-        for task in list(self._actors.values()):
+        for uq in self.units.values():
+            self._cancel_timer(uq)
+        for task in list(self._timer_tasks):
             task.cancel()
-
-    def _ensure_actor(
-        self,
-        uq: UnitQueue,
-        execute: ExecuteFn,
-        *,
-        on_job_start: JobStartFn = None,
-        on_job_done: JobDoneFn = None,
-    ) -> None:
-        key = uq.target.key
-        if key in self._actors and not self._actors[key].done():
-            return
-        self._actors[key] = asyncio.create_task(
-            self._unit_actor(uq, execute, on_job_start=on_job_start, on_job_done=on_job_done)
-        )
 
     def _settle_job(
         self,
@@ -284,55 +217,99 @@ class FleetScheduler:
             else:
                 uq.backoff_until = time.monotonic() + self.retry_delay
 
-    async def _unit_actor(
+    def _timer_in_flight(self) -> bool:
+        return any(
+            uq.session_extra.get("timer_task") is not None
+            and not uq.session_extra["timer_task"].done()
+            for uq in self.units.values()
+        )
+
+    def _soonest_backoff(self, now: float) -> float | None:
+        waits = [
+            uq.backoff_until - now
+            for uq in self.units.values()
+            if uq.jobs and uq.backoff_until > now
+        ]
+        if not waits:
+            return None
+        return min(waits)
+
+    def pick_next_radio(self, now: float | None = None) -> tuple[UnitQueue, RadioJob] | None:
+        """Pick the next radio-ready lane (swim-lane RR)."""
+        now = now or time.monotonic()
+        candidates: list[tuple[int, float, str, UnitQueue, RadioJob]] = []
+        for key, uq in self.units.items():
+            if not uq.jobs:
+                continue
+            if uq.backoff_until > now:
+                continue
+            task = uq.session_extra.get("timer_task")
+            if task is not None and not task.done():
+                continue
+            job = uq.jobs[0]
+            if job.kind in TIMER_JOB_KINDS:
+                continue
+            tier = 0 if uq.manual_bump else 1
+            candidates.append((tier, uq.last_served, key, uq, job))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda row: (row[0], row[1], row[2]))
+        uq = candidates[0][3]
+        job = candidates[0][4]
+        if uq.manual_bump:
+            uq.manual_bump = False
+        return uq, job
+
+    def pick_next(self, now: float | None = None) -> tuple[UnitQueue, RadioJob] | None:
+        """Alias for tests: same as pick_next_radio."""
+        return self.pick_next_radio(now)
+
+    def _start_pending_timers(
         self,
-        uq: UnitQueue,
         execute: ExecuteFn,
         *,
         on_job_start: JobStartFn = None,
         on_job_done: JobDoneFn = None,
-    ) -> None:
-        key = uq.target.key
+    ) -> bool:
+        now = time.monotonic()
         succeeded: dict[str, bool] = getattr(self, "_run_succeeded", {})
-        try:
-            while not self._stop:
-                if not uq.jobs:
-                    break
-                now = time.monotonic()
-                if uq.backoff_until > now:
-                    await asyncio.sleep(min(uq.backoff_until - now, 0.25))
-                    continue
+        started = False
+        for uq in self.units.values():
+            if not uq.jobs:
+                continue
+            if uq.backoff_until > now:
+                continue
+            task = uq.session_extra.get("timer_task")
+            if task is not None and not task.done():
+                continue
+            job = uq.jobs[0]
+            if job.kind not in TIMER_JOB_KINDS:
+                continue
 
-                job = uq.jobs[0]
-                needs_radio = job.kind not in TIMER_JOB_KINDS
-
-                if needs_radio:
-                    manual_bump = uq.manual_bump
-                    if manual_bump:
-                        uq.manual_bump = False
-                    await self.transport.acquire(
-                        key,
-                        manual_bump=manual_bump,
-                        inventory=uq.has_inventory_gap,
-                    )
-
+            async def run_timer(
+                bound_uq: UnitQueue = uq,
+                bound_job: RadioJob = job,
+            ) -> None:
                 outcome = JobOutcome.HARD_FAIL
                 payload: Any | None = "stopped"
                 try:
                     if on_job_start is not None:
-                        await on_job_start(uq, job)
-                    outcome, payload = await execute(job, uq)
+                        await on_job_start(bound_uq, bound_job)
+                    outcome, payload = await execute(bound_job, bound_uq)
+                except asyncio.CancelledError:
+                    raise
                 finally:
-                    if needs_radio:
-                        await self.transport.release(key)
-
-                self._settle_job(uq, job, outcome, payload, succeeded)
+                    bound_uq.session_extra.pop("timer_task", None)
+                self._settle_job(bound_uq, bound_job, outcome, payload, succeeded)
                 if on_job_done is not None:
-                    await on_job_done(uq, job, outcome, payload)
-        except asyncio.CancelledError:
-            raise
-        finally:
-            self._actors.pop(key, None)
+                    await on_job_done(bound_uq, bound_job, outcome, payload)
+
+            timer_task = asyncio.create_task(run_timer())
+            uq.session_extra["timer_task"] = timer_task
+            self._timer_tasks.add(timer_task)
+            timer_task.add_done_callback(self._timer_tasks.discard)
+            started = True
+        return started
 
     async def run(
         self,
@@ -343,59 +320,57 @@ class FleetScheduler:
         once: bool = False,
         max_rounds: int = 0,
     ) -> dict[str, bool]:
-        """Run unit actors until idle (or stopped). Returns unit_key -> succeeded this run."""
+        """Dispatch radio jobs in swim-lane order until idle (or stopped)."""
         succeeded: dict[str, bool] = {}
         self._run_succeeded = succeeded
         round_num = 0
 
         while not self._stop:
-            active = [uq for uq in self.units.values() if uq.jobs]
-            if not active:
-                if once:
+            started_timer = self._start_pending_timers(
+                execute, on_job_start=on_job_start, on_job_done=on_job_done
+            )
+            if started_timer:
+                await asyncio.sleep(0)
+
+            now = time.monotonic()
+            picked = self.pick_next_radio(now)
+            if picked is None:
+                if self._timer_in_flight():
+                    await asyncio.sleep(0.05)
+                    continue
+                wait = self._soonest_backoff(now)
+                if wait is not None:
+                    await asyncio.sleep(min(wait, 0.25))
+                    continue
+                if self.pending_count() == 0:
                     break
-                await self.wait_for_work()
-                if self._stop or not any(uq.jobs for uq in self.units.values()):
-                    if once:
+                if not once:
+                    await self.wait_for_work()
+                    if self._stop:
                         break
                     continue
+                await asyncio.sleep(0.05)
+                continue
 
-            for uq in list(self.units.values()):
-                if uq.jobs:
-                    self._ensure_actor(uq, execute, on_job_start=on_job_start, on_job_done=on_job_done)
+            uq, job = picked
+            uq.last_served = time.monotonic()
 
-            if once:
-                pending = [t for t in self._actors.values() if not t.done()]
-                if pending:
-                    await asyncio.gather(*pending, return_exceptions=True)
+            outcome = JobOutcome.HARD_FAIL
+            payload: Any | None = "stopped"
+            try:
+                if on_job_start is not None:
+                    await on_job_start(uq, job)
+                outcome, payload = await execute(job, uq)
+            except asyncio.CancelledError:
+                raise
+
+            self._settle_job(uq, job, outcome, payload, succeeded)
+            if on_job_done is not None:
+                await on_job_done(uq, job, outcome, payload)
+
+            round_num += 1
+            if max_rounds and round_num >= max_rounds:
                 break
-
-            await asyncio.sleep(0.05)
-            if not any(uq.jobs for uq in self.units.values()) and not self._actors:
-                round_num += 1
-                if max_rounds and round_num > max_rounds:
-                    break
 
         self._run_succeeded = {}
         return succeeded
-
-    # Legacy pick_next for unit tests of fairness ordering.
-    def pick_next(self, now: float | None = None) -> tuple[UnitQueue, RadioJob] | None:
-        now = now or time.monotonic()
-        last = self.transport._last_holder
-        candidates: list[tuple[int, int, int, float, str, UnitQueue, RadioJob]] = []
-        for key, uq in self.units.items():
-            if not uq.jobs:
-                continue
-            if uq.backoff_until > now:
-                continue
-            job = uq.jobs[0]
-            tier = 0 if uq.manual_bump else 1
-            inv = 0 if uq.has_inventory_gap else 1
-            prefer_other = 1 if key == last else 0
-            lrs = self.transport._last_served.get(key, 0.0)
-            candidates.append((tier, inv, prefer_other, lrs, key, uq, job))
-        if not candidates:
-            return None
-        candidates.sort(key=lambda row: (row[0], row[1], row[2], row[3], row[4]))
-        _, _, _, _, _, uq, job = candidates[0]
-        return uq, job

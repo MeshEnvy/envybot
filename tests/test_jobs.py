@@ -1,4 +1,4 @@
-"""Fleet job scheduler and transport queue tests."""
+"""Fleet job scheduler swim-lane tests."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from envybot.jobs import (
     FleetScheduler,
     JobOutcome,
     RadioJob,
-    TransportQueue,
     UnitQueue,
 )
 from envybot.radio import RouterTarget
@@ -26,29 +25,38 @@ def _target(key: str = "me0001") -> RouterTarget:
     )
 
 
-class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
-    async def test_timeout_parks_unit_and_serves_other(self) -> None:
-        sched = FleetScheduler(max_attempts=10, retry_delay=0.0)
-        a = _target("me0001")
-        b = _target("me0002")
-        sched.enqueue_jobs(a, [RadioJob(kind="login", unit_key="me0001")])
-        sched.enqueue_jobs(b, [RadioJob(kind="login", unit_key="me0002")])
+def _no_domination(order: list[str]) -> None:
+    """No unit may take two consecutive radio turns while another is ready."""
+    for idx in range(1, len(order)):
+        if order[idx] == order[idx - 1]:
+            raise AssertionError(f"unit {order[idx]!r} dominated at index {idx}: {order}")
 
-        calls: list[str] = []
+
+class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_three_unit_login_interleaves(self) -> None:
+        sched = FleetScheduler(max_attempts=10, retry_delay=0.0)
+        for key in ("me0001", "me0002", "me0003"):
+            sched.enqueue_jobs(_target(key), [RadioJob(kind="login", unit_key=key)])
+        attempts: dict[str, int] = {k: 0 for k in ("me0001", "me0002", "me0003")}
+        order: list[str] = []
 
         async def execute(job: RadioJob, uq: UnitQueue) -> tuple[JobOutcome, object | None]:
-            calls.append(uq.target.key)
-            if uq.target.key == "me0001" and job.attempt == 0:
+            key = uq.target.key
+            order.append(key)
+            if job.kind != "login":
+                return JobOutcome.HEARD, None
+            attempts[key] += 1
+            if attempts[key] <= 2:
                 return JobOutcome.TIMEOUT, "login timeout"
             return JobOutcome.HEARD, "ok"
 
-        succeeded = await sched.run(execute, once=True)
-        self.assertEqual(succeeded.get("me0002"), True)
-        self.assertIn("me0001", calls)
-        self.assertIn("me0002", calls)
-        self.assertLess(calls.index("me0002"), len(calls))
+        await sched.run(execute, once=True)
+        _no_domination(order)
+        self.assertEqual(order[:3], ["me0001", "me0002", "me0003"])
+        self.assertEqual(order[3:6], ["me0001", "me0002", "me0003"])
+        self.assertEqual(order[6:9], ["me0001", "me0002", "me0003"])
 
-    async def test_manual_bump_once_not_whole_queue(self) -> None:
+    async def test_manual_bump_one_command_then_rotate(self) -> None:
         sched = FleetScheduler(max_attempts=10, retry_delay=0.0)
         manual = _target("me0037")
         auto = _target("me0001")
@@ -70,8 +78,9 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
 
         await sched.run(execute, once=True)
         self.assertEqual(order[0], "me0037")
-        self.assertIn("me0001", order)
-        self.assertLess(order.index("me0001"), len(order))
+        self.assertEqual(order[1], "me0001")
+        self.assertEqual(order[2], "me0037")
+        self.assertEqual(order.count("me0001"), 1)
 
     async def test_discover_wait_does_not_block_transport(self) -> None:
         sched = FleetScheduler(max_attempts=3, retry_delay=0.0)
@@ -95,14 +104,42 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
         async def execute(job: RadioJob, uq: UnitQueue) -> tuple[JobOutcome, object | None]:
             if job.kind == "get:neighbors_wait":
                 order.append(f"{uq.target.key}:wait")
+                await asyncio.sleep(float(job.extra.get("wait_s", 0.15)))
             else:
                 order.append(f"{uq.target.key}:{job.kind}")
-            return JobOutcome.HEARD if job.kind != "get:neighbors_wait" else JobOutcome.TIMER_DONE, None
+            if job.kind == "get:neighbors_wait":
+                return JobOutcome.TIMER_DONE, None
+            return JobOutcome.HEARD, None
 
         await sched.run(execute, once=True)
         wait_idx = order.index("me0001:wait")
         me2_login = order.index("me0002:login")
+        me1_status = order.index("me0001:get:status")
         self.assertLess(wait_idx, me2_login)
+        self.assertLess(me2_login, me1_status)
+
+    async def test_mid_run_enqueue_gets_turn(self) -> None:
+        sched = FleetScheduler(max_attempts=10, retry_delay=0.0)
+        a = _target("me0001")
+        b = _target("me0002")
+        sched.enqueue_jobs(a, [RadioJob(kind="login", unit_key="me0001")])
+        order: list[str] = []
+        enqueued = asyncio.Event()
+
+        async def execute(job: RadioJob, uq: UnitQueue) -> tuple[JobOutcome, object | None]:
+            key = uq.target.key
+            order.append(key)
+            if key == "me0001" and job.attempt == 0:
+                if not enqueued.is_set():
+                    sched.enqueue_jobs(b, [RadioJob(kind="login", unit_key="me0002")])
+                    enqueued.set()
+                return JobOutcome.TIMEOUT, "login timeout"
+            return JobOutcome.HEARD, None
+
+        await sched.run(execute, once=True)
+        self.assertIn("me0002", order)
+        me2_idx = order.index("me0002")
+        self.assertLess(me2_idx, 10)
 
     async def test_on_job_done_sees_settled_queue(self) -> None:
         sched = FleetScheduler(max_attempts=2, retry_delay=0.0)
@@ -149,30 +186,15 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(task, timeout=1.0)
 
 
-class TransportQueueTests(unittest.IsolatedAsyncioTestCase):
-    async def test_fair_alternate(self) -> None:
-        tq = TransportQueue()
-        order: list[str] = []
-
-        async def worker(key: str) -> None:
-            await tq.acquire(key)
-            order.append(key)
-            await asyncio.sleep(0.01)
-            await tq.release(key)
-
-        await asyncio.gather(worker("a"), worker("b"))
-        self.assertEqual(len(order), 2)
-        self.assertNotEqual(order[0], order[1] if len(order) > 1 else order[0])
-
-
 class PickNextTests(unittest.TestCase):
-    def test_prefers_different_unit_after_last(self) -> None:
+    def test_prefers_least_recently_served(self) -> None:
         sched = FleetScheduler()
         a = _target("me0001")
         b = _target("me0002")
         sched.enqueue_jobs(a, [RadioJob(kind="login", unit_key="me0001")])
         sched.enqueue_jobs(b, [RadioJob(kind="login", unit_key="me0002")])
-        sched.transport._last_holder = "me0001"
+        sched.units["me0001"].last_served = 100.0
+        sched.units["me0002"].last_served = 0.0
         picked = sched.pick_next(0.0)
         self.assertIsNotNone(picked)
         assert picked is not None
@@ -190,6 +212,7 @@ class PickNextTests(unittest.TestCase):
         assert picked is not None
         uq, _ = picked
         self.assertEqual(uq.target.key, "me0002")
+        self.assertFalse(sched.units["me0002"].manual_bump)
 
 
 if __name__ == "__main__":
