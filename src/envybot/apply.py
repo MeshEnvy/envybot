@@ -7,7 +7,7 @@ import json
 import sqlite3
 from typing import Any
 
-from envybot.history import get_last_seen, insert_apply, last_ok_apply
+from envybot.history import clear_apply_stamps, get_last_seen, insert_apply, last_ok_apply
 from envybot.keys_doc import (
     UnknownPerson,
     grants_payload,
@@ -53,6 +53,36 @@ except ImportError:  # pragma: no cover
     MeshCore = Any  # type: ignore[misc,assignment]
 
 PROFILE_ID_VERSION = 1
+
+APPLY_FIELDS = (
+    "name",
+    "lat",
+    "lon",
+    "advert",
+    "flood",
+    "guest",
+    "admin",
+    "path_hash",
+    "dutycycle",
+    "acl",
+    "identity",
+)
+
+# First due SET field: quick reachability probe (direct + one flood retry).
+FIRST_DUE_FIELD_ATTEMPTS_CAP = 2
+
+
+def _first_due_field(due: frozenset[str]) -> str | None:
+    for field in APPLY_FIELDS:
+        if field in due and field != "identity":
+            return field
+    return None
+
+
+def _field_attempts(field: str, *, first_due: str | None, attempts: int) -> int:
+    if field == first_due:
+        return min(attempts, FIRST_DUE_FIELD_ATTEMPTS_CAP)
+    return attempts
 
 
 def desired_path_hash_mode(node: dict[str, Any]) -> int:
@@ -141,6 +171,77 @@ def profile_id(
     return f"v{PROFILE_ID_VERSION}:{digest}"
 
 
+def field_desired_str(value: Any) -> str:
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    if value is None:
+        return ""
+    return str(value)
+
+
+def applicable_field_desireds(
+    node: dict[str, Any],
+    sites: dict[str, dict[str, Any]] | None,
+    *,
+    doc: dict[str, Any] | None = None,
+    keys: dict[str, list[str]] | None = None,
+) -> dict[str, str]:
+    """Desired stamp value per SET field (identity is book metadata only)."""
+    parts = profile_parts(node, sites, doc=doc, keys=keys)
+    out: dict[str, str] = {}
+    public = is_public(node)
+    for field in APPLY_FIELDS:
+        if field == "admin" and not password_is_strong(node.get("admin_password")):
+            continue
+        if field in ("lat", "lon") and public and not resolve_book_position(node, sites):
+            continue
+        if field == "guest" and public:
+            guest = node.get("guest_password")
+            if not (isinstance(guest, str) and guest.strip()):
+                continue
+        out[field] = field_desired_str(parts[field])
+    return out
+
+
+def profile_legacy_synced(
+    conn: sqlite3.Connection,
+    unit: str,
+    node: dict[str, Any],
+    sites: dict[str, dict[str, Any]] | None,
+    *,
+    doc: dict[str, Any] | None = None,
+    keys: dict[str, list[str]] | None = None,
+) -> bool:
+    desired = profile_id(node, sites, doc=doc, keys=keys)
+    return last_ok_apply(conn, unit, "profile") == desired
+
+
+def apply_due_fields(
+    conn: sqlite3.Connection,
+    unit: str,
+    node: dict[str, Any],
+    sites: dict[str, dict[str, Any]] | None,
+    *,
+    force: bool = False,
+    doc: dict[str, Any] | None = None,
+    keys: dict[str, list[str]] | None = None,
+) -> list[str]:
+    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys)
+    if force:
+        return list(applicable.keys())
+    if profile_legacy_synced(conn, unit, node, sites, doc=doc, keys=keys):
+        return []
+    identity = applicable.get("identity")
+    stamped_identity = last_ok_apply(conn, unit, "identity")
+    if (
+        identity is not None
+        and stamped_identity is not None
+        and stamped_identity != identity
+    ):
+        return list(applicable.keys())
+    return [f for f, des in applicable.items() if last_ok_apply(conn, unit, f) != des]
+
+
 def apply_is_due(
     conn: sqlite3.Connection,
     unit: str,
@@ -153,8 +254,7 @@ def apply_is_due(
 ) -> bool:
     if force:
         return True
-    desired = profile_id(node, sites, doc=doc, keys=keys)
-    if last_ok_apply(conn, unit, "profile") != desired:
+    if apply_due_fields(conn, unit, node, sites, doc=doc, keys=keys):
         return True
     if not is_public(node) and guest_needs_assign(node, doc or {}, unit):
         return True
@@ -170,14 +270,20 @@ def stamp_profile_after_trust(
     pre_apply_hash: str | None,
     doc: dict[str, Any] | None = None,
     keys: dict[str, list[str]] | None = None,
+    doc_before: dict[str, Any] | None = None,
+    keys_before: dict[str, list[str]] | None = None,
 ) -> bool:
-    """After trust updated ACL on a fully-synced unit, stamp the new profile hash."""
-    if not pre_apply_hash:
+    """After trust updated ACL on a fully-synced unit, stamp acl only."""
+    _ = pre_apply_hash
+    before_doc = doc_before if doc_before is not None else doc
+    before_keys = keys_before if keys_before is not None else keys
+    if apply_due_fields(conn, unit, node, sites, doc=before_doc, keys=before_keys):
         return False
-    if last_ok_apply(conn, unit, "profile") != pre_apply_hash:
+    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys)
+    acl = applicable.get("acl")
+    if acl is None:
         return False
-    desired = profile_id(node, sites, doc=doc, keys=keys)
-    insert_apply(conn, unit=unit, field="profile", desired=desired, ok=True)
+    insert_apply(conn, unit=unit, field="acl", desired=acl, ok=True)
     return True
 
 
@@ -263,110 +369,237 @@ async def apply_one(
     firmware_version: str | None = None,
     login_clock: int | None = None,
     keys: dict[str, list[str]] | None = None,
+    force: bool = False,
 ) -> bool:
-    """SET mask or book identity plus shared radio policy. Returns True if profile OK."""
-    ok = True
+    """SET mask or book identity plus shared radio policy. Returns True when fully synced."""
+    if force:
+        clear_apply_stamps(conn, target.key)
+
+    due = frozenset(
+        apply_due_fields(
+            conn, target.key, node, sites, force=force, doc=doc, keys=keys
+        )
+    )
+    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys)
+
+    def stamp(field: str) -> None:
+        des = applicable.get(field)
+        if des is not None:
+            insert_apply(conn, unit=target.key, field=field, desired=des, ok=True)
+
+    if not due:
+        log.step(f"profile OK ({profile_id(node, sites, doc=doc, keys=keys)})")
+        return True
+
+    first_due = _first_due_field(due)
+
+    def abort(field: str) -> bool:
+        log.step(f"apply aborted: {field} unreachable")
+        remaining = apply_due_fields(
+            conn, target.key, node, sites, doc=doc, keys=keys
+        )
+        if remaining:
+            log.step(f"profile partial ({len(remaining)} due: {', '.join(remaining)})")
+        return False
+
     public = is_public(node)
 
-    if public:
-        name = str(node.get("name") or "").strip() or target.unit_id
-        if not await _set_cli(
+    if "name" in due:
+        name = (
+            str(node.get("name") or "").strip() or target.unit_id
+            if public
+            else MASK_NAME
+        )
+        if await _set_cli(
             client,
             target,
             f"set name {name}",
             cmd_timeout=cmd_timeout,
-            attempts=attempts,
+            attempts=_field_attempts("name", first_due=first_due, attempts=attempts),
             log=log,
             session=session,
             field="name",
         ):
-            ok = False
+            stamp("name")
+        else:
+            return abort("name")
+    else:
+        log.step("name: skip (synced)")
+
+    if public:
         pos = resolve_book_position(node, sites)
         if pos:
-            if await set_book_coord(
-                client, target, "lat", float(pos["lat"]),
-                cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session,
-            ) is None:
-                ok = False
-            if await set_book_coord(
-                client, target, "lon", float(pos["lon"]),
-                cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session,
-            ) is None:
-                ok = False
+            if "lat" in due:
+                if await set_book_coord(
+                    client, target, "lat", float(pos["lat"]),
+                    cmd_timeout=cmd_timeout,
+                    attempts=_field_attempts("lat", first_due=first_due, attempts=attempts),
+                    log=log, session=session,
+                ) is not None:
+                    stamp("lat")
+                else:
+                    return abort("lat")
+            else:
+                log.step("lat: skip (synced)")
+            if "lon" in due:
+                if await set_book_coord(
+                    client, target, "lon", float(pos["lon"]),
+                    cmd_timeout=cmd_timeout,
+                    attempts=_field_attempts("lon", first_due=first_due, attempts=attempts),
+                    log=log, session=session,
+                ) is not None:
+                    stamp("lon")
+                else:
+                    return abort("lon")
+            else:
+                log.step("lon: skip (synced)")
         if node.get("advert_interval_min") is not None:
-            if not await _set_cli(
-                client, target, f"set advert.interval {int(node['advert_interval_min'])}",
-                cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session, field="advert",
-            ):
-                ok = False
+            if "advert" in due:
+                if await _set_cli(
+                    client, target, f"set advert.interval {int(node['advert_interval_min'])}",
+                    cmd_timeout=cmd_timeout,
+                    attempts=_field_attempts("advert", first_due=first_due, attempts=attempts),
+                    log=log, session=session, field="advert",
+                ):
+                    stamp("advert")
+                else:
+                    return abort("advert")
+            else:
+                log.step("advert: skip (synced)")
         if node.get("flood_advert_interval_h") is not None:
-            if not await _set_cli(
-                client, target, f"set flood.advert.interval {int(node['flood_advert_interval_h'])}",
-                cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session, field="flood_advert",
-            ):
-                ok = False
+            if "flood" in due:
+                if await _set_cli(
+                    client, target, f"set flood.advert.interval {int(node['flood_advert_interval_h'])}",
+                    cmd_timeout=cmd_timeout,
+                    attempts=_field_attempts("flood", first_due=first_due, attempts=attempts),
+                    log=log, session=session, field="flood_advert",
+                ):
+                    stamp("flood")
+                else:
+                    return abort("flood")
+            else:
+                log.step("flood_advert: skip (synced)")
         guest = node.get("guest_password")
         if isinstance(guest, str) and guest.strip():
-            guest = _ensure_guest_password(node, doc, target.key)
-            if not await _set_cli(
-                client, target, f"set guest.password {guest}",
-                cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session, field="guest",
-            ):
-                ok = False
+            if "guest" in due:
+                guest = _ensure_guest_password(node, doc, target.key)
+                if await _set_cli(
+                    client, target, f"set guest.password {guest}",
+                    cmd_timeout=cmd_timeout,
+                    attempts=_field_attempts("guest", first_due=first_due, attempts=attempts),
+                    log=log, session=session, field="guest",
+                ):
+                    stamp("guest")
+                else:
+                    return abort("guest")
+            else:
+                log.step("guest: skip (synced)")
     else:
-        if not await _set_cli(
-            client, target, f"set name {MASK_NAME}",
-            cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session, field="name",
-        ):
-            ok = False
-        if await set_book_coord(
-            client, target, "lat", 0.0,
-            cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session,
-        ) is None:
-            ok = False
-        if await set_book_coord(
-            client, target, "lon", 0.0,
-            cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session,
-        ) is None:
-            ok = False
-        if not await _set_cli(
-            client, target, "set advert.interval 0",
-            cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session, field="advert",
-        ):
-            ok = False
-        if not await _set_cli(
-            client, target, "set flood.advert.interval 0",
-            cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session, field="flood_advert",
-        ):
-            ok = False
-        guest = _ensure_guest_password(node, doc, target.key)
-        if not await _set_cli(
-            client, target, f"set guest.password {guest}",
-            cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session, field="guest",
-        ):
-            ok = False
+        if "lat" in due:
+            if await set_book_coord(
+                client, target, "lat", 0.0,
+                cmd_timeout=cmd_timeout,
+                attempts=_field_attempts("lat", first_due=first_due, attempts=attempts),
+                log=log, session=session,
+            ) is not None:
+                stamp("lat")
+            else:
+                return abort("lat")
+        else:
+            log.step("lat: skip (synced)")
+        if "lon" in due:
+            if await set_book_coord(
+                client, target, "lon", 0.0,
+                cmd_timeout=cmd_timeout,
+                attempts=_field_attempts("lon", first_due=first_due, attempts=attempts),
+                log=log, session=session,
+            ) is not None:
+                stamp("lon")
+            else:
+                return abort("lon")
+        else:
+            log.step("lon: skip (synced)")
+        if "advert" in due:
+            if await _set_cli(
+                client, target, "set advert.interval 0",
+                cmd_timeout=cmd_timeout,
+                attempts=_field_attempts("advert", first_due=first_due, attempts=attempts),
+                log=log, session=session, field="advert",
+            ):
+                stamp("advert")
+            else:
+                return abort("advert")
+        else:
+            log.step("advert: skip (synced)")
+        if "flood" in due:
+            if await _set_cli(
+                client, target, "set flood.advert.interval 0",
+                cmd_timeout=cmd_timeout,
+                attempts=_field_attempts("flood", first_due=first_due, attempts=attempts),
+                log=log, session=session, field="flood_advert",
+            ):
+                stamp("flood")
+            else:
+                return abort("flood")
+        else:
+            log.step("flood_advert: skip (synced)")
+        if "guest" in due:
+            guest = _ensure_guest_password(node, doc, target.key)
+            if await _set_cli(
+                client, target, f"set guest.password {guest}",
+                cmd_timeout=cmd_timeout,
+                attempts=_field_attempts("guest", first_due=first_due, attempts=attempts),
+                log=log, session=session, field="guest",
+            ):
+                stamp("guest")
+            else:
+                return abort("guest")
+        else:
+            log.step("guest: skip (synced)")
 
     admin = node.get("admin_password")
     if password_is_strong(admin):
-        admin_pw = normalize_password(admin)
-        if not await _set_cli(
-            client, target, f"password {admin_pw}",
-            cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session, field="admin",
-            expected=admin_pw,
-        ):
-            ok = False
+        if "admin" in due:
+            admin_pw = normalize_password(admin)
+            if await _set_cli(
+                client, target, f"password {admin_pw}",
+                cmd_timeout=cmd_timeout,
+                attempts=_field_attempts("admin", first_due=first_due, attempts=attempts),
+                log=log, session=session, field="admin",
+                expected=admin_pw,
+            ):
+                stamp("admin")
+            else:
+                return abort("admin")
+        else:
+            log.step("admin: skip (synced)")
 
-    if await set_path_hash_policy(
-        client, target, cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session,
-        mode=desired_path_hash_mode(node),
-    ) is None:
-        ok = False
-    if await set_dutycycle_policy(
-        client, target, cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session,
-        firmware_version=firmware_version or node.get("firmware_version"),
-        pct=float(desired_dutycycle(node)),
-    ) is None:
-        ok = False
+    if "path_hash" in due:
+        if await set_path_hash_policy(
+            client, target, cmd_timeout=cmd_timeout,
+            attempts=_field_attempts("path_hash", first_due=first_due, attempts=attempts),
+            log=log, session=session,
+            mode=desired_path_hash_mode(node),
+        ) is not None:
+            stamp("path_hash")
+        else:
+            return abort("path_hash")
+    else:
+        log.step("path.hash: skip (synced)")
+
+    if "dutycycle" in due:
+        if await set_dutycycle_policy(
+            client, target, cmd_timeout=cmd_timeout,
+            attempts=_field_attempts("dutycycle", first_due=first_due, attempts=attempts),
+            log=log, session=session,
+            firmware_version=firmware_version or node.get("firmware_version"),
+            pct=float(desired_dutycycle(node)),
+        ) is not None:
+            stamp("dutycycle")
+        else:
+            return abort("dutycycle")
+    else:
+        log.step("dutycycle: skip (synced)")
 
     stored_clock = None
     seen = get_last_seen(conn, target.key)
@@ -388,8 +621,7 @@ async def apply_one(
     except UnknownPerson as exc:
         log.step(f"acl: unknown person {exc}")
         want_acl = []
-        ok = False
-    if want_acl:
+    if want_acl and "acl" in due:
         if heard_acl is None:
             wait_cap = mesh_wait_seconds(6000, cap=cmd_timeout)
 
@@ -410,16 +642,27 @@ async def apply_one(
                 cap=cmd_timeout,
             )
             heard_acl = normalize_acl_payload(acl_raw)
-        if not await _apply_acl(
+        if await _apply_acl(
             client, target, want_acl, heard_acl,
-            cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session,
+            cmd_timeout=cmd_timeout,
+            attempts=_field_attempts("acl", first_due=first_due, attempts=attempts),
+            log=log, session=session,
         ):
-            ok = False
+            stamp("acl")
+        else:
+            return abort("acl")
+    elif want_acl:
+        log.step("acl: skip (synced)")
 
-    desired = profile_id(node, sites, doc=doc, keys=keys)
-    insert_apply(conn, unit=target.key, field="profile", desired=desired, ok=ok)
-    log.step(f"profile {'OK' if ok else 'partial'} ({desired})")
-    return ok
+    remaining = apply_due_fields(conn, target.key, node, sites, doc=doc, keys=keys)
+    if not remaining:
+        if "identity" in applicable:
+            stamp("identity")
+        pid = profile_id(node, sites, doc=doc, keys=keys)
+        log.step(f"profile OK ({pid})")
+        return True
+    log.step(f"profile partial ({len(remaining)} due: {', '.join(remaining)})")
+    return False
 
 
 def persist_guest_if_new(nodes_path: Any, doc: dict[str, Any]) -> None:

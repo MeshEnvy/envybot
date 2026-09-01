@@ -6,7 +6,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from envybot.apply import apply_is_due, profile_id, profile_parts
+from envybot.apply import (
+    apply_due_fields,
+    apply_is_due,
+    applicable_field_desireds,
+    profile_id,
+    profile_parts,
+)
 from envybot.history import insert_apply, open_history, record_poll
 from envybot.radio import format_book_coord
 
@@ -141,6 +147,21 @@ class DueTests(unittest.TestCase):
             conn = open_history(Path(tmp))
             insert_apply(conn, unit="me0001", field="profile", desired="private", ok=True)
             self.assertTrue(apply_is_due(conn, "me0001", {}, None, force=True))
+
+    def test_partial_field_sync_only_retries_gaps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            applicable = applicable_field_desireds(_STRONG, None)
+            for field in ("lon", "advert", "path_hash"):
+                insert_apply(
+                    conn, unit="me0001", field=field, desired=applicable[field], ok=True
+                )
+            due = apply_due_fields(conn, "me0001", _STRONG, None)
+            self.assertIn("name", due)
+            self.assertIn("lat", due)
+            self.assertNotIn("lon", due)
+            self.assertNotIn("advert", due)
+            self.assertNotIn("path_hash", due)
 
 
 class FormatTests(unittest.TestCase):

@@ -456,6 +456,8 @@ async def run(args: argparse.Namespace) -> int:
                 pre_apply_hash=pre_hashes.get(key),
                 doc=doc_after,
                 keys=keys_after,
+                doc_before=doc_before,
+                keys_before=keys_before,
             ):
                 log.step(f"{key}: profile reconciled")
         print(f"acl {acl_ok}/{acl_ok + acl_fail} login(s)")

@@ -66,7 +66,11 @@ class PollCadenceTests(unittest.TestCase):
 
 class TrustStampTests(unittest.TestCase):
     def test_stamp_after_trust_when_reconciled(self) -> None:
-        from envybot.apply import profile_id, stamp_profile_after_trust
+        from envybot.apply import (
+            applicable_field_desireds,
+            profile_id,
+            stamp_profile_after_trust,
+        )
 
         node = {
             "name": "Ophir",
@@ -99,14 +103,23 @@ class TrustStampTests(unittest.TestCase):
                     pre_apply_hash=pre,
                     doc=doc_after,
                     keys=keys_after,
+                    doc_before=doc_before,
+                    keys_before=keys_before,
                 )
             )
             from envybot.history import last_ok_apply
 
-            self.assertEqual(last_ok_apply(conn, "me0001", "profile"), post)
+            post_acl = applicable_field_desireds(
+                node, None, doc=doc_after, keys=keys_after
+            )["acl"]
+            self.assertEqual(last_ok_apply(conn, "me0001", "acl"), post_acl)
 
     def test_no_stamp_when_never_synced(self) -> None:
-        from envybot.apply import profile_id, stamp_profile_after_trust
+        from envybot.apply import (
+            applicable_field_desireds,
+            profile_id,
+            stamp_profile_after_trust,
+        )
 
         node = {"name": "Ophir", "guest_password": "GuestOneStrong1"}
         doc = {"trust": {"admin": ["ben"]}}
@@ -125,6 +138,8 @@ class TrustStampTests(unittest.TestCase):
                     pre_apply_hash=pre,
                     doc=doc,
                     keys=keys,
+                    doc_before={"trust": {}},
+                    keys_before={},
                 )
             )
             from envybot.history import last_ok_apply

@@ -58,9 +58,13 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   (`m35h3nvy`, placeholders, short), or colliding guests. Admin is never
   invented by apply. Apply SETs book admin (`password`) after ACL/login.
 - Apply due = `profile_id` vs last ok sqlite stamp, or weak guest assign.
+  Per-field stamps in sqlite `applies` (name, lat, lon, …). Legacy
+  `profile` ok row still counts as fully synced. `--force` clears stamps.
   Not due from heard leak/mismatch. Poll default: status/telemetry/neighbors
   on interval; fw/bl once; name/gps/advert/acl audit-only (`--force`).
-  Apply GETs ACL when due to drop extras.
+  Apply GETs ACL when due to drop extras. First due SET uses at most two
+  attempts (direct + flood); any due field failure aborts the rest for
+  that unit this pass. Apply-only runs password login when poll did not.
 - Skip password login when the companion is a resolved **admin** key.
   Live RTC is `clock` CLI (or login timestamp). Clock is the skip-login
   reachability probe: timeout = unreachable, skip remaining GET/apply

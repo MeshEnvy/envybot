@@ -51,12 +51,18 @@ CLI, which is also the reachability probe. If `clock` times out, that
 unit is unreachable and remaining GET/SET ops are skipped. Drop the
 companion from the ACL to force login if that belief is wrong.
 
-Apply is due when `profile_id` (`v1:` + hash of the desired SET payload)
-does not match the last successful apply stamp in sqlite, or a private node
-still needs a guest password assign. Heard name/GPS/adverts do **not** trigger
-apply. Edit a hashed field in `nodes.yaml` (or run `trust`) and restart fleet.
+Apply is due when any SET field stamp misses the book desired value
+(stored in sqlite `applies` per field: name, lat, lon, advert, flood,
+guest, admin, path_hash, dutycycle, acl, identity). A legacy ok
+`applies.profile` row still means fully synced. `--force` clears field
+stamps and re-SETs everything. A private node still needs a guest password
+assign. Heard name/GPS/adverts do **not** trigger apply. Edit a hashed field in `nodes.yaml` (or run `trust`) and restart fleet.
 
 When apply runs, GET ACL once to drop keys not in the book allowlist.
+The first due SET field uses at most two mesh attempts (direct + flood).
+If it gets no response, apply aborts for that unit (no lat/lon/guest/…).
+Apply-only (`--apply-only` or when poll groups are up to date) password-
+logins before SET (no skip-login on that path).
 
 Hashed: public/name/gps/adverts, guest + admin (tokens), identity pubkey,
 path.hash, dutycycle, resolved ACL (pubkey + perm). Not hashed / not pushed here:

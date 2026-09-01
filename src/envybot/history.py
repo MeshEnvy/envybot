@@ -179,6 +179,24 @@ def last_ok_apply(conn: sqlite3.Connection, unit: str, field: str) -> str | None
     return None if row is None else row["desired"]
 
 
+def clear_apply_stamps(
+    conn: sqlite3.Connection,
+    unit: str,
+    *,
+    fields: list[str] | None = None,
+) -> None:
+    """Drop apply stamps so the next run re-SETs (--force)."""
+    if fields:
+        placeholders = ", ".join("?" for _ in fields)
+        conn.execute(
+            f"DELETE FROM applies WHERE unit = ? AND field IN ({placeholders})",
+            (unit, *fields),
+        )
+    else:
+        conn.execute("DELETE FROM applies WHERE unit = ?", (unit,))
+    conn.commit()
+
+
 def insert_apply(
     conn: sqlite3.Connection,
     *,

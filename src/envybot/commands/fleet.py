@@ -29,6 +29,7 @@ from envybot.radio import (
     FleetSession,
     PollLog,
     add_companion_args,
+    admin_login,
     companion_identity,
     connect,
     load_targets,
@@ -263,22 +264,37 @@ async def run(args: argparse.Namespace) -> int:
                     poll_ok = not remaining
                 apply_ok = True
                 if do_apply and target.key in apply_keys:
-                    apply_ok = await apply_one(
-                        client,
-                        target,
-                        node=node_record,
-                        doc=doc,
-                        sites=sites,
-                        cmd_timeout=args.timeout,
-                        attempts=args.attempts,
-                        session=session,
-                        log=log,
-                        conn=conn,
-                        heard_acl=heard_acl,
-                        firmware_version=fw,
-                        login_clock=login_clock,
-                        keys=keys,
-                    )
+                    apply_clock = login_clock
+                    if apply_clock is None:
+                        ok, err, apply_clock = await admin_login(
+                            client,
+                            target,
+                            login_timeout=args.login_timeout,
+                            attempts=args.attempts,
+                            session=session,
+                            log=log,
+                        )
+                        if not ok:
+                            print(f"  unreachable: {err or 'apply login failed'}")
+                            apply_ok = False
+                    if apply_ok:
+                        apply_ok = await apply_one(
+                            client,
+                            target,
+                            node=node_record,
+                            doc=doc,
+                            sites=sites,
+                            cmd_timeout=args.timeout,
+                            attempts=args.attempts,
+                            session=session,
+                            log=log,
+                            conn=conn,
+                            heard_acl=heard_acl,
+                            firmware_version=fw,
+                            login_clock=apply_clock,
+                            keys=keys,
+                            force=args.force,
+                        )
                     if str(node_record.get("guest_password") or "") != guest_before:
                         yaml_dirty = True
                     if apply_ok:
