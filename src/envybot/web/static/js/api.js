@@ -36,6 +36,13 @@ export async function patchUnit(key, body) {
   return res.json()
 }
 
+/** @param {string} key */
+export async function queueUnit(key) {
+  const res = await fetch(`/api/queue/${encodeURIComponent(key)}`, { method: 'POST' })
+  if (!res.ok) throw new Error(`queue ${res.status}`)
+  return res.json()
+}
+
 /** @param {string} unit @param {string} metric */
 export async function fetchHistory(unit, metric) {
   const res = await fetch(`/api/history/${encodeURIComponent(unit)}?metric=${encodeURIComponent(metric)}`)

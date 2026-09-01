@@ -36,6 +36,86 @@ class MonitorWeb:
     site: web.TCPSite | None = None
     _watch_task: asyncio.Task[None] | None = field(default=None, repr=False)
     _stop: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+    _manual_queue: asyncio.Queue[str] = field(default_factory=asyncio.Queue, repr=False)
+    _accepting: bool = field(default=False, repr=False)
+    _session_states: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
+    _poll_state: dict[str, Any] = field(default_factory=dict, repr=False)
+    _companion: str | None = field(default=None, repr=False)
+    _wake_idle: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+
+    def set_worker_active(self, active: bool) -> None:
+        self._accepting = active
+
+    def sync_worker_state(
+        self,
+        *,
+        session_states: dict[str, dict[str, Any]] | None = None,
+        poll: dict[str, Any] | None = None,
+        companion: str | None = None,
+    ) -> None:
+        if session_states is not None:
+            self._session_states = session_states
+        if poll is not None:
+            self._poll_state = dict(poll)
+        if companion is not None:
+            self._companion = companion
+
+    async def enqueue(self, key: str) -> tuple[int, str | None]:
+        """Queue a unit for a forced poll/apply. Returns (http_status, error)."""
+        key = key.lower()
+        if not self._accepting:
+            return 409, "fleet worker not accepting manual queue"
+        doc = load_nodes_doc(self.nodes_path)
+        nodes = doc.get("nodes") or {}
+        node = nodes.get(key)
+        if not isinstance(node, dict) or is_decommissioned(node) or not is_meshcore_platform(node):
+            return 404, "unknown unit"
+        session = self._session_states.get(key) or {}
+        state = session.get("state")
+        if state in ("queued", "polling"):
+            return 200, None
+        self._manual_queue.put_nowait(key)
+        self._wake_idle.set()
+        return 200, None
+
+    async def drain_manual_queue(self) -> list[str]:
+        keys: list[str] = []
+        while True:
+            try:
+                keys.append(self._manual_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                break
+        seen: set[str] = set()
+        out: list[str] = []
+        for key in keys:
+            k = key.lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(k)
+        return out
+
+    async def wait_manual_queue(self) -> list[str]:
+        """Block until manual keys arrive or shutdown."""
+        while not self._stop.is_set():
+            keys = await self.drain_manual_queue()
+            if keys:
+                return keys
+            self._wake_idle.clear()
+            get_task = asyncio.create_task(self._manual_queue.get())
+            stop_task = asyncio.create_task(self._stop.wait())
+            done, pending = await asyncio.wait(
+                {get_task, stop_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            if stop_task in done:
+                return []
+            key = get_task.result()
+            return [key.lower()] + await self.drain_manual_queue()
+        return []
 
     async def refresh_snapshot(
         self,
@@ -44,13 +124,19 @@ class MonitorWeb:
         companion: str | None = None,
         poll: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if session_states is not None:
+            self._session_states = session_states
+        if poll is not None:
+            self._poll_state = dict(poll)
+        if companion is not None:
+            self._companion = companion
         snap = build_fleet_snapshot(
             nodes_path=self.nodes_path,
             sites_path=self.sites_path,
             stale_secs=self.stale_secs,
-            session_states=session_states,
-            companion=companion,
-            poll=poll,
+            session_states=self._session_states,
+            companion=self._companion,
+            poll=self._poll_state or poll or {"phase": "idle"},
         )
         snap["edges"] = build_neighbor_edges(snap["units"])
         await self.hub.set_snapshot(snap)
@@ -65,13 +151,19 @@ class MonitorWeb:
         companion: str | None = None,
         poll: dict[str, Any] | None = None,
     ) -> None:
+        if session_states is not None:
+            self._session_states = session_states
+        if poll is not None:
+            self._poll_state = dict(poll)
+        if companion is not None:
+            self._companion = companion
         snap = build_fleet_snapshot(
             nodes_path=self.nodes_path,
             sites_path=self.sites_path,
             stale_secs=self.stale_secs,
-            session_states=session_states,
-            companion=companion,
-            poll=poll,
+            session_states=self._session_states,
+            companion=self._companion,
+            poll=self._poll_state or poll or {"phase": "idle"},
         )
         snap["edges"] = build_neighbor_edges(snap["units"])
         unit = snap["units"].get(key)
@@ -84,6 +176,7 @@ class MonitorWeb:
         await self.hub.publish_unit(unit)
 
     async def publish_session(self, poll: dict[str, Any]) -> None:
+        self._poll_state = dict(poll)
         await self.hub.publish_session(poll)
 
     async def start_yaml_watch(self, interval: float = 1.0) -> None:
@@ -102,7 +195,12 @@ class MonitorWeb:
                     pass
                 if last_mtime is None or mtime != last_mtime:
                     last_mtime = mtime
-                    await self.refresh_snapshot(poll={"phase": "watch"})
+                    poll = dict(self._poll_state) if self._poll_state else {"phase": "watch"}
+                    await self.refresh_snapshot(
+                        session_states=dict(self._session_states),
+                        companion=self._companion,
+                        poll=poll,
+                    )
             except OSError:
                 pass
             try:
@@ -190,6 +288,28 @@ async def _handle_history(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+async def _handle_queue(request: web.Request) -> web.Response:
+    key = request.match_info["key"].lower()
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    status, err = await web_ctx.enqueue(key)
+    if status == 404:
+        return web.json_response({"error": err}, status=404)
+    if status == 409:
+        return web.json_response({"error": err}, status=409)
+    session = {"state": "queued", "manual": True}
+    web_ctx._session_states[key] = session
+    await web_ctx.publish_unit(
+        key,
+        session=session,
+        session_states=web_ctx._session_states,
+        companion=web_ctx._companion,
+        poll=web_ctx._poll_state,
+    )
+    snap = web_ctx.hub.snapshot or {}
+    unit = snap.get("units", {}).get(key) or {}
+    return web.json_response(unit)
+
+
 async def _handle_unit_edit(request: web.Request) -> web.Response:
     key = request.match_info["key"].lower()
     web_ctx: MonitorWeb = request.app["web_ctx"]
@@ -255,6 +375,7 @@ def make_app(web_ctx: MonitorWeb) -> web.Application:
     app["web_ctx"] = web_ctx
     app.router.add_get("/api/fleet", _handle_fleet)
     app.router.add_post("/api/unit/{key}", _handle_unit_edit)
+    app.router.add_post("/api/queue/{key}", _handle_queue)
     app.router.add_get("/api/history/{unit}", _handle_history)
     app.router.add_get("/events", _handle_events)
     app.router.add_get("/", _handle_index)

@@ -92,6 +92,8 @@ Separate USB OTA repeater for `motatool serve`.
 
 - **Fleet UI:** `./envybot fleet` serves `127.0.0.1:8787` by default.
   `--web-only` browses the book without a radio. Never expose secrets.
+  **Queue** (detail + list) re-enqueues one unit for forced GET+apply while
+  the companion worker is idle or polling; overrides `--skip`.
   Units carry `health` (worst-of component checks) and interval traffic
   deltas; detail sparklines use `/api/history/{unit}?metric=`.
 - Long BLE apply can drop the companion link; fleet reconnects transport,

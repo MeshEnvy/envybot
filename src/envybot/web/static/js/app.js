@@ -1,5 +1,5 @@
 import { createApp, computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { connectEvents, fetchFleet, fetchHistory, patchUnit } from './api.js'
+import { connectEvents, fetchFleet, fetchHistory, patchUnit, queueUnit as postQueue } from './api.js'
 import {
   formatAgo,
   formatAirtimePct,
@@ -93,6 +93,15 @@ const App = {
       if (fleet.companion) parts.push(`companion ${String(fleet.companion).slice(0, 12)}…`)
       return parts.join(' · ')
     })
+
+    const queueAccepting = computed(() => !!fleet.poll?.accepting)
+
+    /** @param {Record<string, unknown> | undefined} unit */
+    function canQueueUnit(unit) {
+      if (!unit || !queueAccepting.value) return false
+      const st = unitStatus(unit)
+      return st !== 'queued' && st !== 'polling'
+    }
 
     const sortedUnits = computed(() => {
       const q = search.value.trim().toLowerCase()
@@ -227,6 +236,19 @@ const App = {
       }
     }
 
+    /** @param {Record<string, unknown>} unit @param {Event} [ev] */
+    async function queueUnit(unit, ev) {
+      ev?.stopPropagation?.()
+      if (!canQueueUnit(unit)) return
+      try {
+        const updated = await postQueue(String(unit.key))
+        applyUnit(updated)
+        pushMap()
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
     function pushMap() {
       mapCtrl?.sync(fleet, selectedKey.value)
       syncDetailPopup()
@@ -280,6 +302,8 @@ const App = {
       detailEl,
       detailHasMapPin,
       pollLine,
+      queueAccepting,
+      canQueueUnit,
       selectUnit,
       clearSelection,
       unitStatus,
@@ -307,6 +331,7 @@ const App = {
       unitLabel,
       unitTitle,
       togglePublic,
+      queueUnit,
     }
   },
   template: `
@@ -351,6 +376,15 @@ const App = {
             <input type="checkbox" :checked="!!selectedUnit.public" @change="togglePublic(selectedUnit, $event)" />
             public (push book name + GPS)
           </label>
+          <button
+            v-if="queueAccepting"
+            type="button"
+            class="queue-btn"
+            :disabled="!canQueueUnit(selectedUnit)"
+            @click="queueUnit(selectedUnit, $event)"
+          >
+            Queue
+          </button>
           <section v-if="selectedUnit.health" class="health-section">
             <h3>Health</h3>
             <p class="health-summary">
@@ -572,6 +606,15 @@ const App = {
               <span class="unit-badges">
                 <span class="badge" :class="'badge-' + unitStatus(unit)">{{ unitStatus(unit) }}</span>
                 <span v-if="unit.drift" class="badge" :class="'badge-' + unit.drift">{{ unit.drift }}</span>
+                <button
+                  v-if="queueAccepting"
+                  type="button"
+                  class="queue-btn queue-btn-inline"
+                  :disabled="!canQueueUnit(unit)"
+                  @click.stop="queueUnit(unit, $event)"
+                >
+                  Queue
+                </button>
               </span>
             </div>
             <div class="unit-meta">{{ cardMeta(unit) }}</div>

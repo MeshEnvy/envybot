@@ -209,6 +209,35 @@ body {
   color: #ff9b6e;
 }
 
+.queue-btn {
+  margin-top: 8px;
+  padding: 6px 12px;
+  border: 1px solid #4ea1ff;
+  border-radius: 6px;
+  background: #1a2e3d;
+  color: #4ea1ff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.queue-btn-inline {
+  margin-top: 0;
+  padding: 2px 6px;
+  font-size: 0.6rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.queue-btn:hover:not(:disabled) {
+  background: #243a4d;
+}
+
+.queue-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 @keyframes pulse {
   0%,
   100% {

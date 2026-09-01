@@ -94,5 +94,7 @@ Map pins use **book** position (`sites.yaml` loc for the bound unit), never
 device `0,0`. Detail shows book name + site name, a `public` toggle, and
 drift from the apply stamp (`leak` if a private profile is due, `mismatch`
 if a public profile is due). List cards show the same badge next to
-freshness. Rows with `decommissioned:` or `firmware_platform: meshtastic`
-are omitted entirely.
+freshness. While the companion worker is live, **Queue** on a unit forces
+that unit back through GET+apply (overrides `--skip` and up-to-date skips).
+Rows with `decommissioned:` or `firmware_platform: meshtastic` are omitted
+entirely.

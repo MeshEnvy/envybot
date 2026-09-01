@@ -68,6 +68,67 @@ def _migrate_book(nodes_path: Path) -> tuple[dict[str, Any], Any]:
     return doc, conn
 
 
+def _manual_targets(nodes_path: Path, keys: list[str]) -> list[Any]:
+    include = {k.lower() for k in keys}
+    return load_targets(nodes_path, deployed_only=False, include=include, skip=None)
+
+
+def _queue_manual_targets(
+    keys: list[str],
+    *,
+    nodes_path: Path,
+    session_states: dict[str, dict[str, Any]],
+    apply_keys: set[str],
+    forced_keys: set[str],
+    do_poll: bool,
+    do_apply: bool,
+    attempt_counts: dict[str, int],
+) -> list[Any]:
+    out: list[Any] = []
+    for target in _manual_targets(nodes_path, keys):
+        target.due_groups = list(GET_GROUP_ORDER) if do_poll else []
+        forced_keys.add(target.key)
+        if do_apply:
+            apply_keys.add(target.key)
+        session_states[target.key] = {"state": "queued", "manual": True}
+        attempt_counts.pop(target.key, None)
+        out.append(target)
+    return out
+
+
+async def _drain_manual_into(
+    web_ctx: Any | None,
+    pending: list[Any],
+    *,
+    nodes_path: Path,
+    session_states: dict[str, dict[str, Any]],
+    apply_keys: set[str],
+    forced_keys: set[str],
+    do_poll: bool,
+    do_apply: bool,
+    attempt_counts: dict[str, int],
+) -> None:
+    if web_ctx is None:
+        return
+    keys = await web_ctx.drain_manual_queue()
+    if not keys:
+        return
+    existing = {t.key for t in pending}
+    for target in _queue_manual_targets(
+        keys,
+        nodes_path=nodes_path,
+        session_states=session_states,
+        apply_keys=apply_keys,
+        forced_keys=forced_keys,
+        do_poll=do_poll,
+        do_apply=do_apply,
+        attempt_counts=attempt_counts,
+    ):
+        if target.key not in existing:
+            pending.append(target)
+            existing.add(target.key)
+
+
 async def run(args: argparse.Namespace) -> int:
     nodes_path: Path = args.nodes
     doc, conn = _migrate_book(nodes_path)
@@ -152,7 +213,7 @@ async def run(args: argparse.Namespace) -> int:
             session_states=session_states,
             poll={"phase": "starting", "pending": len(work), "total": len(all_targets)},
         )
-    if not work:
+    if not work and args.once:
         print(f"All {len(all_targets)} router(s) up to date.")
         if web_ctx:
             await web_ctx.publish_session(
@@ -160,12 +221,17 @@ async def run(args: argparse.Namespace) -> int:
             )
             return await _serve_web_until_stop(web_ctx, 0)
         return 0
+    if not work:
+        print(f"All {len(all_targets)} router(s) up to date — idle for manual queue.")
 
     retry_mode = not args.once
-    print(
-        f"Fleet {len(work)} router(s)"
-        + (" — retries until all succeed (Ctrl+C to stop) …" if retry_mode else " — single pass …")
-    )
+    if work:
+        print(
+            f"Fleet {len(work)} router(s)"
+            + (" — retries until all succeed (Ctrl+C to stop) …" if retry_mode else " — single pass …")
+        )
+    elif retry_mode:
+        print("Fleet idle — Queue units in the UI or Ctrl+C to exit.")
 
     log = PollLog(progress=not args.quiet, verbose=args.verbose)
     session = FleetSession()
@@ -175,16 +241,56 @@ async def run(args: argparse.Namespace) -> int:
     session.bind_companion(client)
     session.attach_orphan_watch(client, log)
     session.enable_companion_recovery(client, all_targets)
-    await sync_fleet_contacts(client, work, log=log)
+    if web_ctx:
+        web_ctx.set_worker_active(True)
+    if work:
+        await sync_fleet_contacts(client, work, log=log)
     pending = list(work)
+    forced_keys: set[str] = set()
     succeeded: dict[str, bool] = {}
     attempt_counts: dict[str, int] = {}
     round_num = 0
     interrupted = False
     yaml_dirty = False
+    total = len(work) if work else len(all_targets)
 
     try:
-        while pending:
+        while True:
+            if not pending:
+                if args.once or web_ctx is None:
+                    break
+                idle_poll = {
+                    "phase": "idle",
+                    "accepting": True,
+                    "companion": companion_short,
+                }
+                web_ctx.sync_worker_state(
+                    session_states=session_states,
+                    poll=idle_poll,
+                    companion=companion_short,
+                )
+                await web_ctx.publish_session(idle_poll)
+                manual_keys = await web_ctx.wait_manual_queue()
+                if not manual_keys:
+                    break
+                manual = _queue_manual_targets(
+                    manual_keys,
+                    nodes_path=nodes_path,
+                    session_states=session_states,
+                    apply_keys=apply_keys,
+                    forced_keys=forced_keys,
+                    do_poll=do_poll,
+                    do_apply=do_apply,
+                    attempt_counts=attempt_counts,
+                )
+                if not manual:
+                    continue
+                pending = manual
+                total = max(total, len({t.key for t in pending} | set(succeeded)))
+                await sync_fleet_contacts(client, manual, log=log)
+                print(f"Manual queue: {len(manual)} unit(s)")
+                continue
+
             round_num += 1
             if args.max_rounds and round_num > args.max_rounds:
                 break
@@ -192,6 +298,13 @@ async def run(args: argparse.Namespace) -> int:
                 print(f"\n--- round {round_num}: {len(pending)} still pending ---")
             next_pending = []
             for target in pending:
+                unit_force = args.force or target.key in forced_keys
+                unit_policy = PollPolicy(
+                    force=unit_force,
+                    live_only=args.live and not unit_force,
+                    force_groups=frozenset(args.group or ()),
+                    min_interval=args.min_interval,
+                )
                 attempt_counts[target.key] = attempt_counts.get(target.key, 0) + 1
                 n = attempt_counts[target.key]
                 if args.max_attempts and n > args.max_attempts:
@@ -205,7 +318,7 @@ async def run(args: argparse.Namespace) -> int:
                             conn,
                             target.key,
                             target.due_groups,
-                            policy=policy,
+                            policy=unit_policy,
                             now=int(time.time()),
                         )
                         print(f"  poll need: {need}")
@@ -216,7 +329,7 @@ async def run(args: argparse.Namespace) -> int:
                             target.key,
                             nodes.get(target.key) or {},
                             sites,
-                            force=args.force,
+                            force=unit_force,
                             doc=doc,
                             keys=keys,
                         )
@@ -225,6 +338,17 @@ async def run(args: argparse.Namespace) -> int:
                 if not await session.ensure_companion_connected(log=log):
                     print("  companion disconnected (reconnect failed)")
                     next_pending.append(target)
+                    await _drain_manual_into(
+                        web_ctx,
+                        next_pending,
+                        nodes_path=nodes_path,
+                        session_states=session_states,
+                        apply_keys=apply_keys,
+                        forced_keys=forced_keys,
+                        do_poll=do_poll,
+                        do_apply=do_apply,
+                        attempt_counts=attempt_counts,
+                    )
                     continue
                 node_record = nodes.get(target.key) or {}
                 guest_before = str(node_record.get("guest_password") or "")
@@ -234,18 +358,26 @@ async def run(args: argparse.Namespace) -> int:
                     "apply": target.key in apply_keys,
                 }
                 if web_ctx:
+                    active_poll = {
+                        "phase": "polling",
+                        "accepting": True,
+                        "round": round_num,
+                        "unit": target.key,
+                        "pending": len(pending),
+                        "total": total,
+                        "companion": companion_short,
+                    }
+                    web_ctx.sync_worker_state(
+                        session_states=session_states,
+                        poll=active_poll,
+                        companion=companion_short,
+                    )
                     await web_ctx.publish_unit(
                         target.key,
                         session=session_states[target.key],
                         session_states=session_states,
                         companion=companion_short,
-                        poll={
-                            "phase": "polling",
-                            "round": round_num,
-                            "unit": target.key,
-                            "pending": len(pending),
-                            "total": len(work),
-                        },
+                        poll=active_poll,
                     )
                 heard_acl = None
                 fw = node_record.get("firmware_version")
@@ -284,11 +416,24 @@ async def run(args: argparse.Namespace) -> int:
                                 companion=companion_short,
                                 poll={
                                     "phase": "polling",
+                                    "accepting": True,
                                     "round": round_num,
                                     "pending": len(pending),
-                                    "total": len(work),
+                                    "total": total,
+                                    "companion": companion_short,
                                 },
                             )
+                        await _drain_manual_into(
+                            web_ctx,
+                            next_pending,
+                            nodes_path=nodes_path,
+                            session_states=session_states,
+                            apply_keys=apply_keys,
+                            forced_keys=forced_keys,
+                            do_poll=do_poll,
+                            do_apply=do_apply,
+                            attempt_counts=attempt_counts,
+                        )
                         continue
                     record_poll(conn, unit=target.key, res=res)
                     heard_acl = res.acl
@@ -329,12 +474,13 @@ async def run(args: argparse.Namespace) -> int:
                             firmware_version=fw,
                             login_clock=apply_clock,
                             keys=keys,
-                            force=args.force,
+                            force=unit_force,
                         )
                     if str(node_record.get("guest_password") or "") != guest_before:
                         yaml_dirty = True
                     if apply_ok:
                         apply_keys.discard(target.key)
+                        forced_keys.discard(target.key)
                 if poll_ok and apply_ok:
                     succeeded[target.key] = True
                     session_states[target.key] = {"state": "ok", "due_groups": list(target.due_groups)}
@@ -353,14 +499,30 @@ async def run(args: argparse.Namespace) -> int:
                         companion=companion_short,
                         poll={
                             "phase": "polling",
+                            "accepting": True,
                             "round": round_num,
                             "pending": len(pending),
-                            "total": len(work),
+                            "total": total,
+                            "companion": companion_short,
                         },
                     )
+                await _drain_manual_into(
+                    web_ctx,
+                    next_pending,
+                    nodes_path=nodes_path,
+                    session_states=session_states,
+                    apply_keys=apply_keys,
+                    forced_keys=forced_keys,
+                    do_poll=do_poll,
+                    do_apply=do_apply,
+                    attempt_counts=attempt_counts,
+                )
             pending = sorted(next_pending, key=poll_staleness_key)
             if not pending or args.once:
-                break
+                pending = []
+                if args.once:
+                    break
+                continue
             if args.round_delay > 0:
                 print(f"Waiting {args.round_delay:.0f}s before retrying {len(pending)} node(s) …")
                 await asyncio.sleep(args.round_delay)
@@ -368,12 +530,13 @@ async def run(args: argparse.Namespace) -> int:
         interrupted = True
         print("\nInterrupted — keeping progress from successful units.")
     finally:
+        if web_ctx:
+            web_ctx.set_worker_active(False)
         await client.stop_auto_message_fetching()
         await client.disconnect()
         if yaml_dirty:
             persist_guest_if_new(nodes_path, doc)
 
-    total = len(work)
     ok_count = len(succeeded)
     print(f"fleet {ok_count}/{total} router(s)")
     if pending:
