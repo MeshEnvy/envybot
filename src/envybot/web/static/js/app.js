@@ -3,18 +3,20 @@ import { connectEvents, fetchFleet, patchUnit } from './api.js'
 import {
   formatBattery,
   formatCount,
-  formatErrorRate,
   formatNoiseFloor,
+  formatPollWindow,
+  formatUnreadableRf,
   formatRelative,
   formatRssi,
   formatSite,
   formatSnr,
   formatTemp,
   formatUptime,
+  hasTrafficInterval,
   hasTrafficStats,
   unitLabel,
   unitTitle,
-} from './format.js?v=4'
+} from './format.js?v=8'
 import { createMapController, unitStatus } from './map.js?v=11'
 
 const SESSION_RANK = {
@@ -219,12 +221,14 @@ const App = {
       formatSite,
       formatBattery,
       formatCount,
-      formatErrorRate,
       formatNoiseFloor,
+      formatPollWindow,
+      formatUnreadableRf,
       formatTemp,
       formatUptime,
       formatRssi,
       formatSnr,
+      hasTrafficInterval,
       hasTrafficStats,
       unitLabel,
       unitTitle,
@@ -297,20 +301,20 @@ const App = {
             <dd>{{ formatUptime(selectedUnit.status?.uptime_secs) }}</dd>
           </dl>
           <section v-if="hasTrafficStats(selectedUnit.status)">
-            <h3>Traffic</h3>
+            <h3>Traffic since boot</h3>
+            <p class="sub">Packet counters reset when the node reboots.</p>
             <dl>
-              <dt>Recv / sent</dt>
+              <dt>In / out</dt>
               <dd>
                 {{ formatCount(selectedUnit.status?.packets_recv) }} /
                 {{ formatCount(selectedUnit.status?.packets_sent) }}
               </dd>
-              <dt>RX errors</dt>
-              <dd>
-                {{ formatCount(selectedUnit.status?.recv_errors) }}
-                ({{ formatErrorRate(selectedUnit.status?.recv_errors, selectedUnit.status?.packets_recv) }})
-              </dd>
-              <dt>Queue full</dt>
-              <dd>{{ formatCount(selectedUnit.status?.err_events) }}</dd>
+              <template v-if="selectedUnit.status?.recv_errors != null">
+                <dt>Unreadable RF</dt>
+                <dd>
+                  {{ formatUnreadableRf(selectedUnit.status?.recv_errors, selectedUnit.status?.packets_recv) }}
+                </dd>
+              </template>
               <template
                 v-if="
                   selectedUnit.status?.recv_flood != null ||
@@ -349,6 +353,34 @@ const App = {
                 </dd>
                 <dt>Noise floor</dt>
                 <dd>{{ formatNoiseFloor(selectedUnit.status?.noise_floor) }}</dd>
+              </template>
+            </dl>
+          </section>
+          <section v-if="hasTrafficInterval(selectedUnit.traffic_interval)">
+            <h3>
+              Since last poll ({{
+                formatPollWindow(selectedUnit.traffic_interval?.duration_secs)
+              }})
+            </h3>
+            <p v-if="selectedUnit.traffic_interval?.reboot_reset" class="sub">
+              Node rebooted during this interval. The next poll will show a clean delta.
+            </p>
+            <dl v-else>
+              <dt>In / out</dt>
+              <dd>
+                {{ formatCount(selectedUnit.traffic_interval?.packets_recv) }} /
+                {{ formatCount(selectedUnit.traffic_interval?.packets_sent) }}
+              </dd>
+              <template v-if="selectedUnit.traffic_interval?.recv_errors != null">
+                <dt>Unreadable RF</dt>
+                <dd>
+                  {{
+                    formatUnreadableRf(
+                      selectedUnit.traffic_interval?.recv_errors,
+                      selectedUnit.traffic_interval?.packets_recv
+                    )
+                  }}
+                </dd>
               </template>
             </dl>
           </section>

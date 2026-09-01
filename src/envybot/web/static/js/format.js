@@ -34,16 +34,38 @@ export function formatCount(n) {
   return String(Math.trunc(n))
 }
 
-/** @param {number | null | undefined} recvErrors @param {number | null | undefined} packetsRecv */
-export function formatErrorRate(recvErrors, packetsRecv) {
-  const errs = recvErrors ?? 0
-  const recv = packetsRecv ?? 0
-  if (recv === 0) return errs === 0 ? '0' : '—'
-  const pct = (errs / recv) * 100
+/** @param {number} pct */
+function formatPct(pct) {
   if (pct === 0) return '0'
   if (pct < 0.01) return '<0.01%'
   if (pct < 10) return `${pct.toFixed(2)}%`
   return `${pct.toFixed(1)}%`
+}
+
+/** Unreadable RF frame count and share of all receptions (since boot). */
+export function formatUnreadableRf(recvErrors, packetsRecv) {
+  if (recvErrors == null) return '—'
+  const errs = recvErrors
+  const recv = packetsRecv ?? 0
+  const total = errs + recv
+  const count = formatCount(errs)
+  if (total === 0) return `${count} · 0% of receptions`
+  return `${count} · ${formatPct((errs / total) * 100)} of receptions`
+}
+
+/** @param {number | null | undefined} secs */
+export function formatPollWindow(secs) {
+  if (secs == null) return '—'
+  if (secs < 3600) return `${secs}s`
+  if (secs < 86400) return `${(secs / 3600).toFixed(1)}h`
+  return `${(secs / 86400).toFixed(1)}d`
+}
+
+/** @param {Record<string, unknown> | null | undefined} interval */
+export function hasTrafficInterval(interval) {
+  if (!interval) return false
+  if (interval.reboot_reset) return true
+  return ['packets_recv', 'packets_sent', 'recv_errors'].some((k) => interval[k] != null)
 }
 
 /** @param {number | null | undefined} snr */
@@ -71,7 +93,6 @@ export function hasTrafficStats(status) {
     'packets_recv',
     'packets_sent',
     'recv_errors',
-    'err_events',
     'recv_flood',
     'recv_direct',
     'sent_flood',

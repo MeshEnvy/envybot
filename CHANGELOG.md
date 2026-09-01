@@ -33,9 +33,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
-- Fleet node detail shows traffic counters (recv/sent, RX errors and
-  rate, queue-full events, flood/direct split, last SNR/RSSI/noise)
-  from the latest status poll.
+- Fleet node detail shows traffic since boot (in/out packets,
+  unreadable RF frames, flood/direct split, last SNR/RSSI/noise) from
+  the latest status poll.
+- Fleet node detail shows **since last poll** traffic deltas (in/out,
+  unreadable RF and %) between the last two status GETs, with the poll
+  window labeled.
 - Fleet list cards show a `leak` / `mismatch` badge next to freshness
   when the apply profile is still due.
 - Decommissioned `nodes.yaml` rows are omitted from fleet UI, poll,

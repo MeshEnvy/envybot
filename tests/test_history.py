@@ -13,6 +13,7 @@ from envybot.history import (
     import_jsonl,
     import_yaml_last_seen,
     insert_apply,
+    interval_traffic,
     last_ok_apply,
     latest_status,
     migrate_legacy,
@@ -154,6 +155,71 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(status["recv_flood"], 80)
             self.assertAlmostEqual(status["last_snr"], 5.5)
             self.assertIsNone(latest_status(conn, "me9999"))
+
+    def test_interval_traffic_delta(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            base_status = {
+                "packets_recv": 1000,
+                "packets_sent": 200,
+                "recv_errors": 100,
+                "uptime_secs": 3600,
+            }
+            record_poll(
+                conn,
+                unit="me0005",
+                res=_Res(status=dict(base_status), polled_groups=frozenset({"status"})),
+                ts=1000,
+            )
+            record_poll(
+                conn,
+                unit="me0005",
+                res=_Res(
+                    status={
+                        **base_status,
+                        "packets_recv": 1500,
+                        "packets_sent": 280,
+                        "recv_errors": 250,
+                        "uptime_secs": 7200,
+                    },
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=2000,
+            )
+            interval = interval_traffic(conn, "me0005")
+            assert interval is not None
+            self.assertEqual(interval["duration_secs"], 1000)
+            self.assertFalse(interval["reboot_reset"])
+            self.assertEqual(interval["packets_recv"], 500)
+            self.assertEqual(interval["packets_sent"], 80)
+            self.assertEqual(interval["recv_errors"], 150)
+            self.assertIsNone(interval_traffic(conn, "me9999"))
+
+    def test_interval_traffic_reboot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            record_poll(
+                conn,
+                unit="me0006",
+                res=_Res(
+                    status={"packets_recv": 5000, "uptime_secs": 86400},
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=1000,
+            )
+            record_poll(
+                conn,
+                unit="me0006",
+                res=_Res(
+                    status={"packets_recv": 100, "uptime_secs": 600},
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=2000,
+            )
+            interval = interval_traffic(conn, "me0006")
+            assert interval is not None
+            self.assertTrue(interval["reboot_reset"])
+            self.assertNotIn("packets_recv", interval)
 
 
 if __name__ == "__main__":

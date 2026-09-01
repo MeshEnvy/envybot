@@ -307,6 +307,45 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(status["last_rssi"], -95)
             self.assertEqual(status["noise_floor"], -110)
 
+    def test_traffic_interval_in_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            yaml = YAML()
+            yaml.dump({"sites": {}}, sites_path.open("w", encoding="utf-8"))
+            yaml.dump(
+                {
+                    "next_unit": 2,
+                    "nodes": {
+                        "me0001": {
+                            "unit_id": "ME0001",
+                            "name": "Interval",
+                            "identity_pubkey": "a" * 64,
+                            "admin_password": "secret-admin",
+                            "guest_password": "secret-guest",
+                        },
+                    },
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            conn = open_history(book)
+
+            class _Res:
+                polled_groups = frozenset({"status"})
+
+            _Res.status = {"packets_recv": 1000, "packets_sent": 100, "recv_errors": 50, "uptime_secs": 1000}
+            record_poll(conn, unit="me0001", res=_Res(), ts=1000)
+            _Res.status = {"packets_recv": 1300, "packets_sent": 150, "recv_errors": 110, "uptime_secs": 2000}
+            record_poll(conn, unit="me0001", res=_Res(), ts=3000)
+            conn.close()
+            snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
+            interval = snap["units"]["me0001"]["traffic_interval"]
+            assert interval is not None
+            self.assertEqual(interval["duration_secs"], 2000)
+            self.assertEqual(interval["packets_recv"], 300)
+            self.assertEqual(interval["recv_errors"], 60)
+
 
 class DriftStateTests(unittest.TestCase):
     def test_profile_ok_clears_drift(self) -> None:

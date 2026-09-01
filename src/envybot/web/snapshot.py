@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from envybot.apply import apply_is_due
-from envybot.history import all_last_seen, latest_neighbors, latest_status, open_history
+from envybot.history import all_last_seen, interval_traffic, latest_neighbors, latest_status, open_history
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
     is_decommissioned,
@@ -256,6 +256,7 @@ def sanitize_unit(
     seen: dict[str, Any] | None = None,
     neighbors_raw: Any = None,
     status_raw: dict[str, Any] | None = None,
+    traffic_interval: dict[str, Any] | None = None,
     profile_ok: bool = False,
 ) -> dict[str, Any]:
     normalize_fleet_node(node)
@@ -295,6 +296,7 @@ def sanitize_unit(
         "freshness": freshness(heard, now=now, stale_secs=stale_secs),
         "telemetry": tele,
         "status": status,
+        "traffic_interval": traffic_interval,
         "neighbors": sanitize_neighbors(
             nbs,
             pubkey_index=pubkey_index,
@@ -339,18 +341,22 @@ def build_fleet_snapshot(
     seen_map = last_seen
     neighbors_map: dict[str, Any] = {}
     status_map: dict[str, dict[str, Any]] = {}
+    interval_map: dict[str, dict[str, Any]] = {}
     conn = None
     try:
         conn = open_history(book_dir)
         if seen_map is None:
             seen_map = all_last_seen(conn)
-            for key in nodes:
-                nbs = latest_neighbors(conn, key)
-                if nbs is not None:
-                    neighbors_map[key] = nbs
-                status = latest_status(conn, key)
-                if status is not None:
-                    status_map[key] = status
+        for key in nodes:
+            nbs = latest_neighbors(conn, key)
+            if nbs is not None:
+                neighbors_map[key] = nbs
+            status = latest_status(conn, key)
+            if status is not None:
+                status_map[key] = status
+            interval = interval_traffic(conn, key)
+            if interval is not None:
+                interval_map[key] = interval
     except OSError:
         seen_map = seen_map or {}
         conn = None
@@ -379,6 +385,7 @@ def build_fleet_snapshot(
                 seen=seen_map.get(key),
                 neighbors_raw=neighbors_map.get(key),
                 status_raw=status_map.get(key),
+                traffic_interval=interval_map.get(key),
                 profile_ok=profile_ok,
             )
     finally:

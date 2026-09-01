@@ -232,6 +232,73 @@ def latest_status(conn: sqlite3.Connection, unit: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
+def _status_int(payload: dict[str, Any], key: str) -> int | None:
+    val = payload.get(key)
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def interval_traffic(conn: sqlite3.Connection, unit: str) -> dict[str, Any] | None:
+    """Delta traffic between the last two status polls (since last fleet GET)."""
+    rows = conn.execute(
+        "SELECT ts, payload FROM status WHERE unit = ? ORDER BY ts DESC LIMIT 2",
+        (unit,),
+    ).fetchall()
+    if len(rows) < 2:
+        return None
+    curr_ts = int(rows[0]["ts"])
+    prev_ts = int(rows[1]["ts"])
+    try:
+        curr = json.loads(rows[0]["payload"])
+        prev = json.loads(rows[1]["payload"])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(curr, dict) or not isinstance(prev, dict):
+        return None
+
+    curr_uptime = _status_int(curr, "uptime_secs")
+    prev_uptime = _status_int(prev, "uptime_secs")
+    reboot = (
+        curr_uptime is not None
+        and prev_uptime is not None
+        and curr_uptime < prev_uptime
+    )
+    duration_secs = max(0, curr_ts - prev_ts)
+    base: dict[str, Any] = {
+        "from_ts": prev_ts,
+        "to_ts": curr_ts,
+        "duration_secs": duration_secs,
+        "reboot_reset": reboot,
+    }
+    if reboot:
+        return base
+
+    def delta(key: str) -> int | None:
+        c = _status_int(curr, key)
+        p = _status_int(prev, key)
+        if c is None or p is None:
+            return None
+        d = c - p
+        return d if d >= 0 else None
+
+    packets_recv = delta("packets_recv")
+    packets_sent = delta("packets_sent")
+    recv_errors = delta("recv_errors")
+    if packets_recv is None and packets_sent is None and recv_errors is None:
+        return None
+    if packets_recv is not None:
+        base["packets_recv"] = packets_recv
+    if packets_sent is not None:
+        base["packets_sent"] = packets_sent
+    if recv_errors is not None:
+        base["recv_errors"] = recv_errors
+    return base
+
+
 def all_last_seen(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for row in conn.execute("SELECT * FROM last_seen"):
