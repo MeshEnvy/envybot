@@ -28,6 +28,7 @@ from envybot.poll import (
 from envybot.radio import (
     DEFAULT_MESH_ATTEMPTS,
     DEFAULT_MIN_POLL_INTERVAL,
+    NEIGHBOR_DISCOVER_WAIT_S,
     FleetSession,
     PollLog,
     add_companion_args,
@@ -397,6 +398,8 @@ async def run(args: argparse.Namespace) -> int:
                         sites=sites,
                         doc=doc,
                         keys=keys,
+                        discover_wait=args.discover_wait,
+                        skip_discover=args.no_discover,
                     )
                     if not res.ok:
                         session_states[target.key] = {
@@ -582,6 +585,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--force", action="store_true", help="Poll every GET group; re-SET profile")
     parser.add_argument("--live", action="store_true", help="Periodic GET groups only")
+    parser.add_argument(
+        "--no-discover",
+        action="store_true",
+        help="Skip remote discover.neighbors (GET stored table only)",
+    )
+    parser.add_argument(
+        "--discover-wait",
+        type=float,
+        default=NEIGHBOR_DISCOVER_WAIT_S,
+        metavar="SEC",
+        help="Wait after discover.neighbors before GET (default 12)",
+    )
     parser.add_argument("--group", action="append", choices=GET_GROUP_ORDER)
     parser.add_argument("--poll-only", action="store_true", help="GET only; do not apply")
     parser.add_argument("--apply-only", action="store_true", help="SET only; skip GET cadence")

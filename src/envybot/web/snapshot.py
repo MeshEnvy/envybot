@@ -31,6 +31,7 @@ SECRET_KEY_RE = re.compile(r"(password|secret)", re.I)
 PULLED_AT_SUFFIX = "_pulled_at"
 
 DEFAULT_STALE_SECS = 86400.0
+NEIGHBOR_FRESH_SECS = 7 * 24 * 3600
 
 SessionState = str  # idle | queued | polling | ok | unreachable
 
@@ -176,6 +177,19 @@ def build_pubkey_index(nodes: dict[str, Any]) -> dict[str, str]:
     return index
 
 
+def neighbor_is_fresh(secs_ago: Any, *, max_age: float = NEIGHBOR_FRESH_SECS) -> bool:
+    """True when the node's last-heard age is known and within the UI window."""
+    if secs_ago is None:
+        return False
+    try:
+        age = float(secs_ago)
+    except (TypeError, ValueError):
+        return False
+    if age < 0:
+        return True
+    return age <= max_age
+
+
 def sanitize_neighbors(
     raw: Any,
     *,
@@ -191,6 +205,8 @@ def sanitize_neighbors(
             continue
         pk = str(item.get("pubkey") or "").lower()
         if not pk:
+            continue
+        if not neighbor_is_fresh(item.get("secs_ago")):
             continue
         prefix = pk[:8] if len(pk) >= 8 else pk
         row: dict[str, Any] = {

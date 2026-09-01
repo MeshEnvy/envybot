@@ -17,7 +17,9 @@ from envybot.web.snapshot import (
     drift_state,
     is_secret_key,
     lookup_site_name,
+    neighbor_is_fresh,
     resolve_position,
+    sanitize_neighbors,
     strip_secrets,
     unit_label,
 )
@@ -399,6 +401,28 @@ class SnapshotTests(unittest.TestCase):
             self.assertIn("grade", health)
             self.assertIn("checks", health)
             self.assertIn("summary", health)
+
+
+class NeighborFreshTests(unittest.TestCase):
+    def test_age_window(self) -> None:
+        self.assertTrue(neighbor_is_fresh(10))
+        self.assertTrue(neighbor_is_fresh(2 * 24 * 3600))
+        self.assertFalse(neighbor_is_fresh(8 * 24 * 3600))
+        self.assertFalse(neighbor_is_fresh(None))
+        self.assertTrue(neighbor_is_fresh(-5))
+
+    def test_sanitize_drops_stale(self) -> None:
+        nodes = {
+            "me0002": {"unit_id": "ME0002", "name": "Live"},
+            "me0003": {"unit_id": "ME0003", "name": "Ghost"},
+        }
+        index = {"b" * 8: "me0002", "c" * 8: "me0003"}
+        raw = [
+            {"pubkey": "b" * 16, "secs_ago": 30, "snr": 11.0},
+            {"pubkey": "c" * 16, "secs_ago": 116 * 24 * 3600, "snr": 12.0},
+        ]
+        out = sanitize_neighbors(raw, pubkey_index=index, nodes=nodes, sites={})
+        self.assertEqual([n["unit_key"] for n in out], ["me0002"])
 
 
 class DriftStateTests(unittest.TestCase):

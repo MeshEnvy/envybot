@@ -8,7 +8,8 @@ Localhost fleet manager. Serves the map UI, GETs telemetry into
 ```
 
 Default: UI at `http://127.0.0.1:8787/` plus live GET (status/telemetry/neighbors),
-inventory gaps (fw/bl), and apply when the profile hash misses. Polls every
+inventory gaps (fw/bl), and apply when the profile hash misses. Neighbor GET
+sends remote `discover.neighbors`, waits 12s, then reads the table. Polls every
 pollable MeshCore unit in the book, including bag/bench (no site `node:` bind).
 `firmware_platform: meshtastic` is omitted from the UI and never polled or applied.
 
@@ -31,6 +32,11 @@ First run imports leftover `polls.jsonl` (then deletes it) and YAML
 | periodic | `status`, `telemetry`, `neighbors` | `--min-interval` (default 24h) |
 | inventory | `firmware`, `bootloader` | until sqlite stamp exists |
 | audit | `name`, `lat`, `lon`, `advert`, `flood_advert`, `acl` | `--force` or `--group` only |
+
+Neighbors: remote `discover.neighbors` (zero-hop CTL) then `GET_NEIGHBOURS`.
+`--no-discover` skips the search. `--discover-wait SEC` changes the listen
+window (default 12). The UI hides rows older than 7 days. Firmware has no
+TTL, so ghosts stay in sqlite history.
 
 Default runs never GET sticky identity fields. Leak / mismatch in the UI
 follow the apply profile stamp, not a heard-identity GET.
@@ -84,6 +90,8 @@ Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
 | `--unit KEY` | One unit (repeatable) |
 | `--force` | Re-GET every group (incl. audit); re-SET profile |
 | `--live` | Periodic GET only (status/telemetry/neighbors) |
+| `--no-discover` | GET neighbor table without remote `discover.neighbors` |
+| `--discover-wait SEC` | Listen after discover (default 12) |
 | `--poll-only` | GET only |
 | `--apply-only` | SET only |
 | `--deployed-only` | Site-bound units only (skip bag/bench) |

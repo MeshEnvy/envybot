@@ -42,6 +42,7 @@ CLOCK_CLI_RE = re.compile(
 )
 
 DEFAULT_MIN_POLL_INTERVAL = 86400.0  # 24h
+NEIGHBOR_DISCOVER_WAIT_S = 12.0  # after remote discover.neighbors, before GET
 DEFAULT_MESH_ATTEMPTS = 10
 COMPANION_RECONNECT_ATTEMPTS = 5
 CLOCK_SKEW_MAX = 300  # seconds; sync when *live login* RTC vs host exceeds this
@@ -2073,6 +2074,42 @@ def cli_suggests_auth_failure(text: str | None) -> bool:
     return any(hint in lower for hint in AUTH_FAILURE_HINTS)
 
 
+async def trigger_neighbor_discover(
+    client: MeshCore,
+    target: RouterTarget,
+    *,
+    cmd_timeout: float,
+    attempts: int,
+    log: PollLog,
+    session: FleetSession | None,
+    wait_s: float,
+) -> bool:
+    """Ask the repeater to send a zero-hop discover, then wait for replies."""
+    raw = await send_cmd_sync(
+        client,
+        target,
+        "discover.neighbors",
+        timeout=cmd_timeout,
+        attempts=attempts,
+        log=log,
+        session=session,
+    )
+    if raw is None:
+        log.step("discover.neighbors: no response")
+        return False
+    if cli_suggests_auth_failure(raw) or cli_error_reply(raw):
+        if session is not None and cli_suggests_auth_failure(raw):
+            session.clear_auth(target.key)
+            log.step("auth cleared (CLI denied)")
+        log.step("discover.neighbors: error")
+        return False
+    log.step("discover.neighbors OK")
+    if wait_s > 0:
+        log.step(f"discover wait {wait_s:g}s")
+        await asyncio.sleep(wait_s)
+    return True
+
+
 async def poll_one(
     client: MeshCore,
     target: RouterTarget,
@@ -2087,6 +2124,8 @@ async def poll_one(
     sites: dict[str, dict[str, Any]] | None = None,
     doc: dict[str, Any] | None = None,
     keys: dict[str, list[str]] | None = None,
+    discover_wait: float = NEIGHBOR_DISCOVER_WAIT_S,
+    skip_discover: bool = False,
 ) -> PollResult:
     log = log or PollLog()
     stat_errors: list[str] = []
@@ -2230,6 +2269,18 @@ async def poll_one(
                     log.step("auth cleared (suspected ACL drop)")
 
         if "neighbors" in polled:
+            if not skip_discover:
+                discovered = await trigger_neighbor_discover(
+                    client,
+                    target,
+                    cmd_timeout=cmd_timeout,
+                    attempts=attempts,
+                    log=log,
+                    session=session,
+                    wait_s=discover_wait,
+                )
+                if not discovered:
+                    stat_errors.append("neighbors: discover failed")
             neigh_raw = await retry_binary_req(
                 "GET_NEIGHBOURS",
                 lambda dest_wait: client.commands.fetch_all_neighbours(

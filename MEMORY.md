@@ -69,7 +69,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   `profile` ok row still counts as fully synced. `--force` clears stamps.
   UI leak / mismatch is the inverse of that stamp (private due / public
   due), not heard last-seen identity. Poll default: status/telemetry/neighbors
-  on interval; fw/bl once; name/gps/advert/acl audit-only (`--force`).
+  on interval (neighbors = remote `discover.neighbors` + wait + GET;
+  UI drops rows older than 7d); fw/bl once; name/gps/advert/acl
+  audit-only (`--force`).
   Apply GETs ACL when due to drop extras. SET fields use the full retry
   budget (login is the reachability check). Any due field failure aborts
   the rest for that unit this pass. Poll and apply password-login every
