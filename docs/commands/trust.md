@@ -48,9 +48,10 @@ replaces that role for that unit (including `[]` to lock it down).
 
 Firmware login always grants admin, so a guest-only registration does not
 login. Those keys land via `fleet` apply (`setperm 1`) from an admin tag.
-Admin registration password-logins pollable MeshCore units so the live
-tag is `putClient`d. `--unit` scopes that mesh pass. YAML is written as
-soon as SELF_INFO has a full pubkey.
+Admin registration password-auths pollable MeshCore units so the live
+tag is on the ACL. `--unit` scopes that mesh pass. YAML is written as
+soon as SELF_INFO has a full pubkey. On units already profile-synced,
+trust stamps sqlite so fleet does not re-push.
 
 `admin1_pubkey` is Meshtastic. Trust ignores it.
 

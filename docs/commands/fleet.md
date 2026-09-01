@@ -7,7 +7,8 @@ Localhost fleet manager. Serves the map UI, GETs telemetry into
 ./envybot [--book DIR] fleet [flags]
 ```
 
-Default: UI at `http://127.0.0.1:8787/` plus poll due plus apply due.
+Default: UI at `http://127.0.0.1:8787/` plus live GET (status/telemetry/neighbors),
+inventory gaps (fw/bl), and apply when the profile hash misses.
 
 ## Stores
 
@@ -20,6 +21,17 @@ Default: UI at `http://127.0.0.1:8787/` plus poll due plus apply due.
 
 First run imports leftover `polls.jsonl` (then deletes it) and YAML
 `*_pulled_at` blobs, then strips observed keys from `nodes.yaml`.
+
+## Poll cadence
+
+| Mode | Groups | When |
+|------|--------|------|
+| periodic | `status`, `telemetry`, `neighbors` | `--min-interval` (default 24h) |
+| inventory | `firmware`, `bootloader` | until sqlite stamp exists |
+| audit | `name`, `lat`, `lon`, `advert`, `flood_advert`, `acl` | `--force` or `--group` only |
+
+Default runs never GET sticky identity fields. Use `--force --poll-only` to
+refresh leak/mismatch in the UI without SET.
 
 ## Apply
 
@@ -40,12 +52,18 @@ unit is unreachable and remaining GET/SET ops are skipped. Drop the
 companion from the ACL to force login if that belief is wrong.
 
 Apply is due when `profile_id` (`v1:` + hash of the desired SET payload)
-does not match the last successful apply stamp, or a private node is
-leaking identity. Edit a hashed field in `nodes.yaml` and restart fleet.
+does not match the last successful apply stamp in sqlite, or a private node
+still needs a guest password assign. Heard name/GPS/adverts do **not** trigger
+apply. Edit a hashed field in `nodes.yaml` (or run `trust`) and restart fleet.
+
+When apply runs, GET ACL once to drop keys not in the book allowlist.
 
 Hashed: public/name/gps/adverts, guest + admin (tokens), identity pubkey,
 path.hash, dutycycle, resolved ACL (pubkey + perm). Not hashed / not pushed here:
 identity secret (`roll`), radio preset (onboard), clock.
+
+`trust ben` (admin) updates the book and radio ACL, then stamps the new hash
+on units that were already profile-synced so fleet does not re-push.
 
 ## Flags
 
@@ -57,8 +75,8 @@ Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
 | `--web-only` | Browse the book. No radio. |
 | `--no-web` | Headless poll/apply |
 | `--unit KEY` | One unit (repeatable) |
-| `--force` | Re-GET every group; re-SET profile |
-| `--live` | Periodic GET groups only |
+| `--force` | Re-GET every group (incl. audit); re-SET profile |
+| `--live` | Periodic GET only (status/telemetry/neighbors) |
 | `--poll-only` | GET only |
 | `--apply-only` | SET only |
 | `--all-units` | Include bag/bench (no site `node:` bind) |

@@ -22,16 +22,16 @@ from envybot.radio import (
     poll_summary,
 )
 
-# GET groups. path_hash / dutycycle / lat-lon SET moved to apply.
+# GET groups. Sticky identity (name/gps/advert/acl) is audit-only; SET via apply.
 GET_GROUPS: dict[str, PullGroupSpec] = {
     "firmware": PullGroupSpec("inventory", "firmware_at"),
     "bootloader": PullGroupSpec("inventory", "bootloader_at"),
-    "name": PullGroupSpec("periodic", "name_at"),
-    "lat": PullGroupSpec("periodic", "gps_at"),
-    "lon": PullGroupSpec("periodic", "gps_at"),
-    "advert": PullGroupSpec("periodic", "advert_at"),
-    "flood_advert": PullGroupSpec("periodic", "flood_advert_at"),
-    "acl": PullGroupSpec("periodic", "acl_at"),
+    "name": PullGroupSpec("audit", "name_at"),
+    "lat": PullGroupSpec("audit", "gps_at"),
+    "lon": PullGroupSpec("audit", "gps_at"),
+    "advert": PullGroupSpec("audit", "advert_at"),
+    "flood_advert": PullGroupSpec("audit", "flood_advert_at"),
+    "acl": PullGroupSpec("audit", "acl_at"),
     "status": PullGroupSpec("periodic", "status_at"),
     "telemetry": PullGroupSpec("periodic", "telemetry_at"),
     "neighbors": PullGroupSpec("periodic", "neighbors_at"),
@@ -75,6 +75,8 @@ def group_is_due(
     spec = GET_GROUPS[group]
     if policy.force or group in policy.force_groups:
         return True
+    if spec.mode == "audit":
+        return False
     if policy.live_only and spec.mode != "periodic":
         return False
     if not group_complete(seen, group):

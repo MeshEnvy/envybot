@@ -24,7 +24,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/history.py` | `data/fleet/history.sqlite` |
 | `src/envybot/position.py` | Book GPS from `sites.yaml` (`node:` bind + `loc`) |
 | `src/envybot/radio.py` | Companion session, login, CLI/binary |
-| `src/envybot/poll.py` | GET cadence → sqlite |
+| `src/envybot/poll.py` | GET cadence (live / inventory / audit) → sqlite |
 | `src/envybot/apply.py` | SET mask unless `public: true`; `v1:` profile hash |
 | `src/envybot/passwords.py` | Password strength + uniqueness (no shared defaults) |
 | `src/envybot/commands/fleet.py` | Localhost manager |
@@ -44,11 +44,10 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 - `trust` imports every pollable MeshCore unit, including bag/bench
   (no site bind). Contact name is the site `name` (e.g. Ophir), else
   `unit_id`. Stale advert names are removed and re-added. `trust ben`
-  records the live tag in `keys.yaml` and
-  password-logins MeshCore units (`--unit` scopes login only; contacts
-  still import the full book). Guest grants do
-  not login. Book `trust.admin` / `trust.guest` name people. Apply
-  `setperm`s those keys (admin 3, guest 1) and drops extras.
+  records the live tag in `keys.yaml` and password-auths onto MeshCore
+  units (`--unit` scopes that pass; contacts still import the full book).
+  On units already profile-synced, trust stamps the new hash so fleet
+  does not re-push. Guest grants do not update remotes; fleet `setperm`s.
   `admin1_*` is Meshtastic, not MC ACL.
 - `channels.yaml` (channel-first) lists group name + 16-byte PSK + who
   gets it (`everyone` or person slugs). `trust` add/updates granted
@@ -58,9 +57,10 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 - Passwords are unique and strong per unit. Apply/onboard roll blank, weak
   (`m35h3nvy`, placeholders, short), or colliding guests. Admin is never
   invented by apply. Apply SETs book admin (`password`) after ACL/login.
-- Apply due = `profile_id` (`v1:` hash of desired SET payload) vs last
-  ok apply stamp. Payload: name/gps/adverts, guest+admin tokens, identity
-  pubkey, path.hash, dutycycle, ACL. Identity secret is `roll`, not apply.
+- Apply due = `profile_id` vs last ok sqlite stamp, or weak guest assign.
+  Not due from heard leak/mismatch. Poll default: status/telemetry/neighbors
+  on interval; fw/bl once; name/gps/advert/acl audit-only (`--force`).
+  Apply GETs ACL when due to drop extras.
 - Skip password login when the companion is a resolved **admin** key.
   Live RTC is `clock` CLI (or login timestamp). Clock is the skip-login
   reachability probe: timeout = unreachable, skip remaining GET/apply
@@ -83,5 +83,7 @@ Separate USB OTA repeater for `motatool serve`.
 
 - **Fleet UI:** `./envybot fleet` serves `127.0.0.1:8787` by default.
   `--web-only` browses the book without a radio. Never expose secrets.
+- Long BLE apply can drop the companion link; fleet reconnects transport,
+  re-syncs clock/contacts, and clears cached logins before retrying.
 
 Last updated: 2026-08-31

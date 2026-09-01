@@ -6,9 +6,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Changed
+
+- Fleet poll cadence: default GET is status/telemetry/neighbors only.
+  Name/GPS/advert/ACL are audit-only (`--force` / `--group`). Apply no
+  longer triggers on heard leak/mismatch.
+- `trust` stamps sqlite profile hash after admin ACL bootstrap on units
+  that were already synced, so fleet does not re-push policy.
+
 ### Added
 
-- `./envybot fleet` replaces `monitor`: localhost manager, sqlite history,
+- Fleet reconnects the BLE/USB companion after an unexpected transport
+  drop (clock sync, contacts, fleet favorites, cleared login cache).
+- Admin `password` SET treats MeshCore's `password now: …` echo as success.
   privacy-mask apply unless `public: true`.
 - `./envybot trust` imports site name + resolved loc + pubkey as companion
   contacts (bag/bench included; name is site `name`, else `unit_id`).

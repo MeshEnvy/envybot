@@ -34,6 +34,8 @@ from envybot.keys_doc import (
     remember_person_key,
     write_keys,
 )
+from envybot.apply import profile_id, stamp_profile_after_trust
+from envybot.history import migrate_legacy
 from envybot.nodes_doc import UNIT_NUM_RE, load_nodes_doc, load_sites_for_book, write_nodes_doc
 from envybot.position import resolve_book_position, site_binding
 from envybot.radio import (
@@ -244,12 +246,13 @@ async def grant_companion_acl(
     login_timeout: float,
     attempts: int,
     log: PollLog,
-) -> tuple[int, int]:
+) -> tuple[int, int, list[str]]:
     session = FleetSession()
     session.bind_companion(client)
     session.attach_orphan_watch(client, log)
     ok = 0
     fail = 0
+    ok_keys: list[str] = []
     for target in targets:
         print(f"{target.unit_id} …", flush=True)
         logged, err, _clock = await admin_login(
@@ -262,10 +265,11 @@ async def grant_companion_acl(
         )
         if logged:
             ok += 1
+            ok_keys.append(target.key)
         else:
             fail += 1
             log.step(err or "login failed")
-    return ok, fail
+    return ok, fail, ok_keys
 
 
 async def _fetch_channel_slots(client: MeshCore, max_channels: int) -> list:
@@ -397,6 +401,20 @@ async def run(args: argparse.Namespace) -> int:
         pubkey = pubkey.strip().lower()
         keys_before = load_keys(keys_path(nodes_path))
         already = person_has_key(keys_before, policy.person, pubkey)
+
+        grant_targets = load_targets(
+            nodes_path, deployed_only=False, include=grant_include, skip=None
+        )
+        doc_before = load_nodes_doc(nodes_path)
+        sites = load_sites_for_book(nodes_path)
+        nodes_before = doc_before.get("nodes") or {}
+        pre_hashes: dict[str, str] = {}
+        for target in grant_targets:
+            node = nodes_before.get(target.key) or {}
+            pre_hashes[target.key] = profile_id(
+                node, sites, doc=doc_before, keys=keys_before
+            )
+
         try:
             persist_trust_policy(nodes_path, policy, pubkey)
         except TrustError as exc:
@@ -414,19 +432,32 @@ async def run(args: argparse.Namespace) -> int:
                 print("skip ACL login (key already in keys.yaml)")
             return 0 if contact_ok and channel_ok else 2
 
-        grant_targets = load_targets(
-            nodes_path, deployed_only=False, include=grant_include, skip=None
-        )
         if not grant_targets:
             print("No pollable MeshCore units for ACL login.", file=sys.stderr)
             return 2
-        acl_ok, acl_fail = await grant_companion_acl(
+        doc_after = load_nodes_doc(nodes_path)
+        keys_after = load_keys(keys_path(nodes_path))
+        conn = migrate_legacy(nodes_path.parent, doc_after.get("nodes") or {})
+        acl_ok, acl_fail, ok_keys = await grant_companion_acl(
             client,
             grant_targets,
             login_timeout=args.login_timeout,
             attempts=args.attempts,
             log=log,
         )
+        nodes_after = doc_after.get("nodes") or {}
+        for key in ok_keys:
+            node = nodes_after.get(key) or {}
+            if stamp_profile_after_trust(
+                conn,
+                key,
+                node,
+                sites,
+                pre_apply_hash=pre_hashes.get(key),
+                doc=doc_after,
+                keys=keys_after,
+            ):
+                log.step(f"{key}: profile reconciled")
         print(f"acl {acl_ok}/{acl_ok + acl_fail} login(s)")
         if acl_fail or not contact_ok or not channel_ok:
             return 2

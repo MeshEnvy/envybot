@@ -116,10 +116,9 @@ class DueTests(unittest.TestCase):
             insert_apply(conn, unit="me0001", field="profile", desired=_id(node), ok=True)
             self.assertTrue(apply_is_due(conn, "me0001", node, None))
 
-    def test_after_ok_private_not_due_unless_leak(self) -> None:
+    def test_after_ok_private_not_due_after_leak_heard(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            book = Path(tmp)
-            conn = open_history(book)
+            conn = open_history(Path(tmp))
             desired = _id(_STRONG)
             insert_apply(conn, unit="me0001", field="profile", desired=desired, ok=True)
             self.assertFalse(apply_is_due(conn, "me0001", _STRONG, None))
@@ -128,7 +127,7 @@ class DueTests(unittest.TestCase):
                 unit="me0001",
                 res=_Res(name="Ophir Hill", lat=39.5, lon=-119.8),
             )
-            self.assertTrue(apply_is_due(conn, "me0001", _STRONG, None))
+            self.assertFalse(apply_is_due(conn, "me0001", _STRONG, None))
 
     def test_yaml_edit_is_due(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

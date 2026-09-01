@@ -42,6 +42,7 @@ CLOCK_CLI_RE = re.compile(
 
 DEFAULT_MIN_POLL_INTERVAL = 86400.0  # 24h
 DEFAULT_MESH_ATTEMPTS = 10
+COMPANION_RECONNECT_ATTEMPTS = 5
 CLOCK_SKEW_MAX = 300  # seconds; sync when *live login* RTC vs host exceeds this
 FLEET_PATH_HASH_MODE = 1  # 2-byte advert path hashes
 FLEET_DUTYCYCLE_PCT = 100.0
@@ -49,6 +50,7 @@ DUTYCYCLE_MATCH_EPS = 0.5
 DUTYCYCLE_PCT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 FIRMWARE_CORE_RE = re.compile(r"v?(\d+(?:\.\d+)*)", re.I)
 DUTYCYCLE_CLI_SINCE = (1, 15)
+ADMIN_PASSWORD_NOW_RE = re.compile(r"^password now:\s*(.*)\s*$", re.I)
 
 # Decision notes (do not reintroduce the opposite without updating this):
 # - Skip login when the companion is already on the book's ACL for that unit
@@ -180,6 +182,25 @@ class FleetSession:
     _orphan_subs: list[Any] = field(default_factory=list)
     _binary_inflight: dict[str, Any] | None = None
     _register_binary_orig: Any = None
+    _recovery_client: MeshCore | None = field(default=None, repr=False)
+    _recovery_targets: list[Any] = field(default_factory=list, repr=False)
+
+    def enable_companion_recovery(self, client: MeshCore, targets: list[Any]) -> None:
+        """After BLE/USB drop, reconnect transport + re-sync fleet contacts."""
+        self._recovery_client = client
+        self._recovery_targets = list(targets)
+
+    async def ensure_companion_connected(self, *, log: PollLog) -> bool:
+        client = self._recovery_client
+        if client is None:
+            return True
+        if client.is_connected:
+            return True
+        if not self._recovery_targets:
+            return False
+        return await recover_companion(
+            client, session=self, targets=self._recovery_targets, log=log
+        )
 
     def dest_slack(self, unit: str) -> float:
         return self.wait_slack.get(unit, 0.0)
@@ -945,6 +966,20 @@ def cli_set_ok(text: str | None) -> bool:
     return "ok" in text.lower()
 
 
+def cli_admin_password_ok(text: str | None, expected: str | None = None) -> bool:
+    """MeshCore admin ``password`` replies with ``password now: <pw>`` (not ``ok``)."""
+    if not text or cli_error_reply(text):
+        return False
+    m = ADMIN_PASSWORD_NOW_RE.match(text.strip())
+    if not m:
+        return cli_set_ok(text)
+    if expected is None:
+        return True
+    from envybot.passwords import normalize_password
+
+    return normalize_password(m.group(1)) == normalize_password(expected)
+
+
 def cli_unknown_reply(text: str | None) -> bool:
     if not text:
         return False
@@ -1402,6 +1437,50 @@ async def sync_fleet_contacts(
     )
 
 
+async def recover_companion(
+    client: MeshCore,
+    *,
+    session: FleetSession,
+    targets: list[Any],
+    log: PollLog,
+    attempts: int = COMPANION_RECONNECT_ATTEMPTS,
+) -> bool:
+    """Reconnect companion transport after an unexpected drop (common on long BLE apply)."""
+    if client.is_connected:
+        return True
+
+    for attempt in range(1, attempts + 1):
+        log.step(f"companion disconnected — reconnect {attempt}/{attempts} …")
+        try:
+            if not client.dispatcher.running:
+                await client.dispatcher.start()
+            result = await client.connection_manager.connect()
+            if result is None:
+                await asyncio.sleep(1.0)
+                continue
+            res = await client.commands.send_appstart()
+            if res is None or res.type == EventType.ERROR:
+                await asyncio.sleep(1.0)
+                continue
+            res = await client.commands.set_time(int(time.time()))
+            if res.type == EventType.ERROR:
+                log.detail(f"recover set_time: {res.payload}")
+            await client.ensure_contacts(follow=True)
+            if targets:
+                await sync_fleet_contacts(client, targets, log=log)
+            session.authed_units.clear()
+            session.bind_companion(client)
+            if client.is_connected:
+                log.step("companion reconnected")
+                return True
+        except Exception as exc:
+            log.detail(f"recover attempt {attempt}: {exc}")
+        await asyncio.sleep(1.0)
+
+    log.step("companion reconnect failed")
+    return False
+
+
 def next_cli_prefix() -> str:
     """3-char prefix echoed by repeater CLI replies (meshcore-open RepeaterCommandService)."""
     global _cli_prefix_counter
@@ -1788,6 +1867,9 @@ async def send_cmd_sync(
 
     while attempts == 0 or attempt < attempts:
         attempt += 1
+        if session is not None and not await session.ensure_companion_connected(log=log):
+            log.step("send aborted: companion not connected")
+            return None
         prefix_token = next_cli_prefix()
         framed = f"{prefix_token}{cmd}"
         async with client.commands._mesh_request_lock:
@@ -1797,6 +1879,11 @@ async def send_cmd_sync(
             sent = await send_cli_frame(client, dst_hex, framed, attempt=attempt - 1)
             if sent is None or sent.type == EventType.ERROR:
                 err = sent.payload if sent else "no response"
+                if session is not None and not client.is_connected:
+                    if await session.ensure_companion_connected(log=log):
+                        continue
+                    log.step("send aborted: companion not connected")
+                    return None
                 log.step(
                     f"send {framed!r} {attempt_label(attempt, attempts)}: "
                     f"send error ({err}), retrying …"
@@ -1869,6 +1956,9 @@ async def retry_binary_req(
     attempt = 0
     while attempts == 0 or attempt < attempts:
         attempt += 1
+        if session is not None and not await session.ensure_companion_connected(log=log):
+            log.step(f"{label}: aborted — companion not connected")
+            break
         n_of = attempt_label(attempt, attempts)
         dest_wait = wait_s
         if session is not None and target is not None:

@@ -134,7 +134,7 @@ async def run(args: argparse.Namespace) -> int:
     if skipped and not args.quiet and do_poll:
         print(
             f"Skipping {len(skipped)} up-to-date poll(s) "
-            f"(inventory complete; periodic within {format_interval(policy.min_interval)})"
+            f"(live periodic within {format_interval(policy.min_interval)})"
         )
     work_keys = {t.key for t in targets} | apply_keys
     work = [t for t in all_targets if t.key in work_keys]
@@ -171,6 +171,7 @@ async def run(args: argparse.Namespace) -> int:
     companion_short = companion_label[:12] if companion_label else None
     session.bind_companion(client)
     session.attach_orphan_watch(client, log)
+    session.enable_companion_recovery(client, all_targets)
     await sync_fleet_contacts(client, work, log=log)
     pending = list(work)
     succeeded: dict[str, bool] = {}
@@ -195,6 +196,10 @@ async def run(args: argparse.Namespace) -> int:
                     continue
                 prefix = f"[{n}] " if retry_mode and n > 1 else ""
                 print(f"{prefix}{target_label(target)} …", flush=True)
+                if not await session.ensure_companion_connected(log=log):
+                    print("  companion disconnected (reconnect failed)")
+                    next_pending.append(target)
+                    continue
                 node_record = nodes.get(target.key) or {}
                 guest_before = str(node_record.get("guest_password") or "")
                 session_states[target.key] = {

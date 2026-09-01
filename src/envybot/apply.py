@@ -26,7 +26,7 @@ from envybot.passwords import (
     password_is_strong,
     password_token,
 )
-from envybot.position import is_placeholder_gps, resolve_book_position
+from envybot.position import resolve_book_position
 from envybot.radio import (
     FLEET_DUTYCYCLE_PCT,
     FLEET_PATH_HASH_MODE,
@@ -35,6 +35,7 @@ from envybot.radio import (
     RouterTarget,
     cli_error_reply,
     cli_set_ok,
+    cli_admin_password_ok,
     maybe_sync_repeater_clock,
     mesh_wait_seconds,
     normalize_acl_payload,
@@ -140,25 +141,6 @@ def profile_id(
     return f"v{PROFILE_ID_VERSION}:{digest}"
 
 
-def _heard_leaks_private(seen: dict[str, Any] | None) -> bool:
-    if not seen:
-        return False
-    name = seen.get("name_heard")
-    if name and name != MASK_NAME:
-        return True
-    lat, lon = seen.get("lat_heard"), seen.get("lon_heard")
-    try:
-        if lat is not None and lon is not None and not is_placeholder_gps(lat, lon):
-            return True
-    except (TypeError, ValueError):
-        pass
-    if seen.get("advert_interval_min") not in (None, 0):
-        return True
-    if seen.get("flood_advert_interval_h") not in (None, 0):
-        return True
-    return False
-
-
 def apply_is_due(
     conn: sqlite3.Connection,
     unit: str,
@@ -176,12 +158,27 @@ def apply_is_due(
         return True
     if not is_public(node) and guest_needs_assign(node, doc or {}, unit):
         return True
-    seen = get_last_seen(conn, unit)
-    if is_public(node):
-        if seen and seen.get("name_heard") and seen.get("name_heard") != node.get("name"):
-            return True
+    return False
+
+
+def stamp_profile_after_trust(
+    conn: sqlite3.Connection,
+    unit: str,
+    node: dict[str, Any],
+    sites: dict[str, dict[str, Any]] | None,
+    *,
+    pre_apply_hash: str | None,
+    doc: dict[str, Any] | None = None,
+    keys: dict[str, list[str]] | None = None,
+) -> bool:
+    """After trust updated ACL on a fully-synced unit, stamp the new profile hash."""
+    if not pre_apply_hash:
         return False
-    return _heard_leaks_private(seen)
+    if last_ok_apply(conn, unit, "profile") != pre_apply_hash:
+        return False
+    desired = profile_id(node, sites, doc=doc, keys=keys)
+    insert_apply(conn, unit=unit, field="profile", desired=desired, ok=True)
+    return True
 
 
 async def _set_cli(
@@ -194,6 +191,7 @@ async def _set_cli(
     log: PollLog,
     session: FleetSession | None,
     field: str,
+    expected: str | None = None,
 ) -> bool:
     raw = await send_cmd_sync(
         client,
@@ -207,7 +205,11 @@ async def _set_cli(
     if raw is None:
         log.step(f"{field}: no response")
         return False
-    if cli_error_reply(raw) or not cli_set_ok(raw):
+    if field == "admin":
+        ok_reply = cli_admin_password_ok(raw, expected)
+    else:
+        ok_reply = cli_set_ok(raw)
+    if cli_error_reply(raw) or not ok_reply:
         log.step(f"{field}: set failed ({raw.strip()[:40]})")
         return False
     log.step(f"{field} set OK")
@@ -346,9 +348,11 @@ async def apply_one(
 
     admin = node.get("admin_password")
     if password_is_strong(admin):
+        admin_pw = normalize_password(admin)
         if not await _set_cli(
-            client, target, f"password {normalize_password(admin)}",
+            client, target, f"password {admin_pw}",
             cmd_timeout=cmd_timeout, attempts=attempts, log=log, session=session, field="admin",
+            expected=admin_pw,
         ):
             ok = False
 
