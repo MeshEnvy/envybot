@@ -62,9 +62,10 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   `profile` ok row still counts as fully synced. `--force` clears stamps.
   Not due from heard leak/mismatch. Poll default: status/telemetry/neighbors
   on interval; fw/bl once; name/gps/advert/acl audit-only (`--force`).
-  Apply GETs ACL when due to drop extras. First due SET uses at most two
-  attempts (direct + flood); any due field failure aborts the rest for
-  that unit this pass. Poll and apply password-login every unit. Live RTC
+  Apply GETs ACL when due to drop extras. SET fields use the full retry
+  budget (login is the reachability check). Any due field failure aborts
+  the rest for that unit this pass. Poll and apply password-login every
+  unit. Live RTC
   from login timestamp or ``clock`` CLI.
 - Duty-cycle default is 100% (`nodes.yaml` `dutycycle` overrides).
   `set dutycycle` needs MeshCore 1.15+; older 1.x uses `set af`.

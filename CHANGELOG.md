@@ -11,7 +11,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 - Apply stamps each SET field in sqlite (`applies.name`, `.lat`, …).
   Synced fields skip on the next run; `--force` clears stamps and re-SETs.
   Legacy `applies.profile` ok rows still count as fully synced.
-  First due field caps at two mesh attempts; failure aborts remaining SETs.
+  SET fields use `--attempts` (login is reachability). A SET failure
+  still aborts remaining fields for that unit this pass.
   Apply-only password-logins when poll did not run.
 - Fleet and `cmd` always password-login; skip-login removed (remote
   repeaters need the login handshake even when the book ACL lists admin).

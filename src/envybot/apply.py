@@ -68,23 +68,6 @@ APPLY_FIELDS = (
     "identity",
 )
 
-# First due SET field: quick reachability probe (direct + one flood retry).
-FIRST_DUE_FIELD_ATTEMPTS_CAP = 2
-
-
-def _first_due_field(due: frozenset[str]) -> str | None:
-    for field in APPLY_FIELDS:
-        if field in due and field != "identity":
-            return field
-    return None
-
-
-def _field_attempts(field: str, *, first_due: str | None, attempts: int) -> int:
-    if field == first_due:
-        return min(attempts, FIRST_DUE_FIELD_ATTEMPTS_CAP)
-    return attempts
-
-
 def desired_path_hash_mode(node: dict[str, Any]) -> int:
     val = node.get("path_hash_mode")
     if val is None or val == "":
@@ -417,8 +400,6 @@ async def apply_one(
         log.step(f"profile OK ({profile_id(node, sites, doc=doc, keys=keys)})")
         return True
 
-    first_due = _first_due_field(due)
-
     def abort(field: str) -> bool:
         log.step(f"apply aborted: {field} unreachable")
         remaining = apply_due_fields(
@@ -441,7 +422,7 @@ async def apply_one(
             target,
             f"set name {name}",
             cmd_timeout=cmd_timeout,
-            attempts=_field_attempts("name", first_due=first_due, attempts=attempts),
+            attempts=attempts,
             log=log,
             session=session,
             field="name",
@@ -459,7 +440,7 @@ async def apply_one(
                 if await set_book_coord(
                     client, target, "lat", float(pos["lat"]),
                     cmd_timeout=cmd_timeout,
-                    attempts=_field_attempts("lat", first_due=first_due, attempts=attempts),
+                    attempts=attempts,
                     log=log, session=session,
                 ) is not None:
                     stamp("lat")
@@ -471,7 +452,7 @@ async def apply_one(
                 if await set_book_coord(
                     client, target, "lon", float(pos["lon"]),
                     cmd_timeout=cmd_timeout,
-                    attempts=_field_attempts("lon", first_due=first_due, attempts=attempts),
+                    attempts=attempts,
                     log=log, session=session,
                 ) is not None:
                     stamp("lon")
@@ -484,7 +465,7 @@ async def apply_one(
                 if await _set_cli(
                     client, target, f"set advert.interval {int(node['advert_interval_min'])}",
                     cmd_timeout=cmd_timeout,
-                    attempts=_field_attempts("advert", first_due=first_due, attempts=attempts),
+                    attempts=attempts,
                     log=log, session=session, field="advert",
                 ):
                     stamp("advert")
@@ -497,7 +478,7 @@ async def apply_one(
                 if await _set_cli(
                     client, target, f"set flood.advert.interval {int(node['flood_advert_interval_h'])}",
                     cmd_timeout=cmd_timeout,
-                    attempts=_field_attempts("flood", first_due=first_due, attempts=attempts),
+                    attempts=attempts,
                     log=log, session=session, field="flood_advert",
                 ):
                     stamp("flood")
@@ -512,7 +493,7 @@ async def apply_one(
                 if await _set_cli(
                     client, target, f"set guest.password {guest}",
                     cmd_timeout=cmd_timeout,
-                    attempts=_field_attempts("guest", first_due=first_due, attempts=attempts),
+                    attempts=attempts,
                     log=log, session=session, field="guest",
                 ):
                     stamp("guest")
@@ -525,7 +506,7 @@ async def apply_one(
             if await set_book_coord(
                 client, target, "lat", 0.0,
                 cmd_timeout=cmd_timeout,
-                attempts=_field_attempts("lat", first_due=first_due, attempts=attempts),
+                attempts=attempts,
                 log=log, session=session,
             ) is not None:
                 stamp("lat")
@@ -537,7 +518,7 @@ async def apply_one(
             if await set_book_coord(
                 client, target, "lon", 0.0,
                 cmd_timeout=cmd_timeout,
-                attempts=_field_attempts("lon", first_due=first_due, attempts=attempts),
+                attempts=attempts,
                 log=log, session=session,
             ) is not None:
                 stamp("lon")
@@ -549,7 +530,7 @@ async def apply_one(
             if await _set_cli(
                 client, target, "set advert.interval 0",
                 cmd_timeout=cmd_timeout,
-                attempts=_field_attempts("advert", first_due=first_due, attempts=attempts),
+                attempts=attempts,
                 log=log, session=session, field="advert",
             ):
                 stamp("advert")
@@ -561,7 +542,7 @@ async def apply_one(
             if await _set_cli(
                 client, target, "set flood.advert.interval 0",
                 cmd_timeout=cmd_timeout,
-                attempts=_field_attempts("flood", first_due=first_due, attempts=attempts),
+                attempts=attempts,
                 log=log, session=session, field="flood_advert",
             ):
                 stamp("flood")
@@ -574,7 +555,7 @@ async def apply_one(
             if await _set_cli(
                 client, target, f"set guest.password {guest}",
                 cmd_timeout=cmd_timeout,
-                attempts=_field_attempts("guest", first_due=first_due, attempts=attempts),
+                attempts=attempts,
                 log=log, session=session, field="guest",
             ):
                 stamp("guest")
@@ -590,7 +571,7 @@ async def apply_one(
             if await _set_cli(
                 client, target, f"password {admin_pw}",
                 cmd_timeout=cmd_timeout,
-                attempts=_field_attempts("admin", first_due=first_due, attempts=attempts),
+                attempts=attempts,
                 log=log, session=session, field="admin",
                 expected=admin_pw,
             ):
@@ -603,7 +584,7 @@ async def apply_one(
     if "path_hash" in due:
         if await set_path_hash_policy(
             client, target, cmd_timeout=cmd_timeout,
-            attempts=_field_attempts("path_hash", first_due=first_due, attempts=attempts),
+            attempts=attempts,
             log=log, session=session,
             mode=desired_path_hash_mode(node),
         ) is not None:
@@ -616,7 +597,7 @@ async def apply_one(
     if "dutycycle" in due:
         if await set_dutycycle_policy(
             client, target, cmd_timeout=cmd_timeout,
-            attempts=_field_attempts("dutycycle", first_due=first_due, attempts=attempts),
+            attempts=attempts,
             log=log, session=session,
             firmware_version=firmware_version or node.get("firmware_version"),
             pct=float(desired_dutycycle(node)),
@@ -672,7 +653,7 @@ async def apply_one(
         if await _apply_acl(
             client, target, want_acl, heard_acl,
             cmd_timeout=cmd_timeout,
-            attempts=_field_attempts("acl", first_due=first_due, attempts=attempts),
+            attempts=attempts,
             log=log, session=session,
         ):
             stamp("acl")

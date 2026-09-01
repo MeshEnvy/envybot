@@ -60,7 +60,7 @@ class ApplyFailFastTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("apply aborted: name unreachable" in s for s in steps))
         self.assertFalse(any(cmd.startswith("set lat") for cmd in calls))
 
-    async def test_first_due_field_caps_attempts(self) -> None:
+    async def test_set_fields_use_full_attempts(self) -> None:
         target = RouterTarget(
             key="me0001",
             unit_id="ME0001",
@@ -94,7 +94,7 @@ class ApplyFailFastTests(unittest.IsolatedAsyncioTestCase):
                     keys={},
                 )
 
-        self.assertEqual(seen_attempts, [2])
+        self.assertEqual(seen_attempts, [10])
 
     async def test_identity_stamped_when_only_metadata_due(self) -> None:
         target = RouterTarget(

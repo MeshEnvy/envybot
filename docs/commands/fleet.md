@@ -57,8 +57,9 @@ stamps and re-SETs everything. A private node still needs a guest password
 assign. Heard name/GPS/adverts do **not** trigger apply. Edit a hashed field in `nodes.yaml` (or run `trust`) and restart fleet.
 
 When apply runs, GET ACL once to drop keys not in the book allowlist.
-The first due SET field uses at most two mesh attempts (direct + flood).
-If it gets no response, apply aborts for that unit (no lat/lon/guest/…).
+SET fields use the full `--attempts` budget. Login is the reachability
+check. If a SET gets no response, apply aborts for that unit
+(no lat/lon/guest/…).
 
 Hashed: public/name/gps/adverts, guest + admin (tokens), identity pubkey,
 path.hash, dutycycle, resolved ACL (pubkey + perm). Not hashed / not pushed here:
