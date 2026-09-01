@@ -151,6 +151,23 @@ const App = {
       return sparklinePath(sparkData[metric] || [], 120, 28)
     }
 
+    const SPARK_VALUE_FORMAT = {
+      voltage: (v) => `${v.toFixed(2)} V`,
+      temperature: (v) => `${v.toFixed(1)} °C`,
+      unreadable_pct: (v) => `${v.toFixed(1)}%`,
+      recv_rate: (v) => `${v.toFixed(1)}/h`,
+    }
+
+    /** Latest value as text when there are too few points for a line. */
+    function sparkFallback(metric) {
+      const values = (sparkData[metric] || [])
+        .map((p) => p.value)
+        .filter((v) => v != null && Number.isFinite(Number(v)))
+      if (!values.length) return '—'
+      const fmt = SPARK_VALUE_FORMAT[metric] || ((v) => String(v))
+      return `${fmt(Number(values[values.length - 1]))} · 1 poll`
+    }
+
     async function selectUnit(key) {
       if (selectedKey.value === key) {
         clearSelection()
@@ -268,6 +285,7 @@ const App = {
       healthStroke,
       healthTooltip,
       sparkPath,
+      sparkFallback,
       unitLabel,
       unitTitle,
       togglePublic,
@@ -340,28 +358,28 @@ const App = {
                 <svg v-if="sparkPath('voltage')" class="spark" width="120" height="28" viewBox="0 0 120 28" aria-hidden="true">
                   <polyline fill="none" stroke="#6ee7a0" stroke-width="1.5" :points="sparkPath('voltage')" />
                 </svg>
-                <span v-else class="spark-empty">—</span>
+                <span v-else class="spark-empty">{{ sparkFallback('voltage') }}</span>
               </div>
               <div class="spark-row">
                 <span class="spark-label">Temp</span>
                 <svg v-if="sparkPath('temperature')" class="spark" width="120" height="28" viewBox="0 0 120 28" aria-hidden="true">
                   <polyline fill="none" stroke="#f0b86e" stroke-width="1.5" :points="sparkPath('temperature')" />
                 </svg>
-                <span v-else class="spark-empty">—</span>
+                <span v-else class="spark-empty">{{ sparkFallback('temperature') }}</span>
               </div>
               <div class="spark-row">
                 <span class="spark-label">Unreadable %</span>
                 <svg v-if="sparkPath('unreadable_pct')" class="spark" width="120" height="28" viewBox="0 0 120 28" aria-hidden="true">
                   <polyline fill="none" stroke="#f06e6e" stroke-width="1.5" :points="sparkPath('unreadable_pct')" />
                 </svg>
-                <span v-else class="spark-empty">—</span>
+                <span v-else class="spark-empty">{{ sparkFallback('unreadable_pct') }}</span>
               </div>
               <div class="spark-row">
                 <span class="spark-label">In rate / h</span>
                 <svg v-if="sparkPath('recv_rate')" class="spark" width="120" height="28" viewBox="0 0 120 28" aria-hidden="true">
                   <polyline fill="none" stroke="#4ea1ff" stroke-width="1.5" :points="sparkPath('recv_rate')" />
                 </svg>
-                <span v-else class="spark-empty">—</span>
+                <span v-else class="spark-empty">{{ sparkFallback('recv_rate') }}</span>
               </div>
             </div>
           </section>
