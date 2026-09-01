@@ -8,6 +8,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Fleet neighbor last-heard uses the same relative ago as node freshness
+  (`24.4h ago`) instead of raw `87875s`.
 - Fleet `leak` / `mismatch` follow the apply profile stamp (due vs OK),
   not heard name/GPS/advert in last-seen. Profile OK clears the badge.
 - Fleet UI omits `firmware_platform: meshtastic` units (poll/apply

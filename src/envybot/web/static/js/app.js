@@ -1,6 +1,7 @@
 import { createApp, computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { connectEvents, fetchFleet, fetchHistory, patchUnit } from './api.js'
 import {
+  formatAgo,
   formatAirtimePct,
   formatBattery,
   formatCount,
@@ -19,7 +20,7 @@ import {
   healthTooltip,
   unitLabel,
   unitTitle,
-} from './format.js?v=9'
+} from './format.js?v=10'
 import { createMapController, unitStatus } from './map.js?v=11'
 import { healthStroke, sparklinePath } from './sparklines.js?v=1'
 
@@ -267,6 +268,7 @@ const App = {
       clearSelection,
       unitStatus,
       cardMeta,
+      formatAgo,
       formatRelative,
       formatSite,
       formatAirtimePct,
@@ -526,7 +528,7 @@ const App = {
               :key="i"
               class="neighbor-row"
             >
-              {{ nb.label || nb.unit_id || nb.pubkey_prefix }} · {{ nb.snr ?? '?' }} dB · {{ nb.secs_ago ?? '?' }}s
+              {{ nb.label || nb.unit_id || nb.pubkey_prefix }} · {{ nb.snr ?? '?' }} dB · {{ formatAgo(nb.secs_ago) }}
             </div>
           </section>
         </div>

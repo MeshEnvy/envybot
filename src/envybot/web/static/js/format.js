@@ -1,11 +1,17 @@
-/** @param {number | null | undefined} ts */
-export function formatRelative(ts) {
-  if (ts == null) return 'never'
-  const age = Math.max(0, Math.floor(Date.now() / 1000 - ts))
+/** @param {number | null | undefined} secs age in seconds */
+export function formatAgo(secs) {
+  if (secs == null || Number.isNaN(Number(secs))) return '—'
+  const age = Math.max(0, Math.floor(Number(secs)))
   if (age < 60) return `${age}s ago`
   if (age < 3600) return `${Math.floor(age / 60)}m ago`
   if (age < 86400) return `${(age / 3600).toFixed(1)}h ago`
   return `${(age / 86400).toFixed(1)}d ago`
+}
+
+/** @param {number | null | undefined} ts */
+export function formatRelative(ts) {
+  if (ts == null) return 'never'
+  return formatAgo(Math.max(0, Math.floor(Date.now() / 1000 - ts)))
 }
 
 /** @param {number | null | undefined} mv battery millivolts from status */
