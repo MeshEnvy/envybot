@@ -161,3 +161,44 @@ def book_coord(
     if not pos:
         return None
     return float(pos[axis])
+
+
+def lookup_site_name(
+    site_slug: Any,
+    sites: dict[str, dict[str, Any]] | None,
+) -> str | None:
+    """Pretty site name when the node is bound. Slug if the site has no name."""
+    if not isinstance(site_slug, str) or not site_slug.strip():
+        return None
+    if sites:
+        site = sites.get(site_slug)
+        if isinstance(site, dict):
+            name = site.get("name")
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+    return site_slug
+
+
+def display_name(
+    key: str | None,
+    node: dict[str, Any] | None,
+    sites: dict[str, dict[str, Any]] | None,
+) -> str:
+    """Site name when bound; else unit id. Nodes have no book nickname."""
+    unit_id = str((node or {}).get("unit_id") or (key or "").upper())
+    bind = site_binding(key, node, sites)
+    if bind:
+        slug, _site = bind
+        return lookup_site_name(slug, sites) or slug
+    return unit_id
+
+
+def public_radio_name(
+    key: str | None,
+    node: dict[str, Any] | None,
+    sites: dict[str, dict[str, Any]] | None,
+    *,
+    max_len: int = 32,
+) -> str:
+    """On-air name for public apply / trust (site name or unit id)."""
+    return display_name(key, node, sites)[:max_len]

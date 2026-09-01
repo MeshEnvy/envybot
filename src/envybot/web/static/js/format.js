@@ -146,26 +146,19 @@ export function formatSite(slug) {
 }
 
 /**
- * Map / list label: site name when bound, else unit id.
+ * List / map primary label: site name when bound, else unit id.
  * @param {Record<string, unknown> | undefined} unit
  */
 export function unitLabel(unit) {
   const siteName = unit?.site_name
   if (typeof siteName === 'string' && siteName) return siteName
-  const label = unit?.label
-  if (typeof label === 'string' && label) return label
   return String(unit?.unit_id || unit?.key || '')
 }
 
 /**
- * Detail heading: site name when bound, else unit id + radio name.
+ * Detail heading: site name when bound, else unit id.
  * @param {Record<string, unknown> | undefined} unit
  */
 export function unitTitle(unit) {
-  const book = typeof unit?.name === 'string' ? unit.name : ''
-  const siteName = typeof unit?.site_name === 'string' ? unit.site_name : ''
-  if (book && siteName) return `${book} @ ${siteName}`
-  if (siteName) return siteName
-  if (book) return book
-  return String(unit?.unit_id || unit?.key || '')
+  return unitLabel(unit)
 }

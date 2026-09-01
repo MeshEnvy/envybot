@@ -24,8 +24,8 @@ ADMIN = "AdminOneStrong1"
 
 
 class ContactAdvNameTests(unittest.TestCase):
-    def test_site_name_wins_over_book_name(self) -> None:
-        node = {"name": "RAK4631 Repeater", "unit_id": "ME0003"}
+    def test_site_name_when_bound(self) -> None:
+        node = {"unit_id": "ME0003"}
         sites = {"ophir-hill": {"name": "Ophir", "node": "me0003"}}
         self.assertEqual(contact_adv_name(node, "ME0003", sites, key="me0003"), "Ophir")
 
@@ -33,7 +33,7 @@ class ContactAdvNameTests(unittest.TestCase):
         self.assertEqual(contact_adv_name({}, "ME0041", {}), "ME0041")
 
     def test_blank_site_uses_unit_id(self) -> None:
-        self.assertEqual(contact_adv_name({"name": "Bag"}, "ME0041"), "ME0041")
+        self.assertEqual(contact_adv_name({"unit_id": "ME0041"}, "ME0041"), "ME0041")
 
 
 class ContactNeedsReplaceTests(unittest.TestCase):
@@ -71,7 +71,6 @@ class BuildTrustRowsTests(unittest.TestCase):
                         "nodes": {
                             "me0003": {
                                 "unit_id": "ME0003",
-                                "name": "RAK4631 Repeater",
                                 "identity_pubkey": PUB_A,
                                 "admin_password": ADMIN,
                                 "firmware_platform": "meshcore",

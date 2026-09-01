@@ -26,7 +26,7 @@ from envybot.nodes_doc import (
     load_nodes_doc,
     normalize_fleet_node,
 )
-from envybot.position import load_sites, resolve_book_position, site_binding
+from envybot.position import display_name, load_sites, lookup_site_name, resolve_book_position, site_binding
 
 SECRET_KEY_RE = re.compile(r"(password|secret)", re.I)
 PULLED_AT_SUFFIX = "_pulled_at"
@@ -62,37 +62,13 @@ def is_secret_key(key: str) -> bool:
     return bool(SECRET_KEY_RE.search(key))
 
 
-def lookup_site_name(
-    site_slug: Any,
-    sites: dict[str, dict[str, Any]],
-) -> str | None:
-    """Pretty site name when the node is bound. Slug if the site has no name."""
-    if not isinstance(site_slug, str) or not site_slug.strip():
-        return None
-    site = sites.get(site_slug)
-    if isinstance(site, dict):
-        name = site.get("name")
-        if isinstance(name, str) and name.strip():
-            return name.strip()
-    return site_slug
-
-
 def unit_label(
     *,
     key: str,
     node: dict[str, Any],
     sites: dict[str, dict[str, Any]],
 ) -> str:
-    book_name = str(node.get("name") or "").strip()
-    bind = site_binding(key, node, sites)
-    site_name = lookup_site_name(bind[0], sites) if bind else None
-    if book_name and site_name:
-        return f"{book_name} @ {site_name}"
-    if site_name:
-        return site_name
-    if book_name:
-        return book_name
-    return str(node.get("unit_id") or key.upper())
+    return display_name(key, node, sites)
 
 
 def last_heard(node: dict[str, Any], seen: dict[str, Any] | None = None) -> int | None:
@@ -220,7 +196,6 @@ def sanitize_neighbors(
             peer = nodes[resolved]
             row["unit_key"] = resolved
             row["unit_id"] = peer.get("unit_id")
-            row["name"] = peer.get("name")
             peer_bind = site_binding(resolved, peer, sites)
             row["site"] = peer_bind[0] if peer_bind else None
             row["site_name"] = lookup_site_name(peer_bind[0], sites) if peer_bind else None
@@ -303,7 +278,6 @@ def sanitize_unit(
     unit: dict[str, Any] = {
         "key": key,
         "unit_id": node.get("unit_id") or key.upper(),
-        "name": node.get("name"),
         "label": unit_label(key=key, node=node, sites=sites),
         "owner": node.get("owner"),
         "site": site_slug,

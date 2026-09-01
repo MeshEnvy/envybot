@@ -157,7 +157,6 @@ def read_bootloader(cli: "RepeaterSerial") -> tuple[str, str]:
 def new_node(unit_id: str) -> dict[str, Any]:
     return {
         "unit_id": unit_id,
-        "name": ONBOARD_NAME,
         "firmware_platform": "meshcore",
         "firmware_version": None,
         "bootloader_version": None,
@@ -854,8 +853,7 @@ def register(nodes_path: Path, result: dict[str, Any], *, unit: str | None) -> t
         nodes[key] = node
 
     now = int(time.time())
-    if node.get("name") == ONBOARD_NAME:
-        node.pop("name", None)
+    node.pop("name", None)
     node["firmware_platform"] = result["firmware_platform"]
     node["admin_password"] = result["admin_password"]
     node["guest_password"] = result["guest_password"]

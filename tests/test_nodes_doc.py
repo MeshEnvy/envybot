@@ -68,7 +68,7 @@ class MigrateTests(unittest.TestCase):
         self.assertNotIn("lat", node)
         self.assertNotIn("lon", node)
         self.assertNotIn("site", node)
-        self.assertEqual(node["name"], "Spanish Benchmark East")
+        self.assertNotIn("name", node)
 
     def test_write_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

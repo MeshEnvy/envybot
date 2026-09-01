@@ -14,7 +14,7 @@ from envybot.nodes_doc import (
     is_meshcore_platform,
     normalize_fleet_node,
 )
-from envybot.position import site_binding
+from envybot.position import display_name, lookup_site_name, site_binding
 from envybot.radio import RouterTarget, target_label
 
 ADV_NAME_BRACE_RE = re.compile(r"\{[^}]*\}")
@@ -50,7 +50,7 @@ def _node_to_target(
     return RouterTarget(
         key=key,
         unit_id=unit_id,
-        name=str(node.get("name") or unit_id),
+        name=display_name(key, node, sites),
         site=bind[0] if bind else None,
         pubkey_hex=pubkey,
         admin_password=admin_pw,
@@ -83,21 +83,29 @@ def iter_cmd_eligible(doc: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     return out
 
 
-def _ineligible_reason(doc: dict[str, Any], selector: str) -> str | None:
+def _ineligible_reason(
+    doc: dict[str, Any],
+    selector: str,
+    sites: dict[str, dict[str, Any]] | None = None,
+) -> str | None:
     """One-line refusal when selector hits a row that cannot take remote CLI."""
     sel = selector.strip()
     sel_lower = sel.lower()
+    norm_sel = normalize_adv_name(sel)
     nodes = doc.get("nodes") or {}
     for key, node in nodes.items():
         if not isinstance(node, dict):
             continue
         unit_id = str(node.get("unit_id") or key.upper())
-        name = str(node.get("name") or unit_id)
+        bind = site_binding(key, node, sites)
+        site_slug = bind[0] if bind else None
+        site_name = lookup_site_name(site_slug, sites) if site_slug else None
         matched = (
             key.lower() == sel_lower
             or unit_id.lower() == sel_lower
-            or name.lower() == sel.lower()
-            or normalize_adv_name(name) == normalize_adv_name(sel)
+            or (site_slug and site_slug.lower() == sel_lower)
+            or (site_name and site_name.lower() == sel.lower())
+            or (site_name and normalize_adv_name(site_name) == norm_sel)
         )
         if not matched:
             continue
@@ -143,6 +151,7 @@ def resolve_selector(
 
     eligible = iter_cmd_eligible(doc)
     sel_lower = sel.lower()
+    norm_sel = normalize_adv_name(sel)
 
     tiers: list[list[RouterTarget]] = []
 
@@ -179,37 +188,38 @@ def resolve_selector(
             )
         )
 
-    tiers.append(
-        _tier_matches(
-            eligible,
-            sites=sites,
-            predicate=lambda _key, node: str(node.get("name") or "").lower() == sel.lower(),
-        )
-    )
-
-    norm_sel = normalize_adv_name(sel)
-    tiers.append(
-        _tier_matches(
-            eligible,
-            sites=sites,
-            predicate=lambda _key, node: normalize_adv_name(str(node.get("name") or "")) == norm_sel,
-        )
-    )
-
-    tiers.append(
-        _tier_matches(
-            eligible,
-            sites=sites,
-            predicate=lambda _key, node: normalize_adv_name(str(node.get("name") or "")).startswith(norm_sel)
-            and norm_sel,
-        )
-    )
-
     def _site_slug_match(key: str, node: dict[str, Any]) -> bool:
         bind = site_binding(key, node, sites)
         return bool(bind and bind[0].lower() == sel_lower)
 
     tiers.append(_tier_matches(eligible, sites=sites, predicate=_site_slug_match))
+
+    def _site_name_exact(key: str, node: dict[str, Any]) -> bool:
+        bind = site_binding(key, node, sites)
+        if not bind:
+            return False
+        site_name = lookup_site_name(bind[0], sites)
+        return bool(site_name and site_name.lower() == sel.lower())
+
+    tiers.append(_tier_matches(eligible, sites=sites, predicate=_site_name_exact))
+
+    def _site_name_norm(key: str, node: dict[str, Any]) -> bool:
+        bind = site_binding(key, node, sites)
+        if not bind:
+            return False
+        site_name = lookup_site_name(bind[0], sites)
+        return bool(site_name and normalize_adv_name(site_name) == norm_sel)
+
+    tiers.append(_tier_matches(eligible, sites=sites, predicate=_site_name_norm))
+
+    def _site_name_prefix(key: str, node: dict[str, Any]) -> bool:
+        bind = site_binding(key, node, sites)
+        if not bind or not norm_sel:
+            return False
+        site_name = lookup_site_name(bind[0], sites)
+        return bool(site_name and normalize_adv_name(site_name).startswith(norm_sel))
+
+    tiers.append(_tier_matches(eligible, sites=sites, predicate=_site_name_prefix))
 
     for hits in tiers:
         if len(hits) == 1:
@@ -217,7 +227,7 @@ def resolve_selector(
         if len(hits) > 1:
             return ResolveResult(error="ambiguous selector", candidates=hits)
 
-    reason = _ineligible_reason(doc, sel)
+    reason = _ineligible_reason(doc, sel, sites)
     if reason:
         return ResolveResult(error=reason)
 

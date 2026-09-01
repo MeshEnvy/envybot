@@ -28,7 +28,7 @@ from envybot.passwords import (
     password_is_strong,
     password_token,
 )
-from envybot.position import resolve_book_position
+from envybot.position import public_radio_name, resolve_book_position
 from envybot.radio import (
     FLEET_DUTYCYCLE_PCT,
     FLEET_PATH_HASH_MODE,
@@ -105,12 +105,13 @@ def profile_parts(
     *,
     doc: dict[str, Any] | None = None,
     keys: dict[str, list[str]] | None = None,
+    key: str | None = None,
 ) -> dict[str, Any]:
     """Canonical desired SET payload. Secrets are tokens, not plaintext."""
     public = is_public(node)
     if public:
-        name = str(node.get("name") or "").strip() or MASK_NAME
-        pos = resolve_book_position(node, sites)
+        name = public_radio_name(key, node, sites) or MASK_NAME
+        pos = resolve_book_position(node, sites, key=key)
         lat = round(float(pos["lat"]), 6) if pos else None
         lon = round(float(pos["lon"]), 6) if pos else None
         advert = _opt_int(node.get("advert_interval_min"))
@@ -146,9 +147,10 @@ def profile_id(
     *,
     doc: dict[str, Any] | None = None,
     keys: dict[str, list[str]] | None = None,
+    key: str | None = None,
 ) -> str:
     raw = json.dumps(
-        profile_parts(node, sites, doc=doc, keys=keys),
+        profile_parts(node, sites, doc=doc, keys=keys, key=key),
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -170,15 +172,16 @@ def applicable_field_desireds(
     *,
     doc: dict[str, Any] | None = None,
     keys: dict[str, list[str]] | None = None,
+    key: str | None = None,
 ) -> dict[str, str]:
     """Desired stamp value per SET field (identity is book metadata only)."""
-    parts = profile_parts(node, sites, doc=doc, keys=keys)
+    parts = profile_parts(node, sites, doc=doc, keys=keys, key=key)
     out: dict[str, str] = {}
     public = is_public(node)
     for field in APPLY_FIELDS:
         if field == "admin" and not password_is_strong(node.get("admin_password")):
             continue
-        if field in ("lat", "lon") and public and not resolve_book_position(node, sites):
+        if field in ("lat", "lon") and public and not resolve_book_position(node, sites, key=key):
             continue
         if field == "guest" and public:
             guest = node.get("guest_password")
@@ -197,7 +200,7 @@ def profile_legacy_synced(
     doc: dict[str, Any] | None = None,
     keys: dict[str, list[str]] | None = None,
 ) -> bool:
-    desired = profile_id(node, sites, doc=doc, keys=keys)
+    desired = profile_id(node, sites, doc=doc, keys=keys, key=unit)
     return last_ok_apply(conn, unit, "profile") == desired
 
 
@@ -211,7 +214,7 @@ def apply_due_fields(
     doc: dict[str, Any] | None = None,
     keys: dict[str, list[str]] | None = None,
 ) -> list[str]:
-    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys)
+    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=unit)
     if force:
         return list(applicable.keys())
     if profile_legacy_synced(conn, unit, node, sites, doc=doc, keys=keys):
@@ -243,9 +246,9 @@ def format_apply_plan(
     keys: dict[str, list[str]] | None = None,
 ) -> tuple[str, str]:
     """Apply summary: due SET fields (+ hash) vs already-stamped fields."""
-    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys)
+    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=unit)
     due = apply_due_fields(conn, unit, node, sites, force=force, doc=doc, keys=keys)
-    pid = profile_id(node, sites, doc=doc, keys=keys)
+    pid = profile_id(node, sites, doc=doc, keys=keys, key=unit)
     if not due:
         need = f"synced ({pid})"
     else:
@@ -295,7 +298,7 @@ def stamp_profile_after_trust(
     before_keys = keys_before if keys_before is not None else keys
     if apply_due_fields(conn, unit, node, sites, doc=before_doc, keys=before_keys):
         return False
-    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys)
+    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=unit)
     acl = applicable.get("acl")
     if acl is None:
         return False
@@ -396,7 +399,7 @@ async def apply_one(
             conn, target.key, node, sites, force=force, doc=doc, keys=keys
         )
     )
-    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys)
+    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=target.key)
 
     def stamp(field: str) -> None:
         des = applicable.get(field)
@@ -404,7 +407,7 @@ async def apply_one(
             insert_apply(conn, unit=target.key, field=field, desired=des, ok=True)
 
     if not due:
-        log.step(f"profile OK ({profile_id(node, sites, doc=doc, keys=keys)})")
+        log.step(f"profile OK ({profile_id(node, sites, doc=doc, keys=keys, key=target.key)})")
         return True
 
     def abort(field: str) -> bool:
@@ -419,11 +422,7 @@ async def apply_one(
     public = is_public(node)
 
     if "name" in due:
-        name = (
-            str(node.get("name") or "").strip() or target.unit_id
-            if public
-            else MASK_NAME
-        )
+        name = public_radio_name(target.key, node, sites) if public else MASK_NAME
         if await _set_cli(
             client,
             target,
@@ -441,7 +440,7 @@ async def apply_one(
         log.step("name: skip (synced)")
 
     if public:
-        pos = resolve_book_position(node, sites)
+        pos = resolve_book_position(node, sites, key=target.key)
         if pos:
             if "lat" in due:
                 if await set_book_coord(
@@ -677,7 +676,7 @@ async def apply_one(
             conn, target.key, node, sites, doc=doc, keys=keys
         )
     if not remaining:
-        pid = profile_id(node, sites, doc=doc, keys=keys)
+        pid = profile_id(node, sites, doc=doc, keys=keys, key=target.key)
         log.step(f"profile OK ({pid})")
         return True
     log.step(f"profile partial ({len(remaining)} due: {', '.join(remaining)})")

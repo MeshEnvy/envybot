@@ -17,31 +17,26 @@ def sample_doc() -> dict:
         "nodes": {
             "me0016": {
                 "unit_id": "ME0016",
-                "name": "Poito {meshenvy.org}",
                 "identity_pubkey": FAKE_PUB,
                 "admin_password": "secret-admin",
             },
             "me0035": {
                 "unit_id": "ME0035",
-                "name": "PV South",
                 "identity_pubkey": OTHER_PUB,
                 "admin_password": "other-admin",
             },
             "me0037": {
                 "unit_id": "ME0037",
-                "name": "PV Peak",
                 "identity_pubkey": "c" * 64,
                 "admin_password": "pv-admin",
             },
             "me0099": {
                 "unit_id": "ME0099",
-                "name": "Meshtastic Tag",
                 "identity_pubkey": "d" * 64,
                 "firmware_platform": "meshtastic",
             },
             "me0001": {
                 "unit_id": "ME0001",
-                "name": "Spanish Benchmark East",
                 "identity_pubkey": "e" * 64,
                 "admin_password": "stale-mc-admin",
                 "firmware_platform": "meshtastic",
@@ -79,25 +74,25 @@ class ResolveSelectorTests(unittest.TestCase):
         assert res.target is not None
         self.assertEqual(res.target.key, "me0016")
 
-    def test_normalized_name(self) -> None:
-        res = resolve_selector(self.doc, "poito")
+    def test_site_name(self) -> None:
+        res = resolve_selector(self.doc, "poito", SAMPLE_SITES)
         self.assertIsNotNone(res.target)
         assert res.target is not None
         self.assertEqual(res.target.key, "me0016")
 
-    def test_exact_name(self) -> None:
-        res = resolve_selector(self.doc, "PV Peak")
+    def test_exact_site_name(self) -> None:
+        res = resolve_selector(self.doc, "PV Peak", SAMPLE_SITES)
         self.assertIsNotNone(res.target)
         assert res.target is not None
         self.assertEqual(res.target.key, "me0037")
 
     def test_ambiguous_prefix(self) -> None:
-        res = resolve_selector(self.doc, "pv")
+        res = resolve_selector(self.doc, "pv", SAMPLE_SITES)
         self.assertIsNone(res.target)
         self.assertEqual(res.error, "ambiguous selector")
         self.assertEqual(len(res.candidates), 2)
 
-    def test_unique_site(self) -> None:
+    def test_unique_site_slug(self) -> None:
         res = resolve_selector(self.doc, "poito-peak", SAMPLE_SITES)
         self.assertIsNotNone(res.target)
         assert res.target is not None

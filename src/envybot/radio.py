@@ -22,7 +22,7 @@ from envybot.nodes_doc import (
     load_nodes_doc,
     normalize_fleet_node,
 )
-from envybot.position import book_coord, load_sites, site_binding
+from envybot.position import book_coord, display_name, load_sites, site_binding
 
 try:
     from meshcore import EventType, MeshCore
@@ -812,7 +812,7 @@ def load_targets(
             RouterTarget(
                 key=key,
                 unit_id=unit_id,
-                name=str(node.get("name") or unit_id),
+                name=display_name(key, node, sites),
                 site=site,
                 pubkey_hex=pubkey.strip().lower(),
                 admin_password=admin_pw,

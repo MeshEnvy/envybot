@@ -62,7 +62,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   gets it (`everyone` or person slugs). `trust` add/updates granted
   channels on the companion; extras on the tag are left alone. Missing
   file skips channel work.
-- Mask name is `Repeater`. Book name stays in YAML.
+- Mask name is `Repeater`. Display name is site `name` when bound, else `unit_id`.
+- `public: true` SETs that derived name + site GPS on the radio.
 - Passwords are unique and strong per unit. Apply/onboard roll blank, weak
   (`m35h3nvy`, placeholders, short), or colliding guests. Admin is never
   invented by apply. Apply SETs book admin (`password`) after ACL/login.

@@ -109,7 +109,7 @@ const App = {
       let units = Object.values(fleet.units || {})
       if (q) {
         units = units.filter((u) => {
-          const hay = [u.key, u.unit_id, u.name, u.site, u.site_name, u.label]
+          const hay = [u.key, u.unit_id, u.site, u.site_name, u.label]
             .filter(Boolean)
             .join(' ')
             .toLowerCase()
@@ -390,7 +390,7 @@ const App = {
           </p>
           <label class="book-toggle">
             <input type="checkbox" :checked="!!selectedUnit.public" @change="togglePublic(selectedUnit, $event)" />
-            public (push book name + GPS)
+            public (push site name + GPS)
           </label>
           <label class="book-toggle">
             <input type="checkbox" :checked="!!selectedUnit.paused" @change="togglePaused(selectedUnit, $event)" />
@@ -464,8 +464,8 @@ const App = {
             </div>
           </section>
           <dl>
-            <dt>Book name</dt>
-            <dd>{{ selectedUnit.name || '—' }}</dd>
+            <dt>Unit</dt>
+            <dd>{{ selectedUnit.unit_id || selectedUnit.key }}</dd>
             <dt>Site</dt>
             <dd>{{ selectedUnit.site_name || formatSite(selectedUnit.site) }}</dd>
             <dt>Firmware</dt>
@@ -621,8 +621,8 @@ const App = {
             @click="selectUnit(unit.key)"
           >
             <div class="unit-top">
-              <span v-if="!unit.site_name" class="unit-id">{{ unit.unit_id || unit.key }}</span>
-              <span class="unit-name">{{ unit.site_name || unit.name || unitLabel(unit) }}</span>
+              <span class="unit-name">{{ unit.site_name || unit.unit_id || unit.key }}</span>
+              <span v-if="unit.site_name" class="unit-id">{{ unit.unit_id || unit.key }}</span>
               <span class="unit-badges">
                 <span class="badge" :class="'badge-' + unitStatus(unit)">{{ unitStatus(unit) }}</span>
                 <span v-if="unit.paused && unitStatus(unit) !== 'paused'" class="badge badge-paused">paused</span>

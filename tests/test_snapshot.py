@@ -10,13 +10,12 @@ from ruamel.yaml import YAML
 
 from envybot.apply import profile_id
 from envybot.history import import_yaml_last_seen, insert_apply, open_history, record_poll
-from envybot.position import is_placeholder_gps
+from envybot.position import is_placeholder_gps, lookup_site_name
 from envybot.web.snapshot import (
     assert_no_secrets,
     build_fleet_snapshot,
     drift_state,
     is_secret_key,
-    lookup_site_name,
     neighbor_is_fresh,
     resolve_position,
     sanitize_neighbors,
@@ -137,15 +136,14 @@ class SnapshotTests(unittest.TestCase):
             self.assertTrue(u1["mapped"])
             self.assertEqual(u1["position"]["source"], "site")
             self.assertEqual(u1["site_name"], "Test")
-            self.assertEqual(u1["name"], "Alpha")
-            self.assertEqual(u1["label"], "Alpha @ Test")
+            self.assertEqual(u1["label"], "Test")
             u2 = snap["units"]["me0002"]
             self.assertIsNone(u2["position"])
             self.assertIsNone(u2["site_name"])
-            self.assertEqual(u2["label"], "Beta")
+            self.assertEqual(u2["label"], "ME0002")
             nbs = [n for n in u1["neighbors"] if n.get("unit_key") == "me0002"]
             self.assertEqual(len(nbs), 1)
-            self.assertEqual(nbs[0]["label"], "Beta")
+            self.assertEqual(nbs[0]["label"], "ME0002")
 
     def test_omits_decommissioned(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -477,19 +475,20 @@ class DriftStateTests(unittest.TestCase):
 class LabelTests(unittest.TestCase):
     def test_bound_uses_site_name(self) -> None:
         sites = {"ophir-hill": {"name": "Ophir", "node": "me0003"}}
-        node = {"unit_id": "ME0003", "name": "RAK4631 Repeater"}
+        node = {"unit_id": "ME0003"}
         self.assertEqual(lookup_site_name("ophir-hill", sites), "Ophir")
-        self.assertEqual(unit_label(key="me0003", node=node, sites=sites), "RAK4631 Repeater @ Ophir")
+        self.assertEqual(unit_label(key="me0003", node=node, sites=sites), "Ophir")
 
-    def test_bound_missing_site_falls_back_to_book_name(self) -> None:
-        node = {"unit_id": "ME0003", "name": "RAK4631 Repeater"}
+    def test_bound_missing_site_uses_slug(self) -> None:
+        node = {"unit_id": "ME0003"}
         self.assertEqual(lookup_site_name("ophir-hill", {}), "ophir-hill")
-        self.assertEqual(unit_label(key="me0003", node=node, sites={}), "RAK4631 Repeater")
+        sites = {"ophir-hill": {"node": "me0003"}}
+        self.assertEqual(unit_label(key="me0003", node=node, sites=sites), "ophir-hill")
 
-    def test_unbound_uses_book_name(self) -> None:
-        node = {"unit_id": "ME0041", "name": "Bag radio"}
+    def test_unbound_uses_unit_id(self) -> None:
+        node = {"unit_id": "ME0041"}
         self.assertIsNone(lookup_site_name(None, {}))
-        self.assertEqual(unit_label(key="me0041", node=node, sites={}), "Bag radio")
+        self.assertEqual(unit_label(key="me0041", node=node, sites={}), "ME0041")
 
 
 if __name__ == "__main__":

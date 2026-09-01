@@ -55,8 +55,8 @@ NODES_YAML_HEADER = (
     "# One entry per physical unit (ME####): identity, credentials,\n"
     "# optional public: true. Location lives only on sites.yaml (loc + node).\n"
     "# Observed last-seen / telemetry live in data/fleet/history.sqlite.\n"
-    "# name: book radio name (later a codename). Pushed to the radio only when\n"
-    "#   public: true. Default apply SETs Repeater + 0,0 + adverts off.\n"
+    "# Display name lives on sites.yaml (name). Default apply SETs Repeater + 0,0\n"
+    "# + adverts off unless public: true (then site name + GPS).\n"
     "# path_hash_mode / dutycycle: radio prefs (apply/onboard default 1 / 100).\n"
     "# trust.admin / trust.guest: people from keys.yaml (MeshCore ACL).\n"
     "# admin1_pubkey / admin1_secret: Meshtastic remote-admin. Not MC ACL.\n"
@@ -218,7 +218,7 @@ def migrate_desired(doc: dict[str, Any], sites: dict[str, dict[str, Any]]) -> bo
             changed = True
         if drop_node_location(node):
             changed = True
-        if node.get("name") == MASK_NAME:
+        if "name" in node:
             node.pop("name", None)
             changed = True
     return changed

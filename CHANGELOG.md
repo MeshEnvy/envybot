@@ -8,6 +8,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Drop `name` from `nodes.yaml`. UI and apply derive labels from site
+  `name` when bound, else `unit_id`. Map pins and list cards follow the
+  same rule; detail shows both unit id and site.
 - Fleet neighbor poll sends remote `discover.neighbors`, waits, then
   GETs the table. UI and map edges hide neighbors last heard more than
   7 days ago (firmware table has no TTL). `--no-discover` keeps GET-only.

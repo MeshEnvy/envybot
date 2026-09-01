@@ -324,12 +324,6 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
     node = nodes.get(key)
     if not isinstance(node, dict) or is_decommissioned(node) or not is_meshcore_platform(node):
         return web.json_response({"error": "unknown unit"}, status=404)
-    if "name" in body:
-        name = body["name"]
-        if name is None or (isinstance(name, str) and not name.strip()):
-            node.pop("name", None)
-        elif isinstance(name, str):
-            node["name"] = name.strip()
     if "public" in body:
         if body["public"] is True:
             node["public"] = True

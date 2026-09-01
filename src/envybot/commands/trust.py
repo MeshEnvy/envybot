@@ -53,7 +53,7 @@ from envybot.radio import (
     load_targets,
 )
 from envybot.selector import format_candidates, normalize_adv_name, resolve_selector
-from envybot.web.snapshot import lookup_site_name
+from envybot.position import lookup_site_name, public_radio_name, resolve_book_position, site_binding
 
 try:
     from meshcore import EventType, MeshCore
@@ -73,11 +73,9 @@ def contact_adv_name(
     key: str | None = None,
 ) -> str:
     """Site name when bound; otherwise unit_id (bench / no site)."""
-    bind = site_binding(key, node, sites)
-    if bind:
-        site_name = lookup_site_name(bind[0], sites or {})
-        if site_name:
-            return site_name[:32]
+    derived = public_radio_name(key, node, sites)
+    if derived:
+        return derived
     return unit_id[:32]
 
 

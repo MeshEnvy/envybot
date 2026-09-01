@@ -53,8 +53,8 @@ Nodes without `public: true` get the privacy mask: name `Repeater`, lat/lon
 `keys.yaml` + `trust.admin` (perm 3) / `trust.guest` (perm 1). Heard keys
 that are not in that list are dropped (`setperm 0`). `admin1_*` is
 Meshtastic and is not applied. Blank, weak, or colliding guests are
-rolled and written back to the book. `public: true` pushes book name +
-resolved GPS.
+rolled and written back to the book. `public: true` pushes site name (or
+`unit_id` when bag/bench) plus resolved GPS.
 
 Always also SETs `path.hash.mode` (default 1 = 2-byte), `dutycycle`
 (default 100), a strong book admin via `password`, and clock if unset
@@ -104,10 +104,11 @@ Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
 ## UI
 
 Map pins use **book** position (`sites.yaml` loc for the bound unit), never
-device `0,0`. Detail shows book name + site name, a `public` toggle, and
-drift from the apply stamp (`leak` if a private profile is due, `mismatch`
-if a public profile is due). List cards show the same badge next to
-freshness. While the companion worker is live, **Queue** on a unit forces
+device `0,0`. Pin labels are site name when bound, else unit id. Detail
+shows unit id and site name, a `public` toggle, and drift from the apply
+stamp (`leak` if a private profile is due, `mismatch` if a public profile
+is due). List cards show site name with unit id when bound, or unit id
+alone for bag/bench. While the companion worker is live, **Queue** on a unit forces
 that unit back through GET+apply (overrides `--skip`, `paused`, and
 up-to-date skips). Pause is a checkbox on the detail card
 (`paused: true`). Sidebar rows fade and badge as paused. Rows with

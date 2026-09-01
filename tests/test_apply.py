@@ -38,7 +38,6 @@ class _Res:
 
 
 _STRONG = {
-    "name": "Ophir",
     "guest_password": "GuestOneStrong1",
     "admin_password": "AdminOneStrong1",
     "identity_pubkey": "aa" * 32,
@@ -51,7 +50,7 @@ def _id(node, sites=None, doc=None, keys=None):
 
 class ProfileTests(unittest.TestCase):
     def test_id_is_versioned_hash(self) -> None:
-        pid = _id({"name": "Ophir"})
+        pid = _id(_STRONG)
         self.assertTrue(pid.startswith("v1:"))
         self.assertEqual(len(pid), 19)
 
@@ -93,8 +92,8 @@ class ProfileTests(unittest.TestCase):
 
     def test_public_gps_in_parts(self) -> None:
         node = {**_STRONG, "public": True, "unit_id": "ME0003"}
-        sites = {"ophir": {"node": "me0003", "loc": [39.5, -119.8]}}
-        parts = profile_parts(node, sites)
+        sites = {"ophir": {"node": "me0003", "loc": [39.5, -119.8], "name": "Ophir"}}
+        parts = profile_parts(node, sites, key="me0003")
         self.assertTrue(parts["public"])
         self.assertEqual(parts["name"], "Ophir")
         self.assertEqual(parts["lat"], 39.5)
@@ -115,12 +114,12 @@ class DueTests(unittest.TestCase):
     def test_first_run_private_is_due(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            self.assertTrue(apply_is_due(conn, "me0001", {"name": "Ophir"}, None))
+            self.assertTrue(apply_is_due(conn, "me0001", _STRONG, None))
 
     def test_weak_guest_is_due_after_ok_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            node = {"name": "Ophir", "guest_password": "m35h3nvy"}
+            node = {**_STRONG, "guest_password": "m35h3nvy"}
             insert_apply(conn, unit="me0001", field="profile", desired=_id(node), ok=True)
             self.assertTrue(apply_is_due(conn, "me0001", node, None))
 
