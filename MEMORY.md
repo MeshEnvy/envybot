@@ -111,7 +111,8 @@ Separate USB OTA repeater for `motatool serve`.
   auto poll/apply on the next job boundary (in-flight exchange finishes).
   Sidebar fades paused rows and shows a paused badge.
   Units carry `health` (worst-of component checks) and interval traffic
-  deltas; detail sparklines use `/api/history/{unit}?metric=`.
+  deltas. Detail sparklines and the poll table share `/api/polls/{unit}`
+  (merged status+telemetry, interpolated gauges, per-field deltas).
   List meta line shows a headline mark: Paused, Healthy, Unreachable,
   Needs attention. In-flight cards show the current job stage (Logging in,
   Fetching ACL, …). `unreachable` is only after the scheduler gives up

@@ -13,7 +13,7 @@ from aiohttp import web
 
 from envybot.apply import apply_is_due
 from envybot.fleet_worker import build_manual_jobs
-from envybot.history import history_series, open_history
+from envybot.history import history_series, open_history, poll_snapshots
 from envybot.jobs import FleetScheduler
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
@@ -329,13 +329,32 @@ async def _handle_events(request: web.Request) -> web.StreamResponse:
 async def _handle_history(request: web.Request) -> web.Response:
     unit = request.match_info["unit"]
     metric = request.query.get("metric") or "battery_mv"
+    hours_raw = request.query.get("hours")
+    hours = int(hours_raw) if hours_raw and hours_raw.isdigit() else 72
     web_ctx: MonitorWeb = request.app["web_ctx"]
     conn = open_history(web_ctx.nodes_path.parent)
     try:
-        series = history_series(conn, unit, metric)
+        series = history_series(conn, unit, metric, hours=hours)
     finally:
         conn.close()
-    payload = {"unit": unit, "metric": metric, "points": series}
+    payload = {"unit": unit, "metric": metric, "hours": hours, "points": series}
+    assert_no_secrets(payload)
+    return web.json_response(payload)
+
+
+async def _handle_polls(request: web.Request) -> web.Response:
+    unit = request.match_info["unit"]
+    hours_raw = request.query.get("hours")
+    limit_raw = request.query.get("limit")
+    hours = int(hours_raw) if hours_raw and hours_raw.isdigit() else 72
+    limit = int(limit_raw) if limit_raw and limit_raw.isdigit() else 48
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    conn = open_history(web_ctx.nodes_path.parent)
+    try:
+        polls = poll_snapshots(conn, unit, hours=hours, limit=limit)
+    finally:
+        conn.close()
+    payload = {"unit": unit, "hours": hours, "polls": polls}
     assert_no_secrets(payload)
     return web.json_response(payload)
 
@@ -434,6 +453,7 @@ def make_app(web_ctx: MonitorWeb) -> web.Application:
     app.router.add_post("/api/pull/{key}", lambda r: _handle_manual_job(r, "pull"))
     app.router.add_post("/api/push/{key}", lambda r: _handle_manual_job(r, "push"))
     app.router.add_get("/api/history/{unit}", _handle_history)
+    app.router.add_get("/api/polls/{unit}", _handle_polls)
     app.router.add_get("/events", _handle_events)
     app.router.add_get("/", _handle_index)
     app.router.add_get("/index.html", _handle_index)

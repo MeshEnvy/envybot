@@ -11,6 +11,20 @@ from envybot.health import (
 )
 
 
+def _traffic_window(
+    *,
+    recv: int = 50,
+    sent: int = 10,
+    covered_secs: int = 6 * 3600,
+) -> dict:
+    return {
+        "packets_recv": recv,
+        "packets_sent": sent,
+        "duration_secs": covered_secs,
+        "window_secs": 6 * 3600,
+    }
+
+
 class HealthTests(unittest.TestCase):
     def test_all_ok_when_healthy(self) -> None:
         health = compute_health(
@@ -26,6 +40,7 @@ class HealthTests(unittest.TestCase):
                 "duration_secs": 3600,
                 "rx_airtime_pct": 5.0,
             },
+            traffic_window=_traffic_window(),
             status_rows=[
                 {"ts": 1, "battery_mv": 4200, "uptime_secs": 1000},
                 {"ts": 2, "battery_mv": 4190, "uptime_secs": 2000},
@@ -51,6 +66,7 @@ class HealthTests(unittest.TestCase):
                 "duration_secs": 3600,
                 "rx_airtime_pct": 5.0,
             },
+            traffic_window=_traffic_window(),
             status_rows=[
                 {"ts": 1, "battery_mv": 4200, "uptime_secs": 1000},
                 {"ts": 2, "battery_mv": 4190, "uptime_secs": 2000},
@@ -115,6 +131,7 @@ class HealthTests(unittest.TestCase):
             status={"battery_mv": 3400},
             telemetry={"voltage": 3.4},
             traffic_interval={"packets_recv": 10, "packets_sent": 5, "duration_secs": 3600},
+            traffic_window=_traffic_window(recv=10, sent=5),
             status_rows=[{"battery_mv": 3400, "uptime_secs": 100}],
             reboot_count=0,
         )
@@ -131,6 +148,7 @@ class HealthTests(unittest.TestCase):
             status={"battery_mv": 4000, "packets_recv": 100, "recv_errors": 0},
             telemetry={"voltage": 4.0},
             traffic_interval={"packets_recv": 5, "packets_sent": 1, "duration_secs": 3600},
+            traffic_window=_traffic_window(recv=5, sent=1),
             status_rows=[
                 {"uptime_secs": 5000},
                 {"uptime_secs": 100},
@@ -153,6 +171,7 @@ class HealthTests(unittest.TestCase):
                 "packets_sent": 5,
                 "duration_secs": 13 * 3600,
             },
+            traffic_window=_traffic_window(recv=0, sent=5, covered_secs=13 * 3600),
             status_rows=[{"uptime_secs": 1000}, {"uptime_secs": 2000}],
             reboot_count=0,
         )
@@ -171,11 +190,12 @@ class HealthTests(unittest.TestCase):
                 "packets_sent": 0,
                 "duration_secs": 3600,
             },
+            traffic_window=_traffic_window(recv=0, sent=0, covered_secs=3600),
             status_rows=[{"uptime_secs": 1000}, {"uptime_secs": 2000}],
             reboot_count=0,
         )
         traffic = next(c for c in health["checks"] if c["name"] == "Traffic")
-        self.assertEqual(traffic["status"], "ok")
+        self.assertEqual(traffic["status"], "unknown")
 
     def test_traffic_dead_air_bad(self) -> None:
         health = compute_health(
@@ -189,6 +209,7 @@ class HealthTests(unittest.TestCase):
                 "packets_sent": 0,
                 "duration_secs": 6 * 3600,
             },
+            traffic_window=_traffic_window(recv=0, sent=0, covered_secs=6 * 3600),
             status_rows=[{"uptime_secs": 1000}, {"uptime_secs": 2000}],
             reboot_count=0,
         )
@@ -219,6 +240,7 @@ class HealthTests(unittest.TestCase):
                 "packets_sent": 1,
                 "duration_secs": 3600,
             },
+            traffic_window=_traffic_window(recv=recv, sent=1),
             status_rows=[{"uptime_secs": 1000}, {"uptime_secs": 2000}],
             reboot_count=0,
         )
@@ -238,6 +260,7 @@ class HealthTests(unittest.TestCase):
                 "packets_sent": 0,
                 "duration_secs": 3600,
             },
+            traffic_window=_traffic_window(recv=1, sent=0),
             status_rows=[{"uptime_secs": 1000}, {"uptime_secs": 2000}],
             reboot_count=0,
         )

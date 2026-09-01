@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import time
 from pathlib import Path
@@ -256,6 +257,64 @@ INTERVAL_DELTA_KEYS = (
     "rx_airtime_secs",
 )
 
+TRAFFIC_WINDOW_SECS = 6 * 3600
+
+
+def _load_status_payload(row: sqlite3.Row) -> tuple[int, dict[str, Any]] | None:
+    try:
+        payload = json.loads(row["payload"])
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return int(row["ts"]), payload
+
+
+def _status_pair_delta(
+    prev: dict[str, Any],
+    curr: dict[str, Any],
+    *,
+    prev_ts: int,
+    curr_ts: int,
+) -> dict[str, Any]:
+    curr_uptime = _status_int(curr, "uptime_secs")
+    prev_uptime = _status_int(prev, "uptime_secs")
+    reboot = (
+        curr_uptime is not None
+        and prev_uptime is not None
+        and curr_uptime < prev_uptime
+    )
+    duration_secs = max(0, curr_ts - prev_ts)
+    base: dict[str, Any] = {
+        "from_ts": prev_ts,
+        "to_ts": curr_ts,
+        "duration_secs": duration_secs,
+        "reboot_reset": reboot,
+    }
+    if reboot:
+        return base
+
+    def delta(key: str) -> int | None:
+        c = _status_int(curr, key)
+        p = _status_int(prev, key)
+        if c is None or p is None:
+            return None
+        d = c - p
+        return d if d >= 0 else None
+
+    any_delta = False
+    for key in INTERVAL_DELTA_KEYS:
+        val = delta(key)
+        if val is not None:
+            base[key] = val
+            any_delta = True
+    if not any_delta:
+        base["_empty"] = True
+    rx_air = base.get("rx_airtime_secs")
+    if rx_air is not None and duration_secs > 0:
+        base["rx_airtime_pct"] = round((rx_air / duration_secs) * 100, 1)
+    return base
+
 
 def _parse_status_row(row: sqlite3.Row) -> dict[str, Any] | None:
     try:
@@ -324,52 +383,97 @@ def interval_traffic(conn: sqlite3.Connection, unit: str) -> dict[str, Any] | No
     ).fetchall()
     if len(rows) < 2:
         return None
-    curr_ts = int(rows[0]["ts"])
-    prev_ts = int(rows[1]["ts"])
-    try:
-        curr = json.loads(rows[0]["payload"])
-        prev = json.loads(rows[1]["payload"])
-    except json.JSONDecodeError:
+    prev_row = _load_status_payload(rows[1])
+    curr_row = _load_status_payload(rows[0])
+    if prev_row is None or curr_row is None:
         return None
-    if not isinstance(curr, dict) or not isinstance(prev, dict):
-        return None
-
-    curr_uptime = _status_int(curr, "uptime_secs")
-    prev_uptime = _status_int(prev, "uptime_secs")
-    reboot = (
-        curr_uptime is not None
-        and prev_uptime is not None
-        and curr_uptime < prev_uptime
-    )
-    duration_secs = max(0, curr_ts - prev_ts)
-    base: dict[str, Any] = {
-        "from_ts": prev_ts,
-        "to_ts": curr_ts,
-        "duration_secs": duration_secs,
-        "reboot_reset": reboot,
-    }
-    if reboot:
+    prev_ts, prev = prev_row
+    curr_ts, curr = curr_row
+    base = _status_pair_delta(prev, curr, prev_ts=prev_ts, curr_ts=curr_ts)
+    if base.get("reboot_reset"):
         return base
+    if base.pop("_empty", False):
+        return None
+    return base
 
-    def delta(key: str) -> int | None:
-        c = _status_int(curr, key)
-        p = _status_int(prev, key)
-        if c is None or p is None:
-            return None
-        d = c - p
-        return d if d >= 0 else None
 
+def rolling_traffic(
+    conn: sqlite3.Connection,
+    unit: str,
+    *,
+    window_secs: int = TRAFFIC_WINDOW_SECS,
+    now: int | None = None,
+) -> dict[str, Any] | None:
+    """Sum traffic deltas across status polls in a rolling wall-clock window."""
+    now_ts = now or int(time.time())
+    since_ts = now_ts - window_secs
+    anchor = conn.execute(
+        "SELECT ts, payload FROM status WHERE unit = ? AND ts <= ? ORDER BY ts DESC LIMIT 1",
+        (unit, since_ts),
+    ).fetchone()
+    recent = conn.execute(
+        "SELECT ts, payload FROM status WHERE unit = ? AND ts > ? ORDER BY ts ASC",
+        (unit, since_ts),
+    ).fetchall()
+    chron: list[sqlite3.Row] = []
+    if anchor is not None:
+        chron.append(anchor)
+    chron.extend(recent)
+    if len(chron) < 2:
+        return None
+
+    totals = {key: 0.0 for key in INTERVAL_DELTA_KEYS}
+    covered_secs = 0
     any_delta = False
-    for key in INTERVAL_DELTA_KEYS:
-        val = delta(key)
-        if val is not None:
-            base[key] = val
-            any_delta = True
+    reboot_in_window = False
+
+    for idx in range(1, len(chron)):
+        prev_row = _load_status_payload(chron[idx - 1])
+        curr_row = _load_status_payload(chron[idx])
+        if prev_row is None or curr_row is None:
+            continue
+        prev_ts, prev = prev_row
+        curr_ts, curr = curr_row
+        pair = _status_pair_delta(prev, curr, prev_ts=prev_ts, curr_ts=curr_ts)
+        if pair.get("reboot_reset"):
+            reboot_in_window = True
+            continue
+        duration = curr_ts - prev_ts
+        if duration <= 0:
+            continue
+        segment_start = max(prev_ts, since_ts)
+        segment_end = min(curr_ts, now_ts)
+        if segment_end <= segment_start:
+            continue
+        overlap = segment_end - segment_start
+        covered_secs += overlap
+        if pair.pop("_empty", False):
+            continue
+        any_delta = True
+        fraction = overlap / duration
+        for key in INTERVAL_DELTA_KEYS:
+            val = pair.get(key)
+            if val is not None:
+                totals[key] += val * fraction
+
+    base: dict[str, Any] = {
+        "window_secs": window_secs,
+        "from_ts": since_ts,
+        "to_ts": now_ts,
+        "duration_secs": covered_secs,
+        "reboot_reset": reboot_in_window,
+    }
+    if reboot_in_window and not any_delta:
+        return base
     if not any_delta:
         return None
-    rx_air = base.get("rx_airtime_secs")
-    if rx_air is not None and duration_secs > 0:
-        base["rx_airtime_pct"] = round((rx_air / duration_secs) * 100, 1)
+    for key, val in totals.items():
+        rounded = int(round(val))
+        if rounded:
+            base[key] = rounded
+    rx_air = totals.get("rx_airtime_secs", 0.0)
+    if rx_air > 0 and covered_secs > 0:
+        base["rx_airtime_pct"] = round((rx_air / covered_secs) * 100, 1)
     return base
 
 
@@ -490,6 +594,11 @@ def _derived_status_series(
             if d_err < 0 or d_recv < 0:
                 prev = row
                 continue
+            if d_recv == 0 and d_err == 0:
+                if out:
+                    out.append({"ts": ts, "value": out[-1]["value"]})
+                prev = row
+                continue
             pct = _unreadable_pct(d_err, d_recv)
             if pct is not None:
                 out.append({"ts": ts, "value": pct})
@@ -501,6 +610,11 @@ def _derived_status_series(
                 continue
             d_recv = int(curr_recv) - int(prev_recv)
             if d_recv < 0:
+                prev = row
+                continue
+            if d_recv == 0:
+                if out:
+                    out.append({"ts": ts, "value": out[-1]["value"]})
                 prev = row
                 continue
             hours = duration / 3600.0
@@ -523,16 +637,250 @@ def _derived_status_series(
     return out
 
 
+def _finite_number(val: Any) -> float | None:
+    if val is None:
+        return None
+    try:
+        num = float(val)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(num):
+        return None
+    return num
+
+
+def _sample_series(
+    rows: list[dict[str, Any]],
+    key: str,
+    extra: list[tuple[int, float]] | None = None,
+) -> list[tuple[int, float]]:
+    samples: list[tuple[int, float]] = []
+    for ts, val in extra or []:
+        num = _finite_number(val)
+        if num is None:
+            continue
+        samples.append((int(ts), num))
+    for row in rows:
+        num = _finite_number(row.get(key))
+        ts = row.get("ts")
+        if num is None or ts is None:
+            continue
+        samples.append((int(ts), num))
+    samples.sort(key=lambda item: item[0])
+    return samples
+
+
+TELEMETRY_MERGE_WINDOW = 120
+
+
+def _attach_nearest(
+    rows: list[dict[str, Any]],
+    key: str,
+    extra: list[tuple[int, float]],
+    *,
+    window: int = TELEMETRY_MERGE_WINDOW,
+) -> None:
+    """Bind off-timestamp telemetry to the nearest status poll within ``window``."""
+    if not extra:
+        return
+    samples: list[tuple[int, float]] = []
+    for ts, val in extra:
+        num = _finite_number(val)
+        if num is None:
+            continue
+        samples.append((int(ts), num))
+    samples.sort(key=lambda item: item[0])
+    if not samples:
+        return
+    for row in rows:
+        if _finite_number(row.get(key)) is not None:
+            continue
+        ts = row.get("ts")
+        if ts is None:
+            continue
+        ts = int(ts)
+        best: float | None = None
+        best_dt = window + 1
+        for kts, kval in samples:
+            dt = abs(kts - ts)
+            if dt < best_dt:
+                best_dt = dt
+                best = kval
+            if kts > ts + window:
+                break
+        if best is not None and best_dt <= window:
+            row[key] = best
+
+
+def _interpolate_missing(
+    rows: list[dict[str, Any]],
+    key: str,
+    *,
+    digits: int,
+    extra: list[tuple[int, float]] | None = None,
+) -> None:
+    """Straight-line fill for gaps between known samples. No extrapolation."""
+    known = _sample_series(rows, key, extra)
+    if len(known) < 2:
+        return
+    for row in rows:
+        if _finite_number(row.get(key)) is not None:
+            continue
+        ts = row.get("ts")
+        if ts is None:
+            continue
+        ts = int(ts)
+        prev: tuple[int, float] | None = None
+        nxt: tuple[int, float] | None = None
+        for kts, kval in known:
+            if kts < ts:
+                prev = (kts, kval)
+            elif kts > ts:
+                nxt = (kts, kval)
+                break
+        if prev is None or nxt is None:
+            continue
+        t0, v0 = prev
+        t1, v1 = nxt
+        filled = v0 if t1 == t0 else v0 + (v1 - v0) * ((ts - t0) / (t1 - t0))
+        row[key] = round(filled, digits)
+        syn = row.setdefault("synthetic", [])
+        if key not in syn:
+            syn.append(key)
+
+
+GAUGE_DELTA_FIELDS = (
+    ("voltage", 3),
+    ("temperature", 1),
+    ("noise_floor", 0),
+    ("battery_mv", 0),
+)
+COUNTER_DELTA_FIELDS = ("packets_recv", "packets_sent", "recv_errors")
+
+
+def _apply_poll_deltas(rows: list[dict[str, Any]]) -> None:
+    """Add per-field deltas vs the previous chronological row."""
+    prev: dict[str, Any] | None = None
+    for row in rows:
+        reboot = False
+        if prev is not None:
+            prev_up = prev.get("uptime_secs")
+            curr_up = row.get("uptime_secs")
+            reboot = (
+                prev_up is not None
+                and curr_up is not None
+                and int(curr_up) < int(prev_up)
+            )
+            row["since_prev_secs"] = max(0, int(row["ts"]) - int(prev["ts"]))
+            if not reboot:
+                for key in COUNTER_DELTA_FIELDS:
+                    curr_val = row.get(key)
+                    prev_val = prev.get(key)
+                    if curr_val is None or prev_val is None:
+                        continue
+                    delta = int(curr_val) - int(prev_val)
+                    if delta >= 0:
+                        row[f"delta_{key}"] = delta
+            for key, digits in GAUGE_DELTA_FIELDS:
+                curr_val = _finite_number(row.get(key))
+                prev_val = _finite_number(prev.get(key))
+                if curr_val is None or prev_val is None:
+                    continue
+                row[f"delta_{key}"] = round(curr_val - prev_val, digits)
+        row["reboot"] = reboot
+        prev = row
+
+
+def poll_snapshots(
+    conn: sqlite3.Connection,
+    unit: str,
+    *,
+    limit: int = 48,
+    hours: int = 72,
+) -> list[dict[str, Any]]:
+    """Merged status+telemetry polls, newest-first.
+
+    Each row has absolute values and ``delta_*`` vs the prior poll. Missing
+    gauges (temperature, voltage, noise) are straight-line interpolated from
+    neighboring samples, including off-timestamp telemetry. No extrapolation.
+    """
+    since = int(time.time()) - max(1, hours) * 3600
+    status_rows = conn.execute(
+        "SELECT ts, payload FROM status WHERE unit = ? AND ts >= ? ORDER BY ts ASC",
+        (unit, since),
+    ).fetchall()
+    if not status_rows:
+        return []
+
+    tele_since = since - 7 * 86400
+    tele_rows = conn.execute(
+        "SELECT ts, type, value FROM telemetry WHERE unit = ? AND ts >= ? "
+        "AND type IN ('voltage', 'temperature')",
+        (unit, tele_since),
+    ).fetchall()
+    tele_by_ts: dict[int, dict[str, float]] = {}
+    tele_extra: dict[str, list[tuple[int, float]]] = {"voltage": [], "temperature": []}
+    for row in tele_rows:
+        num = _finite_number(row["value"])
+        if num is None:
+            continue
+        ts = int(row["ts"])
+        kind = str(row["type"])
+        tele_by_ts.setdefault(ts, {})[kind] = num
+        if kind in tele_extra:
+            tele_extra[kind].append((ts, num))
+
+    chronological: list[dict[str, Any]] = []
+    for row in status_rows:
+        loaded = _load_status_payload(row)
+        if loaded is None:
+            continue
+        ts, payload = loaded
+        tele = tele_by_ts.get(ts, {})
+        battery_mv = _status_int(payload, "battery_mv")
+        voltage = tele.get("voltage")
+        if voltage is None and battery_mv is not None:
+            voltage = round(battery_mv / 1000.0, 3)
+        chronological.append(
+            {
+                "ts": ts,
+                "battery_mv": battery_mv,
+                "voltage": voltage,
+                "temperature": tele.get("temperature"),
+                "packets_recv": _status_int(payload, "packets_recv"),
+                "packets_sent": _status_int(payload, "packets_sent"),
+                "recv_errors": _status_int(payload, "recv_errors"),
+                "noise_floor": _status_int(payload, "noise_floor"),
+                "uptime_secs": _status_int(payload, "uptime_secs"),
+            }
+        )
+
+    _attach_nearest(chronological, "temperature", tele_extra["temperature"])
+    _attach_nearest(chronological, "voltage", tele_extra["voltage"])
+    _interpolate_missing(
+        chronological, "temperature", digits=1, extra=tele_extra["temperature"]
+    )
+    _interpolate_missing(chronological, "voltage", digits=3, extra=tele_extra["voltage"])
+    _interpolate_missing(chronological, "noise_floor", digits=0)
+    _apply_poll_deltas(chronological)
+    chronological.reverse()
+    return chronological[:limit]
+
+
 def history_series(
     conn: sqlite3.Connection,
     unit: str,
     metric: str,
     *,
     since: int | None = None,
+    hours: int | None = None,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
     """Time series for the fleet UI sparklines."""
-    since = since or 0
+    if hours is not None:
+        since = int(time.time()) - max(1, hours) * 3600
+    elif since is None:
+        since = int(time.time()) - 72 * 3600
     if metric == "voltage":
         rows = conn.execute(
             "SELECT ts, value FROM telemetry WHERE unit = ? AND type = 'voltage' "
@@ -562,7 +910,10 @@ def history_series(
                 continue
             val = payload.get(key)
             if val is not None:
-                out.append({"ts": row["ts"], "value": val})
+                point: dict[str, Any] = {"ts": row["ts"], "value": val}
+                if key == "battery_mv":
+                    point["value"] = round(float(val) / 1000.0, 3)
+                out.append(point)
         return out
     if metric == "packets":
         rows = conn.execute(

@@ -15,6 +15,7 @@ from envybot.history import (
     latest_neighbors,
     latest_status,
     open_history,
+    rolling_traffic,
     status_series,
 )
 from envybot.keys_doc import keys_path, load_keys
@@ -257,6 +258,7 @@ def sanitize_unit(
     neighbors_raw: Any = None,
     status_raw: dict[str, Any] | None = None,
     traffic_interval: dict[str, Any] | None = None,
+    traffic_window_6h: dict[str, Any] | None = None,
     profile_ok: bool = False,
 ) -> dict[str, Any]:
     normalize_fleet_node(node)
@@ -297,6 +299,7 @@ def sanitize_unit(
         "telemetry": tele,
         "status": status,
         "traffic_interval": traffic_interval,
+        "traffic_window_6h": traffic_window_6h,
         "neighbors": sanitize_neighbors(
             nbs,
             pubkey_index=pubkey_index,
@@ -342,6 +345,7 @@ def build_fleet_snapshot(
     neighbors_map: dict[str, Any] = {}
     status_map: dict[str, dict[str, Any]] = {}
     interval_map: dict[str, dict[str, Any]] = {}
+    window_map: dict[str, dict[str, Any]] = {}
     status_rows_map: dict[str, list[dict[str, Any]]] = {}
     conn = None
     try:
@@ -358,6 +362,9 @@ def build_fleet_snapshot(
             interval = interval_traffic(conn, key)
             if interval is not None:
                 interval_map[key] = interval
+            window = rolling_traffic(conn, key, now=now)
+            if window is not None:
+                window_map[key] = window
             status_rows_map[key] = status_series(conn, key)
     except OSError:
         seen_map = seen_map or {}
@@ -388,6 +395,7 @@ def build_fleet_snapshot(
                 neighbors_raw=neighbors_map.get(key),
                 status_raw=status_map.get(key),
                 traffic_interval=interval_map.get(key),
+                traffic_window_6h=window_map.get(key),
                 profile_ok=profile_ok,
             )
             units[key]["health"] = compute_health(
@@ -397,6 +405,7 @@ def build_fleet_snapshot(
                 status=units[key].get("status"),
                 telemetry=units[key].get("telemetry"),
                 traffic_interval=interval_map.get(key),
+                traffic_window=window_map.get(key),
                 status_rows=status_rows_map.get(key, []),
                 paused=units[key]["paused"],
             )

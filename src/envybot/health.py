@@ -117,6 +117,7 @@ def compute_health(
     status: dict[str, Any] | None,
     telemetry: dict[str, Any] | None,
     traffic_interval: dict[str, Any] | None,
+    traffic_window: dict[str, Any] | None = None,
     status_rows: list[dict[str, Any]],
     reboot_count: int | None = None,
     paused: bool = False,
@@ -221,29 +222,36 @@ def compute_health(
     else:
         checks.append(_check("Stability", "ok"))
 
-    # Traffic
-    interval = traffic_interval or {}
-    if interval.get("reboot_reset"):
+    # Traffic (rolling window for dead air / deaf; last poll kept for detail UI)
+    window = traffic_window or {}
+    min_cover = TRAFFIC_DEAD_AIR_HOURS * 3600
+    if window.get("reboot_reset") and window.get("packets_recv") is None:
         checks.append(_check("Traffic", "unknown", "Counters reset by reboot"))
-    elif not interval:
-        checks.append(_check("Traffic", "unknown", "No interval traffic data"))
+    elif not window:
+        checks.append(_check("Traffic", "unknown", "No 6 h traffic window"))
     else:
-        d_in = interval.get("packets_recv")
-        d_out = interval.get("packets_sent")
-        duration = interval.get("duration_secs") or 0
-        if d_in == 0 and d_out == 0:
-            if duration >= TRAFFIC_DEAD_AIR_HOURS * 3600:
-                checks.append(
-                    _check(
-                        "Traffic",
-                        "bad",
-                        f"No packets in or out over {TRAFFIC_DEAD_AIR_HOURS} h",
-                        fix="Confirm the radio is on-air. Check neighbors and duty cycle.",
-                    )
+        d_in = window.get("packets_recv")
+        d_out = window.get("packets_sent")
+        covered = window.get("duration_secs") or 0
+        if covered < min_cover:
+            hours = covered / 3600
+            checks.append(
+                _check(
+                    "Traffic",
+                    "unknown",
+                    f"Only {hours:.1f} h of status history in 6 h window",
                 )
-            else:
-                checks.append(_check("Traffic", "ok"))
-        elif d_in == 0 and duration >= TRAFFIC_DEAF_HOURS * 3600:
+            )
+        elif d_in == 0 and d_out == 0:
+            checks.append(
+                _check(
+                    "Traffic",
+                    "bad",
+                    f"No packets in or out over {TRAFFIC_DEAD_AIR_HOURS} h",
+                    fix="Confirm the radio is on-air. Check neighbors and duty cycle.",
+                )
+            )
+        elif d_in == 0 and covered >= TRAFFIC_DEAF_HOURS * 3600:
             checks.append(
                 _check(
                     "Traffic",
@@ -256,6 +264,7 @@ def compute_health(
             checks.append(_check("Traffic", "ok"))
 
     # RF quality
+    interval = traffic_interval or {}
     if interval and not interval.get("reboot_reset"):
         interval_pct = _unreadable_pct(
             interval.get("recv_errors"),

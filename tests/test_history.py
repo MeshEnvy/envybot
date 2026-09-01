@@ -20,7 +20,9 @@ from envybot.history import (
     latest_status,
     migrate_legacy,
     open_history,
+    poll_snapshots,
     record_poll,
+    rolling_traffic,
     status_series,
 )
 
@@ -67,7 +69,7 @@ class HistoryTests(unittest.TestCase):
                     ],
                     polled_groups=frozenset({"firmware", "name", "status", "telemetry"}),
                 ),
-                ts=100,
+                ts=int(time.time()) - 60,
             )
             seen = get_last_seen(conn, "me0001")
             assert seen is not None
@@ -79,7 +81,7 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(seen["temperature"], 18.3)
             bats = history_series(conn, "me0001", "battery_mv")
             self.assertEqual(len(bats), 1)
-            self.assertEqual(bats[0]["value"], 4100)
+            self.assertEqual(bats[0]["value"], 4.1)
             volts = history_series(conn, "me0001", "voltage")
             self.assertEqual(volts[0]["value"], 4.1)
             noise = history_series(conn, "me0001", "noise_floor")
@@ -278,6 +280,93 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(interval["rx_airtime_secs"], 300)
             self.assertAlmostEqual(interval["rx_airtime_pct"], 15.0)
 
+    def test_rolling_traffic_sums_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            now = 10_000
+            window = 6 * 3600
+            base = {
+                "packets_recv": 1000,
+                "packets_sent": 100,
+                "recv_errors": 10,
+                "uptime_secs": 1000,
+            }
+            record_poll(
+                conn,
+                unit="me0008",
+                res=_Res(status=dict(base), polled_groups=frozenset({"status"})),
+                ts=now - window - 1000,
+            )
+            record_poll(
+                conn,
+                unit="me0008",
+                res=_Res(
+                    status={**base, "packets_recv": 1100, "packets_sent": 120, "uptime_secs": 2000},
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=now - window + 1000,
+            )
+            record_poll(
+                conn,
+                unit="me0008",
+                res=_Res(
+                    status={**base, "packets_recv": 1250, "packets_sent": 150, "uptime_secs": 3000},
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=now - 1000,
+            )
+            rolled = rolling_traffic(conn, "me0008", now=now)
+            assert rolled is not None
+            # First segment is half outside the window; deltas are prorated.
+            self.assertEqual(rolled["packets_recv"], 200)
+            self.assertEqual(rolled["packets_sent"], 40)
+            self.assertGreaterEqual(rolled["duration_secs"], window - 2000)
+
+    def test_rolling_traffic_prorates_pre_window_anchor(self) -> None:
+        """Counter deltas spanning before the window are scaled by overlap fraction."""
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            window = 6 * 3600
+            now = 100_000
+            since = now - window
+            base = {
+                "packets_recv": 0,
+                "packets_sent": 0,
+                "recv_errors": 0,
+                "rx_airtime_secs": 0,
+                "uptime_secs": 1000,
+            }
+            record_poll(
+                conn,
+                unit="me0012",
+                res=_Res(status=dict(base), polled_groups=frozenset({"status"})),
+                ts=since - 10_000,
+            )
+            record_poll(
+                conn,
+                unit="me0012",
+                res=_Res(
+                    status={
+                        **base,
+                        "packets_recv": 1000,
+                        "rx_airtime_secs": 600,
+                        "uptime_secs": 2000,
+                    },
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=since + 2000,
+            )
+            rolled = rolling_traffic(conn, "me0012", window_secs=window, now=now)
+            assert rolled is not None
+            overlap = 2000
+            full = 2000 + 10_000
+            self.assertEqual(rolled["duration_secs"], overlap)
+            self.assertEqual(rolled["packets_recv"], int(round(1000 * overlap / full)))
+            self.assertAlmostEqual(
+                rolled["rx_airtime_pct"],
+                round((600 * overlap / full / overlap) * 100, 1),
+            )
+
     def test_status_series_and_reboot_count(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
@@ -338,6 +427,180 @@ class HistoryTests(unittest.TestCase):
             self.assertAlmostEqual(airtime[0]["value"], 10.0)
             temps = history_series(conn, "me0009", "temperature", since=0)
             self.assertEqual(temps, [])
+
+    def test_derived_series_skips_zero_delta(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            base = {
+                "packets_recv": 100,
+                "recv_errors": 10,
+                "uptime_secs": 1000,
+            }
+            record_poll(
+                conn,
+                unit="me0010",
+                res=_Res(status=dict(base), polled_groups=frozenset({"status"})),
+                ts=1000,
+            )
+            record_poll(
+                conn,
+                unit="me0010",
+                res=_Res(status=dict(base), polled_groups=frozenset({"status"})),
+                ts=2000,
+            )
+            record_poll(
+                conn,
+                unit="me0010",
+                res=_Res(
+                    status={**base, "packets_recv": 200, "recv_errors": 20, "uptime_secs": 2000},
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=5000,
+            )
+            record_poll(
+                conn,
+                unit="me0010",
+                res=_Res(
+                    status={**base, "packets_recv": 200, "recv_errors": 20, "uptime_secs": 3000},
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=6000,
+            )
+            recv_rate = history_series(conn, "me0010", "recv_rate", since=0)
+            self.assertEqual(len(recv_rate), 2)
+            self.assertAlmostEqual(recv_rate[0]["value"], recv_rate[1]["value"])
+            unreadable = history_series(conn, "me0010", "unreadable_pct", since=0)
+            self.assertEqual(len(unreadable), 2)
+            self.assertAlmostEqual(unreadable[0]["value"], unreadable[1]["value"])
+
+    def test_poll_snapshots_newest_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            now = int(time.time())
+            record_poll(
+                conn,
+                unit="me0011",
+                res=_Res(
+                    status={"battery_mv": 4100, "packets_recv": 10, "packets_sent": 2, "uptime_secs": 100},
+                    telemetry=[{"channel": 1, "type": "temperature", "value": 22.5}],
+                    polled_groups=frozenset({"status", "telemetry"}),
+                ),
+                ts=now - 3600,
+            )
+            record_poll(
+                conn,
+                unit="me0011",
+                res=_Res(
+                    status={
+                        "battery_mv": 4050,
+                        "packets_recv": 25,
+                        "packets_sent": 5,
+                        "uptime_secs": 200,
+                    },
+                    telemetry=[{"channel": 1, "type": "temperature", "value": 23.0}],
+                    polled_groups=frozenset({"status", "telemetry"}),
+                ),
+                ts=now - 600,
+            )
+            polls = poll_snapshots(conn, "me0011", hours=72, limit=10)
+            self.assertEqual(len(polls), 2)
+            self.assertEqual(polls[0]["ts"], now - 600)
+            self.assertEqual(polls[0]["delta_packets_recv"], 15)
+            self.assertAlmostEqual(polls[0]["voltage"], 4.05)
+            self.assertAlmostEqual(polls[0]["temperature"], 23.0)
+            self.assertEqual(polls[0]["since_prev_secs"], 3000)
+            self.assertNotIn("since_prev_secs", polls[1])
+
+    def test_poll_snapshots_interpolates_temperature(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            now = int(time.time())
+            record_poll(
+                conn,
+                unit="me0013",
+                res=_Res(
+                    status={"battery_mv": 4100, "uptime_secs": 100},
+                    telemetry=[{"channel": 1, "type": "temperature", "value": 10.0}],
+                    polled_groups=frozenset({"status", "telemetry"}),
+                ),
+                ts=now - 3000,
+            )
+            record_poll(
+                conn,
+                unit="me0013",
+                res=_Res(
+                    status={"battery_mv": 4080, "uptime_secs": 200},
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=now - 2000,
+            )
+            record_poll(
+                conn,
+                unit="me0013",
+                res=_Res(
+                    status={"battery_mv": 4060, "uptime_secs": 300},
+                    telemetry=[{"channel": 1, "type": "temperature", "value": 20.0}],
+                    polled_groups=frozenset({"status", "telemetry"}),
+                ),
+                ts=now - 1000,
+            )
+            polls = poll_snapshots(conn, "me0013", hours=72, limit=10)
+            mid = next(p for p in polls if p["ts"] == now - 2000)
+            self.assertAlmostEqual(mid["temperature"], 15.0)
+            self.assertIn("temperature", mid.get("synthetic") or [])
+            self.assertAlmostEqual(mid["delta_temperature"], 5.0)
+            self.assertAlmostEqual(mid["delta_voltage"], -0.02)
+            ends = [p for p in polls if p["ts"] != now - 2000]
+            self.assertTrue(all("temperature" not in (p.get("synthetic") or []) for p in ends))
+            newest = next(p for p in polls if p["ts"] == now - 1000)
+            self.assertAlmostEqual(newest["delta_temperature"], 5.0)
+            oldest = next(p for p in polls if p["ts"] == now - 3000)
+            self.assertNotIn("delta_temperature", oldest)
+
+    def test_poll_snapshots_uses_off_timestamp_telemetry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            now = int(time.time())
+            record_poll(
+                conn,
+                unit="me0014",
+                res=_Res(
+                    status={"battery_mv": 4100, "uptime_secs": 100},
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=now - 3000,
+            )
+            conn.execute(
+                "INSERT INTO telemetry (ts, unit, channel, type, value) VALUES (?, ?, ?, ?, ?)",
+                (now - 2970, "me0014", 1, "temperature", 10.0),
+            )
+            record_poll(
+                conn,
+                unit="me0014",
+                res=_Res(
+                    status={"battery_mv": 4080, "uptime_secs": 200},
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=now - 2000,
+            )
+            record_poll(
+                conn,
+                unit="me0014",
+                res=_Res(
+                    status={"battery_mv": 4060, "uptime_secs": 300},
+                    telemetry=[{"channel": 1, "type": "temperature", "value": 20.0}],
+                    polled_groups=frozenset({"status", "telemetry"}),
+                ),
+                ts=now - 1000,
+            )
+            conn.commit()
+            polls = poll_snapshots(conn, "me0014", hours=72, limit=10)
+            oldest = next(p for p in polls if p["ts"] == now - 3000)
+            mid = next(p for p in polls if p["ts"] == now - 2000)
+            self.assertAlmostEqual(oldest["temperature"], 10.0)
+            self.assertNotIn("temperature", oldest.get("synthetic") or [])
+            self.assertAlmostEqual(mid["temperature"], 14.9)
+            self.assertIn("temperature", mid.get("synthetic") or [])
 
 
 if __name__ == "__main__":
