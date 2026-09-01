@@ -1,5 +1,5 @@
 import { createApp, computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { connectEvents, fetchFleet, fetchHistory, patchUnit } from './api.js'
+import { connectEvents, fetchFleet, patchUnit } from './api.js'
 import {
   formatBattery,
   formatRelative,
@@ -129,7 +129,6 @@ const App = {
       selectedKey.value = key
       mapCtrl?.flyTo(key, fleet)
       mapCtrl?.sync(fleet, key)
-      await loadHistory(fleet.units[key])
       await nextTick()
       syncDetailPopup()
     }
@@ -144,8 +143,6 @@ const App = {
       return parts.join(' · ')
     }
 
-    const historyPoints = ref([])
-
     async function togglePublic(unit, ev) {
       try {
         const updated = await patchUnit(unit.key, { public: ev.target.checked })
@@ -153,19 +150,6 @@ const App = {
         pushMap()
       } catch (err) {
         console.error(err)
-      }
-    }
-
-    async function loadHistory(unit) {
-      if (!unit?.key) {
-        historyPoints.value = []
-        return
-      }
-      try {
-        const data = await fetchHistory(unit.key, 'battery_mv')
-        historyPoints.value = data.points || []
-      } catch (err) {
-        historyPoints.value = []
       }
     }
 
@@ -233,7 +217,6 @@ const App = {
       unitLabel,
       unitTitle,
       togglePublic,
-      historyPoints,
     }
   },
   template: `
@@ -302,12 +285,6 @@ const App = {
             <dt>Uptime</dt>
             <dd>{{ formatUptime(selectedUnit.status?.uptime_secs) }}</dd>
           </dl>
-          <section v-if="historyPoints.length" class="history">
-            <h3>Battery</h3>
-            <div class="spark">
-              <span v-for="(pt, i) in historyPoints" :key="i">{{ pt.value }}</span>
-            </div>
-          </section>
           <section v-if="selectedUnit.neighbors?.length">
             <h3>Neighbors ({{ selectedUnit.neighbors.filter(n => n.unit_key).length }} in book)</h3>
             <div
