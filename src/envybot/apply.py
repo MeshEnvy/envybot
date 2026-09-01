@@ -239,16 +239,21 @@ def format_apply_plan(
     force: bool = False,
     doc: dict[str, Any] | None = None,
     keys: dict[str, list[str]] | None = None,
-) -> str:
-    """One-line apply summary: due SET fields and profile hash."""
+) -> tuple[str, str]:
+    """Apply summary: due SET fields (+ hash) vs already-stamped fields."""
+    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys)
     due = apply_due_fields(conn, unit, node, sites, force=force, doc=doc, keys=keys)
     pid = profile_id(node, sites, doc=doc, keys=keys)
     if not due:
-        return f"synced ({pid})"
-    parts = radio_apply_due_fields(due)
-    if "identity" in due:
-        parts = [*parts, "identity"]
-    return f"{', '.join(parts)} ({pid})"
+        need = f"synced ({pid})"
+    else:
+        parts = radio_apply_due_fields(due)
+        if "identity" in due:
+            parts = [*parts, "identity"]
+        need = f"{', '.join(parts)} ({pid})"
+    have = [f for f in APPLY_FIELDS if f in applicable and f not in due]
+    skip = f"{', '.join(have)} (synced)" if have else "none"
+    return need, skip
 
 
 def apply_is_due(

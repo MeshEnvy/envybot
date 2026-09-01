@@ -199,7 +199,7 @@ async def run(args: argparse.Namespace) -> int:
                     continue
                 prefix = f"[{n}] " if retry_mode and n > 1 else ""
                 print(f"{prefix}{target_label(target)} …", flush=True)
-                if not args.quiet and n == 1:
+                if not args.quiet:
                     if do_poll and target.due_groups:
                         need, skip_plan = format_get_plan(
                             conn,
@@ -211,7 +211,7 @@ async def run(args: argparse.Namespace) -> int:
                         print(f"  poll need: {need}")
                         print(f"  poll skip: {skip_plan}")
                     if target.key in apply_keys:
-                        apply_plan = format_apply_plan(
+                        apply_need, apply_have = format_apply_plan(
                             conn,
                             target.key,
                             nodes.get(target.key) or {},
@@ -220,7 +220,8 @@ async def run(args: argparse.Namespace) -> int:
                             doc=doc,
                             keys=keys,
                         )
-                        print(f"  apply need: {apply_plan}")
+                        print(f"  apply need: {apply_need}")
+                        print(f"  apply skip: {apply_have}")
                 if not await session.ensure_companion_connected(log=log):
                     print("  companion disconnected (reconnect failed)")
                     next_pending.append(target)

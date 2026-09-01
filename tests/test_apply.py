@@ -180,9 +180,23 @@ class DueTests(unittest.TestCase):
     def test_format_apply_plan_shows_due_fields_and_hash(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            plan = format_apply_plan(conn, "me0001", _STRONG, None)
-            self.assertTrue(plan.startswith("name,") or plan.startswith("name ("))
-            self.assertTrue(plan.startswith("v1:") or "(v1:" in plan)
+            need, skip = format_apply_plan(conn, "me0001", _STRONG, None)
+            self.assertTrue(need.startswith("name,") or need.startswith("name ("))
+            self.assertTrue(need.startswith("v1:") or "(v1:" in need)
+            self.assertEqual(skip, "none")
+
+    def test_format_apply_plan_splits_synced_from_due(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            applicable = applicable_field_desireds(_STRONG, None)
+            for field, des in applicable.items():
+                if field in {"name", "lat", "lon"}:
+                    insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
+            need, skip = format_apply_plan(conn, "me0001", _STRONG, None)
+            self.assertIn("advert", need)
+            self.assertNotIn("name,", need)
+            self.assertTrue(need.startswith("advert") or ", advert" in need)
+            self.assertEqual(skip, "name, lat, lon (synced)")
 
 
 class FormatTests(unittest.TestCase):

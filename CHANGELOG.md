@@ -18,6 +18,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   repeaters need the login handshake even when the book ACL lists admin).
 - Log companion route (`path: abcd …` or `path: flood`) before each
   mesh send attempt (CLI, login, binary).
+- Fleet retry rounds reprint poll/apply need vs skip so later passes
+  show what is still due and what already stamped.
 - Fleet poll cadence: default GET is status/telemetry/neighbors only.
   Name/GPS/advert/ACL are audit-only (`--force` / `--group`). Apply no
   longer triggers on heard leak/mismatch.

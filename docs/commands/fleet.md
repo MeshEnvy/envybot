@@ -53,7 +53,9 @@ Apply is due when any SET field stamp misses the book desired value
 (stored in sqlite `applies` per field: name, lat, lon, advert, flood,
 guest, admin, path_hash, dutycycle, acl, identity). A legacy ok
 `applies.profile` row still means fully synced. `--force` clears field
-stamps and re-SETs everything. A private node still needs a guest password
+stamps and re-SETs everything. Each attempt (including retries) prints
+`apply need` / `apply skip` from current stamps, and `poll need` /
+`poll skip` when GET groups remain. A private node still needs a guest password
 assign. Heard name/GPS/adverts do **not** trigger apply. Edit a hashed field in `nodes.yaml` (or run `trust`) and restart fleet.
 
 When apply runs, GET ACL once to drop keys not in the book allowlist.
