@@ -351,15 +351,18 @@ async def _handle_manual_job(request: web.Request, job: str) -> web.Response:
     if status == 400:
         return web.json_response({"error": err}, status=400)
     session = dict(web_ctx._session_states.get(key) or {})
-    await web_ctx.publish_unit(
-        key,
-        session=session,
-        session_states=web_ctx._session_states,
-        companion=web_ctx._companion,
-        poll=web_ctx._poll_state,
+    prev = ((web_ctx.hub.snapshot or {}).get("units") or {}).get(key) or {"key": key}
+    unit = dict(prev)
+    unit["session"] = session
+    asyncio.create_task(
+        web_ctx.publish_unit(
+            key,
+            session=session,
+            session_states=web_ctx._session_states,
+            companion=web_ctx._companion,
+            poll=web_ctx._poll_state,
+        )
     )
-    snap = web_ctx.hub.snapshot or {}
-    unit = snap.get("units", {}).get(key) or {}
     return web.json_response(unit)
 
 

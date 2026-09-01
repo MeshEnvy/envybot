@@ -203,3 +203,16 @@ export function unitLabel(unit) {
 export function unitTitle(unit) {
   return unitLabel(unit)
 }
+
+/** Stable sidebar order: site name, else unit id. Numeric-aware. */
+export function compareUnits(a, b) {
+  const an = unitLabel(a)
+  const bn = unitLabel(b)
+  const cmp = an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' })
+  if (cmp !== 0) return cmp
+  return String(a?.unit_id || a?.key || '').localeCompare(
+    String(b?.unit_id || b?.key || ''),
+    undefined,
+    { numeric: true, sensitivity: 'base' }
+  )
+}

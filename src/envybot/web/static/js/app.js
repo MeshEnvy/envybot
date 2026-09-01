@@ -21,23 +21,12 @@ import {
   healthHeadline,
   healthMark,
   healthTooltip,
+  compareUnits,
   unitLabel,
   unitTitle,
-} from './format.js?v=13'
+} from './format.js?v=14'
 import { buildNeighborEdges, createMapController, hasMapPin, unitStage, unitStatus } from './map.js?v=18'
 import { healthStroke, sparklinePath } from './sparklines.js?v=1'
-
-const SESSION_RANK = {
-  polling: 0,
-  queued: 1,
-  refreshing: 1,
-  pulling: 1,
-  pushing: 1,
-  unreachable: 2,
-  attention: 3,
-  paused: 4,
-  healthy: 5,
-}
 
 const App = {
   setup() {
@@ -50,6 +39,7 @@ const App = {
     })
     const selectedKey = ref(null)
     const search = ref('')
+    const listFilter = ref('all')
     const sparkData = reactive({
       voltage: [],
       temperature: [],
@@ -118,10 +108,30 @@ const App = {
       return !isInFlight(unit)
     }
 
+    /** @param {Record<string, unknown>} unit @param {'refresh' | 'pull' | 'push'} job */
+    function markOptimistic(unit, job) {
+      const key = String(unit.key)
+      const prev = fleet.units[key] || unit
+      const state = job === 'refresh' ? 'refreshing' : job === 'pull' ? 'pulling' : 'pushing'
+      fleet.units[key] = {
+        ...prev,
+        session: {
+          ...(typeof prev.session === 'object' && prev.session ? prev.session : {}),
+          state,
+          stage: 'Logging in',
+          kind: 'login',
+          manual: true,
+          job,
+        },
+      }
+    }
+
     /** @param {Record<string, unknown>} unit @param {'refresh' | 'pull' | 'push'} job @param {Event} [ev] */
     async function runManualJob(unit, job, ev) {
       ev?.stopPropagation?.()
       if (!canManualUnit(unit)) return
+      markOptimistic(unit, job)
+      pushMap()
       const fn = job === 'refresh' ? refreshUnit : job === 'pull' ? pullUnit : pushUnit
       try {
         const updated = await fn(String(unit.key))
@@ -132,9 +142,14 @@ const App = {
       }
     }
 
+    const activeCount = computed(() => Object.values(fleet.units || {}).filter(isInFlight).length)
+
     const sortedUnits = computed(() => {
       const q = search.value.trim().toLowerCase()
       let units = Object.values(fleet.units || {})
+      if (listFilter.value === 'active') {
+        units = units.filter(isInFlight)
+      }
       if (q) {
         units = units.filter((u) => {
           const hay = [u.key, u.unit_id, u.site, u.site_name, u.label]
@@ -144,15 +159,7 @@ const App = {
           return hay.includes(q)
         })
       }
-      return units.sort((a, b) => {
-        const ra = SESSION_RANK[unitStatus(a)] ?? 8
-        const rb = SESSION_RANK[unitStatus(b)] ?? 8
-        if (ra !== rb) return ra - rb
-        const ha = a.last_heard ?? 0
-        const hb = b.last_heard ?? 0
-        if (ha !== hb) return hb - ha
-        return unitLabel(a).localeCompare(unitLabel(b))
-      })
+      return units.sort(compareUnits)
     })
 
     const selectedUnit = computed(() => (selectedKey.value ? fleet.units[selectedKey.value] : null))
@@ -261,8 +268,18 @@ const App = {
       return parts.join(' · ')
     }
 
+    function cardTitle(unit) {
+      if (unit.site_name) return unit.site_name
+      return String(unit.unit_id || unit.key || '')
+    }
+
     function cardMeta(unit) {
-      const parts = unit.site_name ? [unit.unit_id || unit.key] : [formatSite(unit.site)]
+      const parts = []
+      if (unit.site_name) {
+        parts.push(unit.unit_id || unit.key)
+      } else if (!unit.site) {
+        parts.push(formatSite(unit.site))
+      }
       if (unit.firmware_version) parts.push(`fw ${unit.firmware_version}`)
       const bat = unit.status?.battery_mv
       if (bat != null) parts.push(formatBattery(bat))
@@ -340,6 +357,8 @@ const App = {
     return {
       fleet,
       search,
+      listFilter,
+      activeCount,
       sortedUnits,
       selectedUnit,
       selectedKey,
@@ -358,6 +377,7 @@ const App = {
       healthHeadline,
       healthEmoji,
       healthMark,
+      cardTitle,
       cardMeta,
       formatAgo,
       formatRelative,
@@ -669,42 +689,69 @@ const App = {
         </div>
       </main>
       <aside id="sidebar">
+        <div class="sidebar-toolbar">
+          <div class="list-filter" role="tablist" aria-label="List filter">
+            <button
+              type="button"
+              role="tab"
+              :class="{ on: listFilter === 'all' }"
+              :aria-selected="listFilter === 'all'"
+              @click="listFilter = 'all'"
+            >
+              All
+            </button>
+            <button
+              type="button"
+              role="tab"
+              :class="{ on: listFilter === 'active' }"
+              :aria-selected="listFilter === 'active'"
+              @click="listFilter = 'active'"
+            >
+              Active{{ activeCount ? ' ' + activeCount : '' }}
+            </button>
+          </div>
+        </div>
         <div id="unit-list">
+          <p v-if="!sortedUnits.length" class="list-empty">
+            {{ listFilter === 'active' ? 'Nothing in flight.' : 'No units.' }}
+          </p>
           <div
             v-for="unit in sortedUnits"
             :key="unit.key"
             class="unit-card"
-            :class="{ selected: unit.key === selectedKey, paused: !!unit.paused }"
+            :class="{ selected: unit.key === selectedKey, paused: !!unit.paused, busy: isInFlight(unit) }"
             @click="selectUnit(unit.key)"
           >
-            <div class="unit-top">
-              <span class="unit-name">{{ unit.site_name || unit.unit_id || unit.key }}</span>
-              <span v-if="unit.site_name" class="unit-id">{{ unit.unit_id || unit.key }}</span>
-              <span class="unit-badges">
-                <span
-                  v-if="isInFlight(unit)"
-                  class="badge"
-                  :class="'badge-' + unitStatus(unit)"
-                  :title="sessionBadgeTitle(unit)"
-                >{{ unitStage(unit) }}</span>
-                <button
-                  v-if="manualAccepting"
-                  type="button"
-                  class="manual-btn manual-btn-inline"
-                  :disabled="!canManualUnit(unit)"
-                  @click.stop="runManualJob(unit, 'refresh', $event)"
-                >
-                  Refresh
-                </button>
-              </span>
-            </div>
-            <div class="unit-meta">
+            <div class="unit-row1">
               <span
                 class="health-mark"
                 :class="'health-mark-' + healthHeadline(unit)"
                 :title="healthTooltip(unit.health)"
-              >{{ healthEmoji(unit) }}</span>{{ cardMeta(unit) }}
+              >{{ healthEmoji(unit) }}</span>
+              <span class="unit-title">{{ cardTitle(unit) }}</span>
+              <button
+                v-if="manualAccepting"
+                type="button"
+                class="unit-refresh"
+                :class="{ spinning: isInFlight(unit) }"
+                :disabled="!canManualUnit(unit)"
+                :title="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
+                :aria-label="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
+                @click.stop="runManualJob(unit, 'refresh', $event)"
+              >
+                <span class="unit-refresh-icon" aria-hidden="true">↻</span>
+              </button>
             </div>
+            <div class="unit-row2">{{ cardMeta(unit) }}</div>
+            <Transition name="stage">
+              <div
+                v-if="isInFlight(unit)"
+                class="unit-stage"
+                :title="sessionBadgeTitle(unit)"
+              >
+                {{ unitStage(unit) }}
+              </div>
+            </Transition>
           </div>
         </div>
       </aside>
