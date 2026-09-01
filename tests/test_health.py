@@ -159,7 +159,7 @@ class HealthTests(unittest.TestCase):
         traffic = next(c for c in health["checks"] if c["name"] == "Traffic")
         self.assertEqual(traffic["status"], "warn")
 
-    def test_traffic_dead_air_bad(self) -> None:
+    def test_traffic_quiet_short_ok(self) -> None:
         health = compute_health(
             freshness="fresh",
             session=None,
@@ -175,7 +175,26 @@ class HealthTests(unittest.TestCase):
             reboot_count=0,
         )
         traffic = next(c for c in health["checks"] if c["name"] == "Traffic")
+        self.assertEqual(traffic["status"], "ok")
+
+    def test_traffic_dead_air_bad(self) -> None:
+        health = compute_health(
+            freshness="fresh",
+            session=None,
+            drift=None,
+            status={"battery_mv": 4000},
+            telemetry={"voltage": 4.0},
+            traffic_interval={
+                "packets_recv": 0,
+                "packets_sent": 0,
+                "duration_secs": 6 * 3600,
+            },
+            status_rows=[{"uptime_secs": 1000}, {"uptime_secs": 2000}],
+            reboot_count=0,
+        )
+        traffic = next(c for c in health["checks"] if c["name"] == "Traffic")
         self.assertEqual(traffic["status"], "bad")
+        self.assertIn("6 h", traffic.get("reason") or "")
 
     def test_rf_worsening_warn(self) -> None:
         lifetime_pct = 50.0

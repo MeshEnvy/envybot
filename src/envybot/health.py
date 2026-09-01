@@ -23,6 +23,7 @@ STABILITY_WARN_REBOOTS = 1
 STABILITY_BAD_REBOOTS = 2
 
 # Traffic
+TRAFFIC_DEAD_AIR_HOURS = 6
 TRAFFIC_DEAF_HOURS = 12
 
 # RF quality
@@ -231,14 +232,17 @@ def compute_health(
         d_out = interval.get("packets_sent")
         duration = interval.get("duration_secs") or 0
         if d_in == 0 and d_out == 0:
-            checks.append(
-                _check(
-                    "Traffic",
-                    "bad",
-                    "No packets in or out since last poll",
-                    fix="Confirm the radio is on-air. Check neighbors and duty cycle.",
+            if duration >= TRAFFIC_DEAD_AIR_HOURS * 3600:
+                checks.append(
+                    _check(
+                        "Traffic",
+                        "bad",
+                        f"No packets in or out over {TRAFFIC_DEAD_AIR_HOURS} h",
+                        fix="Confirm the radio is on-air. Check neighbors and duty cycle.",
+                    )
                 )
-            )
+            else:
+                checks.append(_check("Traffic", "ok"))
         elif d_in == 0 and duration >= TRAFFIC_DEAF_HOURS * 3600:
             checks.append(
                 _check(
