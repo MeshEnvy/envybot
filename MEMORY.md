@@ -24,6 +24,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/history.py` | `data/fleet/history.sqlite` |
 | `src/envybot/health.py` | Per-node health checks (snapshot + UI grade) |
 | `src/envybot/position.py` | Book GPS from `sites.yaml` (`node:` bind + `loc`) |
+| `src/envybot/sun.py` | Clear-sky elev: ☀️/🌙 + 72h elevation sparkline |
 | `src/envybot/radio.py` | Companion session, login, CLI/binary |
 | `src/envybot/poll.py` | GET cadence (live / inventory / audit) → sqlite |
 | `src/envybot/apply.py` | SET mask unless `public: true`; `v1:` profile hash |
@@ -74,10 +75,15 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Per-field stamps in sqlite `applies` (name, lat, lon, …). Legacy
   `profile` ok row still counts as fully synced. `--force` is Pull plus Push.
   UI leak / mismatch is the inverse of that stamp (private due / public
-  due), not heard last-seen identity. Poll default: status/telemetry/neighbors
-  on interval (neighbors = remote `discover.neighbors` + wait + GET;
-  UI drops rows older than 7d); fw/bl once; name/gps/advert/acl
-  audit-only (Pull / `--group` / `--force`).
+  due), not heard last-seen identity. Poll default: status/telemetry every 1h
+  (`--min-interval`); neighbors
+  stay 24h (`discover.neighbors` + wait + GET; UI drops rows older
+  than 7d). Long-running fleet re-checks due groups about every 60s
+  while idle. fw/bl once; name/gps/advert/acl audit-only (Pull /
+  `--group` / `--force`). Status/telemetry samples log bound-site GPS.
+  One-shot `sample_loc_backfill` stamps current site loc onto older
+  rows that lack it. Bench/unmapped stay blank. Voltage/temp When cells
+  show ☀️/🌙 (sun above horizon = charging expected).
   **Fleet poll uses swim-lane round-robin:** each unit owns a FIFO deque
   (login, GET groups, SET fields). One dispatcher sends one radio command per
   unit per turn, then rotates to the least-recently-served ready lane. Timeout
@@ -119,7 +125,9 @@ Separate USB OTA repeater for `motatool serve`.
   `/api/polls/{unit}` (`source_histories`). SSE `unit` events carry
   `{ source, sample }` so the open card updates live via `state.js`.
   List meta line shows a headline mark: Paused, Healthy, Unreachable,
-  Needs attention. Detail card edits book `alias` and `notes` (blur saves).
+  Needs attention. Status/telemetry history times show ☀️ or 🌙
+  (clear-sky sun up = charging expected). Detail sparklines share a 72h
+  wall-clock axis; Sun is elevation vs horizon. Detail card edits book `alias` and `notes` (blur saves).
   In-flight cards show the current job stage (Logging in, Fetching ACL, …).
   `unreachable` is only after the scheduler gives up
   (`--attempts`) or a hard fail. A login timeout parks the unit and keeps

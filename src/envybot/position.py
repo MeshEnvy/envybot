@@ -126,6 +126,18 @@ def site_loc(site: dict[str, Any] | None) -> tuple[float, float] | None:
     return lat, lon
 
 
+def site_loc_for_unit(
+    key: str | None,
+    node: dict[str, Any] | None,
+    sites: dict[str, dict[str, Any]] | None,
+) -> tuple[float, float] | None:
+    """Bound site GPS for logging with a poll sample."""
+    pos = resolve_book_position(node or {}, sites, key=key)
+    if not pos:
+        return None
+    return float(pos["lat"]), float(pos["lon"])
+
+
 def resolve_book_position(
     node: dict[str, Any],
     sites: dict[str, dict[str, Any]] | None = None,

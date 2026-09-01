@@ -365,7 +365,7 @@ def compute_health(
             _check(
                 "Temperature",
                 "bad",
-                f"{temp:.0f} °C",
+                f"{temp * 9 / 5 + 32:.0f} °F",
                 fix="Shade, vent, or move the enclosure.",
             )
         )
@@ -374,12 +374,12 @@ def compute_health(
             _check(
                 "Temperature",
                 "warn",
-                f"{temp:.0f} °C",
+                f"{temp * 9 / 5 + 32:.0f} °F",
                 fix="Check enclosure placement and sun load.",
             )
         )
     else:
-        checks.append(_check("Temperature", "ok", f"{temp:.0f} °C"))
+        checks.append(_check("Temperature", "ok", f"{temp * 9 / 5 + 32:.0f} °F"))
 
     grade = _worst_grade(checks)
     issues = [c for c in checks if c["status"] not in ("ok", "unknown")]

@@ -183,7 +183,13 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(sched.wait_for_work())
         await asyncio.sleep(0.05)
         sched.enqueue_jobs(_target(), [RadioJob(kind="login", unit_key="me0001")])
-        await asyncio.wait_for(task, timeout=1.0)
+        self.assertTrue(await asyncio.wait_for(task, timeout=1.0))
+
+    async def test_wait_for_work_timeout_returns_false(self) -> None:
+        sched = FleetScheduler()
+        woke = await sched.wait_for_work(timeout=0.05)
+        self.assertFalse(woke)
+        self.assertEqual(sched.pending_count(), 0)
 
 
 class PickNextTests(unittest.TestCase):

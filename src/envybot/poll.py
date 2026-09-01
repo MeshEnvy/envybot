@@ -11,6 +11,7 @@ from envybot.history import get_last_seen, record_poll
 from envybot.nodes_doc import is_paused
 from envybot.radio import (
     DEFAULT_MIN_POLL_INTERVAL,
+    NEIGHBOR_POLL_INTERVAL,
     PULL_GROUP_ORDER,
     PULL_GROUPS,
     PullGroupSpec,
@@ -35,7 +36,7 @@ GET_GROUPS: dict[str, PullGroupSpec] = {
     "acl": PullGroupSpec("audit", "acl_at"),
     "status": PullGroupSpec("periodic", "status_at"),
     "telemetry": PullGroupSpec("periodic", "telemetry_at"),
-    "neighbors": PullGroupSpec("periodic", "neighbors_at"),
+    "neighbors": PullGroupSpec("periodic", "neighbors_at", interval=NEIGHBOR_POLL_INTERVAL),
 }
 
 GET_GROUP_ORDER = tuple(GET_GROUPS.keys())
@@ -184,10 +185,17 @@ def group_is_due(
     stamp = _stamp(seen, spec.pulled_at_key)
     if stamp is None:
         return True
-    interval = spec.interval if spec.interval is not None else policy.min_interval
+    interval = group_interval(group, policy)
     if interval <= 0:
         return True
     return (now - stamp) >= interval
+
+
+def group_interval(group: str, policy: PollPolicy) -> float:
+    spec = GET_GROUPS[group]
+    if spec.interval is not None:
+        return spec.interval
+    return policy.min_interval
 
 
 def due_groups(
@@ -283,9 +291,11 @@ def format_get_plan(
     if skip_audit:
         skip_bits.append(f"{', '.join(skip_audit)} (audit)")
     if skip_fresh:
-        skip_bits.append(
-            f"{', '.join(skip_fresh)} (fresh <{format_interval(policy.min_interval)})"
-        )
+        by_iv: dict[float, list[str]] = {}
+        for group in skip_fresh:
+            by_iv.setdefault(group_interval(group, policy), []).append(group)
+        for iv, names in by_iv.items():
+            skip_bits.append(f"{', '.join(names)} (fresh <{format_interval(iv)})")
     skip = "; ".join(skip_bits) if skip_bits else "none"
     return need, skip
 
@@ -329,6 +339,8 @@ __all__ = [
     "PollResult",
     "PullPolicy",
     "due_groups",
+    "group_interval",
+    "group_is_due",
     "manual_job_session_state",
     "pull_due_groups",
     "refresh_due_groups",

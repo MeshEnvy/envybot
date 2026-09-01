@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 import webbrowser
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,7 +24,8 @@ from envybot.nodes_doc import (
     load_sites_for_book,
     write_nodes_doc,
 )
-from envybot.position import bind_node_to_site, load_sites_doc, write_sites_doc
+from envybot.position import bind_node_to_site, load_sites_doc, site_loc_for_unit, write_sites_doc
+from envybot.sun import attach_sun, sun_series
 from envybot.radio import load_targets
 from envybot.web.hub import FleetHub
 from envybot.web.snapshot import assert_no_secrets, build_fleet_snapshot, build_neighbor_edges
@@ -346,18 +348,43 @@ async def _handle_history(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+def _site_loc_for_polls(web_ctx: MonitorWeb, unit: str) -> tuple[float, float] | None:
+    """Current bound-site GPS for sun on history rows that predate loc logging."""
+    binding = web_ctx._binding
+    if binding is not None:
+        node = binding.nodes.get(unit)
+        return site_loc_for_unit(
+            unit, node if isinstance(node, dict) else None, binding.sites
+        )
+    doc = load_nodes_doc(web_ctx.nodes_path)
+    nodes = doc.get("nodes") or {}
+    node = nodes.get(unit)
+    return site_loc_for_unit(
+        unit,
+        node if isinstance(node, dict) else None,
+        load_sites_for_book(web_ctx.nodes_path),
+    )
+
+
 async def _handle_polls(request: web.Request) -> web.Response:
     unit = request.match_info["unit"]
     hours_raw = request.query.get("hours")
     limit_raw = request.query.get("limit")
     hours = int(hours_raw) if hours_raw and hours_raw.isdigit() else 72
-    limit = int(limit_raw) if limit_raw and limit_raw.isdigit() else 48
+    limit = int(limit_raw) if limit_raw and limit_raw.isdigit() else 80
     web_ctx: MonitorWeb = request.app["web_ctx"]
     conn = open_history(web_ctx.nodes_path.parent)
     try:
         histories = source_histories(conn, unit, hours=hours, limit=limit)
     finally:
         conn.close()
+    loc = _site_loc_for_polls(web_ctx, unit)
+    attach_sun(histories.get("status"), loc=loc)
+    attach_sun(histories.get("telemetry"), loc=loc)
+    now = int(time.time())
+    histories["sun"] = (
+        sun_series(loc[0], loc[1], now - hours * 3600, now) if loc else []
+    )
     payload = {"unit": unit, "hours": hours, "histories": histories}
     assert_no_secrets(payload)
     return web.json_response(payload)

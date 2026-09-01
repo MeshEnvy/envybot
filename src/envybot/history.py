@@ -57,7 +57,9 @@ CREATE TABLE IF NOT EXISTS telemetry (
   unit TEXT NOT NULL,
   channel INTEGER,
   type TEXT,
-  value REAL
+  value REAL,
+  lat REAL,
+  lon REAL
 );
 CREATE INDEX IF NOT EXISTS telemetry_unit_ts ON telemetry (unit, ts);
 
@@ -141,7 +143,91 @@ def open_history(book: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.executescript(SCHEMA)
     _ensure_last_seen_columns(conn)
+    _ensure_sample_loc_columns(conn)
+    _backfill_sample_loc_from_sites(conn, book)
     return conn
+
+
+def _ensure_sample_loc_columns(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(telemetry)")}
+    if "lat" not in cols:
+        conn.execute("ALTER TABLE telemetry ADD COLUMN lat REAL")
+    if "lon" not in cols:
+        conn.execute("ALTER TABLE telemetry ADD COLUMN lon REAL")
+
+
+SAMPLE_LOC_BACKFILL_META = "sample_loc_backfill"
+
+
+def _backfill_sample_loc_from_sites(conn: sqlite3.Connection, book: Path) -> int:
+    """One-shot: stamp current site GPS onto status/telemetry rows that lack loc.
+
+    Bound units only. Bench/unmapped rows stay NULL. Does not overwrite a
+    loc already on the sample. Re-run by deleting meta ``sample_loc_backfill``.
+    """
+    done = conn.execute(
+        "SELECT value FROM meta WHERE key = ?", (SAMPLE_LOC_BACKFILL_META,)
+    ).fetchone()
+    if done:
+        return 0
+    nodes_path = book / "nodes.yaml"
+    sites_path = book / "sites.yaml"
+    if not nodes_path.is_file() or not sites_path.is_file():
+        return 0
+    from envybot.nodes_doc import load_nodes_doc
+    from envybot.position import load_sites, site_loc_for_unit
+
+    nodes = load_nodes_doc(nodes_path).get("nodes") or {}
+    sites = load_sites(sites_path)
+    stamped = 0
+    if isinstance(nodes, dict):
+        for unit, node in nodes.items():
+            loc = site_loc_for_unit(
+                str(unit), node if isinstance(node, dict) else None, sites
+            )
+            if not loc:
+                continue
+            stamped += _stamp_missing_sample_loc(conn, str(unit).lower(), loc)
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        (SAMPLE_LOC_BACKFILL_META, str(int(time.time()))),
+    )
+    conn.commit()
+    return stamped
+
+
+def _stamp_missing_sample_loc(
+    conn: sqlite3.Connection,
+    unit: str,
+    loc: tuple[float, float],
+) -> int:
+    lat, lon = loc
+    n = 0
+    n += conn.execute(
+        "UPDATE telemetry SET lat = ?, lon = ? "
+        "WHERE unit = ? AND (lat IS NULL OR lon IS NULL)",
+        (lat, lon, unit),
+    ).rowcount
+    rows = conn.execute(
+        "SELECT rowid, payload FROM status WHERE unit = ?", (unit,)
+    ).fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("site_lat") is not None and payload.get("site_lon") is not None:
+            continue
+        payload["site_lat"] = lat
+        payload["site_lon"] = lon
+        conn.execute(
+            "UPDATE status SET payload = ? WHERE rowid = ?",
+            (json.dumps(payload, default=str), row["rowid"]),
+        )
+        n += 1
+    return n
 
 
 def _ensure_last_seen_columns(conn: sqlite3.Connection) -> None:
@@ -825,6 +911,8 @@ def status_history(
                 "recv_errors": _status_int(payload, "recv_errors"),
                 "noise_floor": _status_int(payload, "noise_floor"),
                 "uptime_secs": _status_int(payload, "uptime_secs"),
+                "lat": _finite_number(payload.get("site_lat")),
+                "lon": _finite_number(payload.get("site_lon")),
             }
         )
     _apply_poll_deltas(chronological)
@@ -840,7 +928,7 @@ def telemetry_history(
 ) -> list[dict[str, Any]]:
     since = int(time.time()) - max(1, hours) * 3600
     tele_rows = conn.execute(
-        "SELECT ts, type, value FROM telemetry WHERE unit = ? AND ts >= ? "
+        "SELECT ts, type, value, lat, lon FROM telemetry WHERE unit = ? AND ts >= ? "
         "AND type IN ('voltage', 'temperature') ORDER BY ts ASC",
         (unit, since),
     ).fetchall()
@@ -851,11 +939,17 @@ def telemetry_history(
         num = _finite_number(row["value"])
         if num is None:
             continue
-        entry = by_ts.setdefault(ts, {"ts": ts, "voltage": None, "temperature": None})
+        entry = by_ts.setdefault(
+            ts, {"ts": ts, "voltage": None, "temperature": None, "lat": None, "lon": None}
+        )
         if kind == "voltage":
             entry["voltage"] = round(num, 3)
         elif kind == "temperature":
             entry["temperature"] = round(num, 1)
+        if entry.get("lat") is None:
+            entry["lat"] = _finite_number(row["lat"])
+        if entry.get("lon") is None:
+            entry["lon"] = _finite_number(row["lon"])
     chronological = sorted(by_ts.values(), key=lambda r: r["ts"])
     prev: dict[str, Any] | None = None
     for row in chronological:
@@ -1153,10 +1247,18 @@ def record_poll(
     unit: str,
     res: Any,
     ts: int | None = None,
+    site_loc: tuple[float, float] | None = None,
 ) -> None:
-    """Write a PollResult into last_seen + history tables."""
+    """Write a PollResult into last_seen + history tables.
+
+    ``site_loc`` is book GPS at sample time (not device GET). Logged on
+    status/telemetry rows so sun can be computed later.
+    """
     now = ts or int(time.time())
     groups = getattr(res, "polled_groups", frozenset()) or frozenset()
+    loc_lat = loc_lon = None
+    if site_loc is not None:
+        loc_lat, loc_lon = site_loc
     fields: dict[str, Any] = {"updated_at": now}
     if getattr(res, "node_clock", None) is not None:
         fields["node_clock"] = res.node_clock
@@ -1198,9 +1300,13 @@ def record_poll(
                 fields["uptime_secs"] = int(uptime)
             except (TypeError, ValueError):
                 pass
+        status_payload = dict(res.status)
+        if loc_lat is not None and loc_lon is not None:
+            status_payload["site_lat"] = loc_lat
+            status_payload["site_lon"] = loc_lon
         conn.execute(
             "INSERT INTO status (ts, unit, payload) VALUES (?, ?, ?)",
-            (now, unit, json.dumps(res.status, default=str)),
+            (now, unit, json.dumps(status_payload, default=str)),
         )
     if "telemetry" in groups and res.telemetry is not None:
         fields["telemetry_at"] = now
@@ -1219,8 +1325,9 @@ def record_poll(
             except (TypeError, ValueError):
                 num = None
             conn.execute(
-                "INSERT INTO telemetry (ts, unit, channel, type, value) VALUES (?, ?, ?, ?, ?)",
-                (now, unit, item.get("channel"), item.get("type"), num),
+                "INSERT INTO telemetry (ts, unit, channel, type, value, lat, lon) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (now, unit, item.get("channel"), item.get("type"), num, loc_lat, loc_lon),
             )
     if "acl" in groups and res.acl is not None:
         fields["acl_at"] = now

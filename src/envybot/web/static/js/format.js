@@ -20,10 +20,15 @@ export function formatBattery(mv) {
   return `${(mv / 1000).toFixed(2)} V`
 }
 
+/** Device telemetry is °C. Display °F. */
+export function cToF(c) {
+  return (Number(c) * 9) / 5 + 32
+}
+
 /** @param {number | null | undefined} c */
 export function formatTemp(c) {
-  if (c == null) return '—'
-  return `${c.toFixed(1)} °C`
+  if (c == null || !Number.isFinite(Number(c))) return '—'
+  return `${cToF(c).toFixed(0)} °F`
 }
 
 /** @param {number | null | undefined} secs */
@@ -212,7 +217,16 @@ export function hasTrafficStats(status) {
   ].some((k) => status[k] != null)
 }
 
-/** @param {string | null | undefined} slug */
+/** @param {Record<string, unknown> | null | undefined} sun */
+export function sunEmoji(sun) {
+  return typeof sun?.emoji === 'string' ? sun.emoji : ''
+}
+
+/** @param {Record<string, unknown> | null | undefined} sun */
+export function sunTitle(sun) {
+  return typeof sun?.label === 'string' ? sun.label : ''
+}
+
 export function formatSite(slug) {
   if (!slug) return 'bag / bench'
   return slug

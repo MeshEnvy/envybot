@@ -29,7 +29,8 @@ from envybot.keys_doc import UnknownPerson, resolve_node_acl
 from envybot.nodes_doc import MASK_NAME, is_public
 from envybot.passwords import normalize_password, password_is_strong
 from envybot.poll import GET_GROUP_ORDER, PollPolicy, pull_due_groups, refresh_due_groups
-from envybot.position import public_radio_name, resolve_book_position
+from envybot.position import public_radio_name, resolve_book_position, site_loc_for_unit
+from envybot.sun import stamp_sun
 from envybot.radio import (
     FleetSession,
     NEIGHBOR_DISCOVER_WAIT_S,
@@ -152,11 +153,26 @@ class PollAccumulator:
     def record_group(self, ctx: WorkerContext, unit: str, group: str) -> None:
         self.polled_groups.add(group)
         res = self.to_result(unit)
-        record_poll(ctx.conn, unit=unit, res=res)
+        record_poll(
+            ctx.conn,
+            unit=unit,
+            res=res,
+            site_loc=site_loc_for_unit(unit, ctx.nodes.get(unit), ctx.sites),
+        )
 
 
 def _attempt_cap(ctx: WorkerContext) -> int | None:
     return ctx.max_attempts if ctx.max_attempts else None
+
+
+def _sample_site_sun(
+    sample: dict[str, Any], site_loc: tuple[float, float] | None
+) -> None:
+    if not site_loc:
+        return
+    sample["lat"] = site_loc[0]
+    sample["lon"] = site_loc[1]
+    stamp_sun(sample)
 
 
 def job_sample(
@@ -164,6 +180,8 @@ def job_sample(
     uq: UnitQueue,
     outcome: JobOutcome,
     payload: Any | None,
+    *,
+    site_loc: tuple[float, float] | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     """Build SSE sample for a successful GET group."""
     if outcome not in (JobOutcome.HEARD, JobOutcome.TIMER_DONE):
@@ -178,18 +196,17 @@ def job_sample(
     if job.kind == "get:status" and acc.status:
         st = acc.status
         battery = st.get("battery_mv")
-        return (
-            "status",
-            {
-                "ts": ts,
-                "battery_mv": battery,
-                "voltage": round(battery / 1000.0, 3) if battery is not None else None,
-                "packets_recv": st.get("packets_recv"),
-                "packets_sent": st.get("packets_sent"),
-                "uptime_secs": st.get("uptime_secs"),
-                "noise_floor": st.get("noise_floor"),
-            },
-        )
+        sample = {
+            "ts": ts,
+            "battery_mv": battery,
+            "voltage": round(battery / 1000.0, 3) if battery is not None else None,
+            "packets_recv": st.get("packets_recv"),
+            "packets_sent": st.get("packets_sent"),
+            "uptime_secs": st.get("uptime_secs"),
+            "noise_floor": st.get("noise_floor"),
+        }
+        _sample_site_sun(sample, site_loc)
+        return ("status", sample)
     if job.kind == "get:telemetry" and acc.telemetry:
         volt = None
         temp = None
@@ -200,10 +217,9 @@ def job_sample(
                 volt = float(item["value"])
             if item.get("type") == "temperature" and item.get("value") is not None:
                 temp = float(item["value"])
-        return (
-            "telemetry",
-            {"ts": ts, "voltage": volt, "temperature": temp},
-        )
+        sample = {"ts": ts, "voltage": volt, "temperature": temp}
+        _sample_site_sun(sample, site_loc)
+        return ("telemetry", sample)
     if job.kind == "get:neighbors" and acc.neighbors is not None:
         return (
             "neighbors",

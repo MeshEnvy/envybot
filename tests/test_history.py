@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 from envybot.history import (
+    _backfill_sample_loc_from_sites,
     count_reboots,
     get_last_seen,
     history_series,
@@ -88,6 +89,69 @@ class HistoryTests(unittest.TestCase):
             noise = history_series(conn, "me0001", "noise_floor")
             self.assertEqual(len(noise), 1)
             self.assertEqual(noise[0]["value"], -94)
+
+    def test_record_poll_logs_site_loc(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            record_poll(
+                conn,
+                unit="me0001",
+                res=_Res(
+                    status={"battery_mv": 4050},
+                    telemetry=[{"channel": 1, "type": "voltage", "value": 4.05}],
+                    polled_groups=frozenset({"status", "telemetry"}),
+                ),
+                ts=1_700_000_000,
+                site_loc=(39.5296, -119.8138),
+            )
+            hist = source_histories(conn, "me0001", hours=99999, limit=10)
+            st = hist["status"][0]
+            te = hist["telemetry"][0]
+            self.assertAlmostEqual(st["lat"], 39.5296)
+            self.assertAlmostEqual(st["lon"], -119.8138)
+            self.assertAlmostEqual(te["lat"], 39.5296)
+            self.assertAlmostEqual(te["lon"], -119.8138)
+
+    def test_backfill_sample_loc_from_current_site(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            conn = open_history(book)
+            conn.execute(
+                "INSERT INTO status (ts, unit, payload) VALUES (?, ?, ?)",
+                (1_700_000_000, "me0001", json.dumps({"battery_mv": 4000})),
+            )
+            conn.execute(
+                "INSERT INTO telemetry (ts, unit, type, value) VALUES (?, ?, ?, ?)",
+                (1_700_000_000, "me0001", "voltage", 4.0),
+            )
+            conn.execute(
+                "INSERT INTO telemetry (ts, unit, type, value, lat, lon) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (1_700_000_100, "me0001", "voltage", 4.1, 40.0, -117.0),
+            )
+            conn.execute(
+                "INSERT INTO status (ts, unit, payload) VALUES (?, ?, ?)",
+                (1_700_000_000, "me0002", json.dumps({"battery_mv": 3900})),
+            )
+            conn.commit()
+            (book / "nodes.yaml").write_text(
+                "nodes:\n  me0001: {}\n  me0002: {}\n",
+                encoding="utf-8",
+            )
+            (book / "sites.yaml").write_text(
+                "sites:\n  peak:\n    loc: [39.5, -119.8]\n    node: me0001\n",
+                encoding="utf-8",
+            )
+            stamped = _backfill_sample_loc_from_sites(conn, book)
+            self.assertGreater(stamped, 0)
+            hist = source_histories(conn, "me0001", hours=99999, limit=10)
+            self.assertAlmostEqual(hist["status"][0]["lat"], 39.5)
+            by_ts = {row["ts"]: row for row in hist["telemetry"]}
+            self.assertAlmostEqual(by_ts[1_700_000_000]["lon"], -119.8)
+            self.assertAlmostEqual(by_ts[1_700_000_100]["lat"], 40.0)
+            bench = source_histories(conn, "me0002", hours=99999, limit=10)
+            self.assertIsNone(bench["status"][0]["lat"])
+            self.assertEqual(_backfill_sample_loc_from_sites(conn, book), 0)
 
     def test_apply_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

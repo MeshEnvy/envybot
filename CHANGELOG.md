@@ -6,8 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Added
+
+- Status/telemetry poll samples log bound-site GPS. A one-shot sqlite
+  backfill stamps the current site onto older rows that lack loc
+  (bench/unmapped stay blank). Voltage/temp **When** shows ☀️ or 🌙
+  (clear-sky sun above the horizon = charging expected). Detail
+  sparklines share a 72h axis; Sun is a solar-elevation wave with a
+  horizon line. Temperature displays as °F (radio still reports °C).
+
 ### Changed
 
+- Live GET default is **1h** for status/telemetry (`--min-interval`).
+  Neighbors stay **24h**. A long-running fleet re-checks due groups about
+  every 60s while idle. UI stale remains 24h. Poll history default limit
+  is 80.
 - Fleet scheduler: **swim-lane round-robin** — one radio command per unit per
   turn, then rotate. Discover wait is a background timer (does not hold the
   radio). Manual Refresh/Pull/Push bump one command, then that unit rejoins

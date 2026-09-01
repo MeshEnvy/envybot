@@ -10,24 +10,26 @@ function validPoints(points) {
  * Time-proportional x, with a floor so clustered polls stay distinct.
  * @param {number[]} timestamps sorted
  */
-export function layoutTimeX(timestamps, width, padding = 2, minGap = 7) {
+export function layoutTimeX(timestamps, width, padding = 2, minGap = 7, domain = null) {
   const innerW = width - padding * 2
   if (!timestamps.length) return []
-  if (timestamps.length === 1) return [padding + innerW / 2]
-  const tMin = timestamps[0]
-  const tMax = timestamps[timestamps.length - 1]
+  const tMin = domain?.tMin ?? timestamps[0]
+  const tMax = domain?.tMax ?? timestamps[timestamps.length - 1]
+  if (timestamps.length === 1 && !domain) return [padding + innerW / 2]
   const span = Math.max(1, tMax - tMin)
-  let xs = timestamps.map((t) => padding + ((t - tMin) / span) * innerW)
-  for (let i = 1; i < xs.length; i += 1) {
-    if (xs[i] < xs[i - 1] + minGap) xs[i] = xs[i - 1] + minGap
-  }
-  const last = xs[xs.length - 1]
-  const limit = padding + innerW
-  if (last > limit) {
-    const origin = xs[0]
-    const used = last - origin || 1
-    const scale = innerW / used
-    xs = xs.map((x) => padding + (x - origin) * scale)
+  let xs = timestamps.map((t) => padding + ((Number(t) - tMin) / span) * innerW)
+  if (!domain && minGap > 0) {
+    for (let i = 1; i < xs.length; i += 1) {
+      if (xs[i] < xs[i - 1] + minGap) xs[i] = xs[i - 1] + minGap
+    }
+    const last = xs[xs.length - 1]
+    const limit = padding + innerW
+    if (last > limit) {
+      const origin = xs[0]
+      const used = last - origin || 1
+      const scale = innerW / used
+      xs = xs.map((x) => padding + (x - origin) * scale)
+    }
   }
   return xs.map((x) => Number(x.toFixed(1)))
 }
@@ -57,14 +59,20 @@ export function sparklineWallTime(points, width, height, opts = {}) {
   if (!valid.length) return null
   valid.sort((a, b) => Number(a.ts) - Number(b.ts))
 
+  const domain =
+    opts.tMin != null && opts.tMax != null ? { tMin: Number(opts.tMin), tMax: Number(opts.tMax) } : null
   const xs = layoutTimeX(
     valid.map((p) => Number(p.ts)),
     width,
     padding,
-    opts.minGap ?? 7
+    domain ? 0 : opts.minGap ?? 7,
+    domain
   )
   const values = valid.map((p) => p.value)
-  const { min, span } = yRange(values, opts.minSpan ?? 0)
+  const { min, span } =
+    opts.yMin != null && opts.yMax != null
+      ? { min: Number(opts.yMin), span: Number(opts.yMax) - Number(opts.yMin) || 1 }
+      : yRange(values, opts.minSpan ?? 0)
   const innerH = height - padding * 2
 
   const dots = valid.map((p, i) => {
@@ -72,7 +80,12 @@ export function sparklineWallTime(points, width, height, opts = {}) {
     return { x: xs[i], y: Number(y.toFixed(1)), synthetic: !!p.synthetic }
   })
   const line = dots.length >= 2 ? dots.map((d) => `${d.x},${d.y}`).join(' ') : null
-  return { line, dots }
+  const zeroY = padding + innerH - ((0 - min) / span) * innerH
+  return {
+    line,
+    dots: opts.dots === false ? [] : dots,
+    zeroY: Number(zeroY.toFixed(1)),
+  }
 }
 
 /** @param {Record<string, unknown> | null | undefined} poll @param {string} field */
@@ -184,6 +197,7 @@ export function seriesFromHistories(history) {
     noise_floor: [],
     recv_rate: [],
     unreadable_pct: [],
+    sun: [],
   }
   let lastRate = null
   let lastUnreadable = null
@@ -226,6 +240,13 @@ export function seriesFromHistories(history) {
     const ts = Number(p.ts)
     if (p.temperature != null && Number.isFinite(Number(p.temperature))) {
       out.temperature.push({ ts, value: Number(p.temperature) })
+    }
+  }
+  for (const p of history?.sun || []) {
+    const ts = Number(p.ts)
+    const elev = Number(p.value)
+    if (Number.isFinite(ts) && Number.isFinite(elev)) {
+      out.sun.push({ ts, value: elev })
     }
   }
   return out

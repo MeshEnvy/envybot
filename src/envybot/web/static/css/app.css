@@ -276,6 +276,14 @@ body {
   font-weight: 400;
 }
 
+.poll-sun {
+  display: inline-block;
+  margin-right: 6px;
+  font-style: normal;
+  font-size: 1.05em;
+  line-height: 1;
+}
+
 .unit-stage {
   margin-top: 4px;
   padding-left: 0;
@@ -779,6 +787,12 @@ body {
 .metric-grid {
   display: grid;
   gap: 2px;
+}
+
+.spark-horizon {
+  stroke: #4a5563;
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
 }
 
 .spark-row,

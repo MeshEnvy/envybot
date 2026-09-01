@@ -2,14 +2,14 @@ import { reactive } from 'vue'
 import { buildNeighborEdges } from './map.js?v=22'
 
 /** @typedef {{ ts: number, [key: string]: unknown }} HistoryRow */
-/** @typedef {{ status: HistoryRow[], telemetry: HistoryRow[], neighbors: HistoryRow[], acl: HistoryRow[] }} UnitHistory */
+/** @typedef {{ status: HistoryRow[], telemetry: HistoryRow[], neighbors: HistoryRow[], acl: HistoryRow[], sun?: HistoryRow[] }} UnitHistory */
 /** @typedef {{ key: string, history?: UnitHistory, [key: string]: unknown }} FleetUnit */
 /** @typedef {{ units: Record<string, FleetUnit>, counts: Record<string, unknown>, poll: Record<string, unknown>, companion: string | null, edges: unknown[] }} FleetSnapshot */
 
 const HISTORY_LIMIT = 48
 
 function emptyHistory() {
-  return { status: [], telemetry: [], neighbors: [], acl: [] }
+  return { status: [], telemetry: [], neighbors: [], acl: [], sun: [] }
 }
 
 export const fleetStore = reactive({
@@ -96,6 +96,7 @@ export function loadHistories(key, histories) {
     telemetry: histories.telemetry || [],
     neighbors: histories.neighbors || [],
     acl: histories.acl || [],
+    sun: histories.sun || [],
   }
 }
 

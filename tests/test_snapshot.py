@@ -137,10 +137,12 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(u1["position"]["source"], "site")
             self.assertEqual(u1["site_name"], "Test")
             self.assertEqual(u1["label"], "Test")
+            self.assertNotIn("sun", u1)
             u2 = snap["units"]["me0002"]
             self.assertIsNone(u2["position"])
             self.assertIsNone(u2["site_name"])
             self.assertEqual(u2["label"], "ME0002")
+            self.assertNotIn("sun", u2)
             nbs = [n for n in u1["neighbors"] if n.get("unit_key") == "me0002"]
             self.assertEqual(len(nbs), 1)
             self.assertEqual(nbs[0]["label"], "ME0002")

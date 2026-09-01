@@ -41,6 +41,7 @@ from envybot.poll import (
     partition_paused,
     poll_summary,
 )
+from envybot.position import site_loc_for_unit
 from envybot.radio import (
     DEFAULT_MIN_POLL_INTERVAL,
     FleetSession,
@@ -53,6 +54,9 @@ from envybot.radio import (
     sync_fleet_contacts,
     target_label,
 )
+from envybot.web.snapshot import DEFAULT_STALE_SECS
+
+CADENCE_CHECK_S = 60.0
 
 
 async def _serve_web_until_stop(web_ctx: Any, poll_exit: int) -> int:
@@ -97,8 +101,14 @@ def _seed_auto_work(
     now: int,
     skip_discover: bool = False,
     discover_wait: float = 12.0,
-) -> None:
+    session_states: dict[str, dict[str, Any]] | None = None,
+) -> int:
+    """Queue due GET/apply for idle units. Skip units that already have jobs."""
+    queued = 0
     for target in auto_targets:
+        existing = scheduler.units.get(target.key)
+        if existing and existing.jobs:
+            continue
         due = due_groups(conn, target.key, policy=policy, now=now) if do_poll else []
         target.due_groups = due
         apply_due = do_apply and apply_is_due(
@@ -106,7 +116,6 @@ def _seed_auto_work(
         )
         if not due and not apply_due:
             continue
-        uq = scheduler.get_or_create(target)
         jobs = build_poll_jobs(
             target,
             due,
@@ -116,10 +125,19 @@ def _seed_auto_work(
             skip_discover=skip_discover,
             discover_wait=discover_wait,
         )
-        uq.jobs.extend(jobs)
-        uq.has_inventory_gap = bool(due) and any(
-            g in ("firmware", "bootloader") for g in due
-        )
+        if not jobs:
+            continue
+        scheduler.enqueue_jobs(target, jobs)
+        if session_states is not None:
+            session_states[target.key] = in_flight_session(
+                manual_job=None,
+                job_kind="login",
+                due_groups=list(due),
+                apply=apply_due,
+                queued=True,
+            )
+        queued += 1
+    return queued
 
 
 async def run(args: argparse.Namespace) -> int:
@@ -147,7 +165,7 @@ async def run(args: argparse.Namespace) -> int:
             nodes_path=nodes_path,
             host=args.bind,
             port=args.port,
-            stale_secs=args.min_interval,
+            stale_secs=DEFAULT_STALE_SECS,
             open_browser=args.open,
         )
         web_ctx.bind_scheduler(
@@ -244,6 +262,7 @@ async def run(args: argparse.Namespace) -> int:
         now=now,
         skip_discover=args.no_discover,
         discover_wait=args.discover_wait,
+        session_states=session_states,
     )
 
     initial_units = scheduler.active_unit_count()
@@ -443,7 +462,13 @@ async def run(args: argparse.Namespace) -> int:
             yaml_dirty = True
 
         if web_ctx:
-            sample_evt = job_sample(job, uq, outcome, payload)
+            sample_evt = job_sample(
+                job,
+                uq,
+                outcome,
+                payload,
+                site_loc=site_loc_for_unit(target.key, node_record, sites),
+            )
             await web_ctx.publish_unit(
                 target.key,
                 session=session_states.get(target.key, {}),
@@ -492,9 +517,34 @@ async def run(args: argparse.Namespace) -> int:
                     companion=companion_short,
                 )
                 await web_ctx.publish_session(idle_poll)
-                await scheduler.wait_for_work()
-                if scheduler.pending_count() == 0:
+                await scheduler.wait_for_work(timeout=CADENCE_CHECK_S)
+                if scheduler._stop:
                     break
+                cadence_policy = PollPolicy(
+                    force=False,
+                    live_only=args.live and not args.force,
+                    force_groups=frozenset(args.group or ()),
+                    min_interval=args.min_interval,
+                )
+                seeded = _seed_auto_work(
+                    scheduler,
+                    auto_targets=auto_targets,
+                    conn=conn,
+                    nodes=nodes,
+                    sites=sites,
+                    doc=doc,
+                    keys=keys,
+                    policy=cadence_policy,
+                    do_poll=do_poll,
+                    do_apply=do_apply,
+                    force=False,
+                    now=int(time.time()),
+                    skip_discover=args.no_discover,
+                    discover_wait=args.discover_wait,
+                    session_states=session_states,
+                )
+                if scheduler.pending_count() == 0:
+                    continue
                 round_num += 1
                 if args.max_rounds and round_num > args.max_rounds:
                     break
@@ -504,7 +554,8 @@ async def run(args: argparse.Namespace) -> int:
                 if not args.quiet:
                     units = scheduler.active_unit_count()
                     cmds = scheduler.pending_count()
-                    print(f"Manual jobs: {units} unit(s), {cmds} command(s) queued")
+                    kind = "Cadence" if seeded else "Manual jobs"
+                    print(f"{kind}: {units} unit(s), {cmds} command(s) queued")
                 continue
 
             round_num += 1
@@ -590,6 +641,7 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=DEFAULT_MIN_POLL_INTERVAL,
         metavar="SECS",
+        help="Live GET interval for status/telemetry (default 3600). Neighbors stay 24h.",
     )
     parser.add_argument("--force", action="store_true", help="Pull every GET group and Push profile")
     parser.add_argument("--live", action="store_true", help="Periodic GET groups only")

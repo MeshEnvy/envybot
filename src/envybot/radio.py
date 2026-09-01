@@ -41,7 +41,8 @@ CLOCK_CLI_RE = re.compile(
     r"(\d{1,2}):(\d{2})\s*-\s*(\d{1,2})/(\d{1,2})/(\d{4})\s*UTC", re.I
 )
 
-DEFAULT_MIN_POLL_INTERVAL = 86400.0  # 24h
+DEFAULT_MIN_POLL_INTERVAL = 3600.0  # status + telemetry
+NEIGHBOR_POLL_INTERVAL = 86400.0  # discover is airtime-heavy
 NEIGHBOR_DISCOVER_WAIT_S = 12.0  # after remote discover.neighbors, before GET
 DEFAULT_MESH_ATTEMPTS = 10
 COMPANION_RECONNECT_ATTEMPTS = 5

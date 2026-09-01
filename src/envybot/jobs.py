@@ -156,18 +156,29 @@ class FleetScheduler:
                 fut.set_result(None)
         self._idle_waiters.clear()
 
-    async def wait_for_work(self) -> None:
+    async def wait_for_work(self, timeout: float | None = None) -> bool:
+        """Wait until a job is queued, stop(), or timeout. True if work is pending."""
         if self.pending_count() > 0:
-            return
+            return True
+        if self._stop:
+            return False
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[None] = loop.create_future()
         self._idle_waiters.append(fut)
         try:
-            await fut
+            if timeout is None:
+                await fut
+            else:
+                try:
+                    await asyncio.wait_for(asyncio.shield(fut), timeout=timeout)
+                except asyncio.TimeoutError:
+                    pass
+            return self.pending_count() > 0
         except asyncio.CancelledError:
+            raise
+        finally:
             if fut in self._idle_waiters:
                 self._idle_waiters.remove(fut)
-            raise
 
     def stop(self) -> None:
         self._stop = True

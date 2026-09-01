@@ -29,7 +29,8 @@ First run imports leftover `polls.jsonl` (then deletes it) and YAML
 
 | Mode | Groups | When |
 |------|--------|------|
-| periodic | `status`, `telemetry`, `neighbors` | `--min-interval` (default 24h) |
+| periodic | `status`, `telemetry` | `--min-interval` (default 1h) |
+| periodic | `neighbors` | 24h (`discover.neighbors` + wait + GET) |
 | inventory | `firmware`, `bootloader` | until sqlite stamp exists |
 | audit | `name`, `lat`, `lon`, `advert`, `flood_advert`, `acl` | **Pull**, `--group`, or `--force` only |
 
@@ -37,6 +38,10 @@ Neighbors: remote `discover.neighbors` (zero-hop CTL) then `GET_NEIGHBOURS`.
 `--no-discover` skips the search. `--discover-wait SEC` changes the listen
 window (default 12). The UI hides rows older than 7 days. Firmware has no
 TTL, so ghosts stay in sqlite history.
+
+A long-running `fleet` (not `--once`) re-checks due groups about every 60s
+while idle. No radio traffic unless status/telemetry is ≥1h stale or
+neighbors ≥24h. UI freshness stays 24h.
 
 Default runs never GET sticky identity fields. Leak / mismatch in the UI
 follow the apply profile stamp, not a heard-identity GET.
@@ -75,6 +80,12 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
 Status, telemetry, neighbors, and ACL are **orthogonal** sqlite tables and UI
 sections. `/api/polls/{unit}` returns `{ histories: { status, telemetry,
 neighbors, acl } }` with per-source deltas (no merged status+telemetry spine).
+Status and telemetry samples store bound-site GPS. A one-shot sqlite
+backfill copies the current site onto older rows that lack loc
+(bench/unmapped stay blank). Voltage/temp **When** shows ☀️ or 🌙:
+clear-sky sun above the horizon means charging expected. Hover for
+elevation. No weather or terrain. Detail sparklines share a 72h
+wall-clock axis. Sun is clear-sky elevation vs the horizon. Default history limit is 80 (72h of hourly samples).
 Sparklines use native `/api/history/{unit}?metric=`. SSE `unit` events include
 `sample` so the open detail card updates live without refetch.
 

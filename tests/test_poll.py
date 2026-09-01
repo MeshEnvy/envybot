@@ -96,6 +96,19 @@ class PollCadenceTests(unittest.TestCase):
         self.assertFalse(group_is_due(seen, "status", policy=policy, now=now))
         self.assertTrue(group_is_due(seen, "status", policy=policy, now=now + 4000))
 
+    def test_status_hourly_neighbors_daily(self) -> None:
+        policy = PollPolicy(min_interval=3600.0)
+        now = 1_700_000_000
+        seen = {
+            "status_at": now - 4000,
+            "telemetry_at": now - 4000,
+            "neighbors_at": now - 4000,
+        }
+        self.assertTrue(group_is_due(seen, "status", policy=policy, now=now))
+        self.assertTrue(group_is_due(seen, "telemetry", policy=policy, now=now))
+        self.assertFalse(group_is_due(seen, "neighbors", policy=policy, now=now))
+        self.assertTrue(group_is_due(seen, "neighbors", policy=policy, now=now + 86400))
+
     def test_inventory_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
@@ -254,6 +267,75 @@ class GetPlanTests(unittest.TestCase):
         self.assertIn("neighbors (fresh", skip)
         self.assertIn("name", skip)
         self.assertIn("(audit)", skip)
+
+
+class SeedAutoWorkTests(unittest.TestCase):
+    def test_seed_skips_busy_and_queues_idle(self) -> None:
+        from envybot.commands.fleet import _seed_auto_work
+        from envybot.jobs import FleetScheduler, RadioJob
+
+        target = RouterTarget(
+            key="me0001",
+            unit_id="ME0001",
+            name="Test",
+            site=None,
+            pubkey_hex="a" * 64,
+            admin_password="secret",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            sched = FleetScheduler()
+            first = _seed_auto_work(
+                sched,
+                auto_targets=[target],
+                conn=conn,
+                nodes={"me0001": {"unit_id": "ME0001"}},
+                sites={},
+                doc={"nodes": {}},
+                keys={},
+                policy=PollPolicy(),
+                do_poll=True,
+                do_apply=False,
+                force=False,
+                now=1_700_000_000,
+            )
+            self.assertEqual(first, 1)
+            queued = len(sched.units["me0001"].jobs)
+            self.assertGreater(queued, 0)
+            second = _seed_auto_work(
+                sched,
+                auto_targets=[target],
+                conn=conn,
+                nodes={"me0001": {"unit_id": "ME0001"}},
+                sites={},
+                doc={"nodes": {}},
+                keys={},
+                policy=PollPolicy(),
+                do_poll=True,
+                do_apply=False,
+                force=False,
+                now=1_700_000_000,
+            )
+            self.assertEqual(second, 0)
+            self.assertEqual(len(sched.units["me0001"].jobs), queued)
+            sched.units["me0001"].jobs.clear()
+            sched.enqueue_jobs(target, [RadioJob(kind="login", unit_key="me0001")])
+            busy = _seed_auto_work(
+                sched,
+                auto_targets=[target],
+                conn=conn,
+                nodes={"me0001": {"unit_id": "ME0001"}},
+                sites={},
+                doc={"nodes": {}},
+                keys={},
+                policy=PollPolicy(),
+                do_poll=True,
+                do_apply=False,
+                force=False,
+                now=1_700_000_000,
+            )
+            self.assertEqual(busy, 0)
+            self.assertEqual(len(sched.units["me0001"].jobs), 1)
 
 
 if __name__ == "__main__":

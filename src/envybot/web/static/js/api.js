@@ -66,10 +66,10 @@ export async function fetchHistory(unit, metric, hours = 72) {
   return res.json()
 }
 
-/** @typedef {{ status: unknown[], telemetry: unknown[], neighbors: unknown[], acl: unknown[] }} SourceHistories */
+/** @typedef {{ status: unknown[], telemetry: unknown[], neighbors: unknown[], acl: unknown[], sun?: unknown[] }} SourceHistories */
 
 /** @param {string} unit @param {number} [hours] @param {number} [limit] @returns {Promise<{ unit: string, hours: number, histories: SourceHistories }>} */
-export async function fetchPolls(unit, hours = 72, limit = 48) {
+export async function fetchPolls(unit, hours = 72, limit = 80) {
   const q = new URLSearchParams({ hours: String(hours), limit: String(limit) })
   const res = await fetch(`/api/polls/${encodeURIComponent(unit)}?${q}`)
   if (!res.ok) throw new Error(`polls ${res.status}`)

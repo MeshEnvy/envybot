@@ -7,7 +7,7 @@ import {
   patchSession,
   patchUnit as storePatchUnit,
   replaceSnapshot,
-} from './state.js?v=1'
+} from './state.js?v=2'
 import {
   formatAgo,
   formatBattery,
@@ -21,6 +21,8 @@ import {
   formatSnr,
   formatTemp,
   formatUptime,
+  sunEmoji,
+  sunTitle,
   hasHealthIssues,
   hasTrafficStats,
   healthHeadline,
@@ -29,9 +31,9 @@ import {
   compareUnits,
   unitLabel,
   unitTitle,
-} from './format.js?v=19'
+} from './format.js?v=21'
 import { buildNeighborEdges, createMapController, unitStage, unitStatus } from './map.js?v=23'
-import { seriesFromHistories, sparklineWallTime, SPARK_MIN_SPAN } from './sparklines.js?v=6'
+import { seriesFromHistories, sparklineWallTime, SPARK_MIN_SPAN } from './sparklines.js?v=8'
 
 const App = {
   setup() {
@@ -46,6 +48,7 @@ const App = {
     const historyHours = 72
 
     const METRIC_ROWS = [
+      { key: 'sun', label: 'Sun', stroke: '#f5c14a', wave: true },
       { key: 'battery_mv', label: 'Voltage', stroke: '#6ee7a0' },
       { key: 'temperature', label: 'Temp', stroke: '#f0b86e' },
       { key: 'unreadable_pct', label: 'Unreadable', stroke: '#f06e6e' },
@@ -155,12 +158,22 @@ const App = {
 
     const sparkSeries = computed(() => seriesFromHistories(unitHistory.value || {}))
 
+    const sparkDomain = computed(() => {
+      const now = Math.floor(Date.now() / 1000)
+      return { tMin: now - historyHours * 3600, tMax: now }
+    })
+
     const sparkModels = computed(() => {
       /** @type {Record<string, ReturnType<typeof sparklineWallTime>>} */
       const out = {}
+      const domain = sparkDomain.value
       for (const row of METRIC_ROWS) {
+        const wave = !!row.wave
         out[row.key] = sparklineWallTime(sparkSeries.value[row.key] || [], 168, 22, {
           minSpan: SPARK_MIN_SPAN[row.key] || 0,
+          tMin: domain.tMin,
+          tMax: domain.tMax,
+          ...(wave ? { yMin: -90, yMax: 90, dots: false } : {}),
         })
       }
       return out
@@ -168,7 +181,7 @@ const App = {
 
     const SPARK_VALUE_FORMAT = {
       battery_mv: (v) => `${v.toFixed(2)} V`,
-      temperature: (v) => `${v.toFixed(1)} °C`,
+      temperature: (v) => formatTemp(v),
       unreadable_pct: (v) => `${v.toFixed(1)}%`,
       recv_rate: (v) => `${v.toFixed(1)}/h`,
       noise_floor: (v) => `${Math.trunc(v)} dBm`,
@@ -176,6 +189,13 @@ const App = {
 
     function metricNow(metric) {
       const unit = selectedUnit.value
+      if (metric === 'sun') {
+        const points = sparkSeries.value.sun || []
+        const last = points[points.length - 1]
+        if (!last || last.value == null) return '—'
+        const elev = Number(last.value)
+        return `${elev >= 0 ? '☀️' : '🌙'} ${elev.toFixed(0)}∠`
+      }
       if (metric === 'battery_mv') {
         const mv = unit?.status?.battery_mv
         if (mv != null) return formatBattery(mv)
@@ -220,7 +240,9 @@ const App = {
     }
 
     function tempStock(poll) {
-      return formatSignedDelta(poll?.delta_temperature, 1)
+      const d = poll?.delta_temperature
+      if (d == null || !Number.isFinite(Number(d))) return null
+      return formatSignedDelta((Number(d) * 9) / 5, 0)
     }
 
     function selectUnit(key) {
@@ -443,6 +465,8 @@ const App = {
       formatPollTemp,
       voltageStock,
       tempStock,
+      sunEmoji,
+      sunTitle,
       unitLabel,
       unitTitle,
       togglePublic,
@@ -602,11 +626,19 @@ const App = {
                   viewBox="0 0 168 22"
                   aria-hidden="true"
                 >
+                  <line
+                    v-if="row.wave && sparkModels[row.key].zeroY != null"
+                    class="spark-horizon"
+                    x1="2"
+                    x2="166"
+                    :y1="sparkModels[row.key].zeroY"
+                    :y2="sparkModels[row.key].zeroY"
+                  />
                   <polyline
                     v-if="sparkModels[row.key].line"
                     fill="none"
                     :stroke="row.stroke"
-                    stroke-width="1.5"
+                    :stroke-width="row.wave ? 1.7 : 1.5"
                     :points="sparkModels[row.key].line"
                   />
                   <circle
@@ -729,7 +761,14 @@ const App = {
                     :key="'st-' + pi"
                     :class="{ 'poll-reboot': row.reboot }"
                   >
-                    <td>{{ formatRelative(row.ts) }}</td>
+                    <td>
+                      <span
+                        v-if="sunEmoji(row.sun)"
+                        class="poll-sun"
+                        :title="sunTitle(row.sun)"
+                      >{{ sunEmoji(row.sun) }}</span>
+                      {{ formatRelative(row.ts) }}
+                    </td>
                     <td class="poll-metric">
                       {{ formatPollVoltage(row) }}
                       <span
@@ -765,7 +804,14 @@ const App = {
                 </thead>
                 <tbody>
                   <tr v-for="(row, pi) in unitHistory.telemetry" :key="'te-' + pi">
-                    <td>{{ formatRelative(row.ts) }}</td>
+                    <td>
+                      <span
+                        v-if="sunEmoji(row.sun)"
+                        class="poll-sun"
+                        :title="sunTitle(row.sun)"
+                      >{{ sunEmoji(row.sun) }}</span>
+                      {{ formatRelative(row.ts) }}
+                    </td>
                     <td class="poll-metric">
                       {{ row.voltage != null ? Number(row.voltage).toFixed(2) + ' V' : '—' }}
                       <span

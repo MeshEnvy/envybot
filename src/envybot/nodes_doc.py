@@ -69,7 +69,7 @@ NODES_YAML_HEADER = (
     "# admin_password / guest_password: unique + strong per unit. Privacy apply\n"
     "#   rolls blank, weak, or colliding guest passwords (never reuse m35h3nvy).\n"
     "# Apply due = per-field sqlite applies (legacy profile row still honored).\n"
-    "#   Poll: status/telemetry/neighbors on interval; audit GET on --force.\n"
+    "#   Poll: status/telemetry hourly, neighbors daily; audit GET on --force.\n"
     "# Tool: envybot. Fleet: ./envybot fleet. Trust: ./envybot trust.\n"
     "# Never copy secrets (passwords, keypairs) into public trees.\n"
 )
