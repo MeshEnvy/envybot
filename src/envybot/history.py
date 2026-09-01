@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS last_seen (
   node_clock INTEGER,
   battery_mv INTEGER,
   voltage REAL,
+  uptime_secs INTEGER,
+  temperature REAL,
   packets_recv INTEGER,
   packets_sent INTEGER,
   err_events INTEGER,
@@ -97,11 +99,11 @@ CREATE TABLE IF NOT EXISTS meta (
 """
 
 
-def _voltage_from_items(items: Any) -> float | None:
+def _telemetry_value_from_items(items: Any, kind: str) -> float | None:
     if not isinstance(items, list):
         return None
     for item in items:
-        if not isinstance(item, dict) or item.get("type") != "voltage":
+        if not isinstance(item, dict) or item.get("type") != kind:
             continue
         val = item.get("value")
         if val is None:
@@ -111,6 +113,14 @@ def _voltage_from_items(items: Any) -> float | None:
         except (TypeError, ValueError):
             continue
     return None
+
+
+def _voltage_from_items(items: Any) -> float | None:
+    return _telemetry_value_from_items(items, "voltage")
+
+
+def _temperature_from_items(items: Any) -> float | None:
+    return _telemetry_value_from_items(items, "temperature")
 
 
 def history_path(book: Path) -> Path:
@@ -137,6 +147,51 @@ def _ensure_last_seen_columns(conn: sqlite3.Connection) -> None:
     cols = {row[1] for row in conn.execute("PRAGMA table_info(last_seen)")}
     if "voltage" not in cols:
         conn.execute("ALTER TABLE last_seen ADD COLUMN voltage REAL")
+    if "uptime_secs" not in cols:
+        conn.execute("ALTER TABLE last_seen ADD COLUMN uptime_secs INTEGER")
+    if "temperature" not in cols:
+        conn.execute("ALTER TABLE last_seen ADD COLUMN temperature REAL")
+    _backfill_last_seen_promoted_fields(conn)
+
+
+def _backfill_last_seen_promoted_fields(conn: sqlite3.Connection) -> None:
+    """Promote uptime/temp from history rows when last_seen cache is missing them."""
+    rows = conn.execute(
+        "SELECT unit, uptime_secs, temperature FROM last_seen "
+        "WHERE uptime_secs IS NULL OR temperature IS NULL"
+    ).fetchall()
+    if not rows:
+        return
+    for row in rows:
+        unit = str(row["unit"])
+        fields: dict[str, Any] = {}
+        if row["uptime_secs"] is None:
+            status_row = conn.execute(
+                "SELECT payload FROM status WHERE unit = ? ORDER BY ts DESC LIMIT 1",
+                (unit,),
+            ).fetchone()
+            if status_row:
+                try:
+                    payload = json.loads(status_row["payload"])
+                except json.JSONDecodeError:
+                    payload = {}
+                uptime = payload.get("uptime_secs") if isinstance(payload, dict) else None
+                if uptime is not None:
+                    try:
+                        fields["uptime_secs"] = int(uptime)
+                    except (TypeError, ValueError):
+                        pass
+        if row["temperature"] is None:
+            tele_row = conn.execute(
+                "SELECT value FROM telemetry WHERE unit = ? AND type = 'temperature' "
+                "ORDER BY ts DESC LIMIT 1",
+                (unit,),
+            ).fetchone()
+            if tele_row and tele_row["value"] is not None:
+                fields["temperature"] = tele_row["value"]
+        if fields:
+            _upsert_last_seen(conn, unit, fields)
+    conn.commit()
 
 
 def is_empty(conn: sqlite3.Connection) -> bool:
@@ -305,6 +360,8 @@ def _upsert_last_seen(conn: sqlite3.Connection, unit: str, fields: dict[str, Any
         "node_clock",
         "battery_mv",
         "voltage",
+        "uptime_secs",
+        "temperature",
         "packets_recv",
         "packets_sent",
         "err_events",
@@ -365,6 +422,12 @@ def record_poll(
         fields["packets_sent"] = res.status.get("packets_sent")
         fields["err_events"] = res.status.get("err_events")
         fields["recv_errors"] = res.status.get("recv_errors")
+        uptime = res.status.get("uptime_secs")
+        if uptime is not None:
+            try:
+                fields["uptime_secs"] = int(uptime)
+            except (TypeError, ValueError):
+                pass
         conn.execute(
             "INSERT INTO status (ts, unit, payload) VALUES (?, ?, ?)",
             (now, unit, json.dumps(res.status, default=str)),
@@ -374,6 +437,9 @@ def record_poll(
         volt = _voltage_from_items(res.telemetry)
         if volt is not None:
             fields["voltage"] = volt
+        temp = _temperature_from_items(res.telemetry)
+        if temp is not None:
+            fields["temperature"] = temp
         for item in res.telemetry:
             if not isinstance(item, dict):
                 continue
@@ -496,6 +562,12 @@ def import_yaml_last_seen(conn: sqlite3.Connection, nodes: dict[str, Any]) -> in
             fields["packets_sent"] = status.get("packets_sent")
             fields["err_events"] = status.get("err_events")
             fields["recv_errors"] = status.get("recv_errors")
+            uptime = status.get("uptime_secs")
+            if uptime is not None:
+                try:
+                    fields["uptime_secs"] = int(uptime)
+                except (TypeError, ValueError):
+                    pass
             conn.execute(
                 "INSERT INTO status (ts, unit, payload) VALUES (?, ?, ?)",
                 (now, key, json.dumps(status, default=str)),
@@ -506,6 +578,9 @@ def import_yaml_last_seen(conn: sqlite3.Connection, nodes: dict[str, Any]) -> in
             volt = _voltage_from_items(tele)
             if volt is not None:
                 fields["voltage"] = volt
+            temp = _temperature_from_items(tele)
+            if temp is not None:
+                fields["temperature"] = temp
             for item in tele:
                 if not isinstance(item, dict):
                     continue

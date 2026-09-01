@@ -49,8 +49,11 @@ class HistoryTests(unittest.TestCase):
                 res=_Res(
                     firmware_version="v0.1.3",
                     name="Repeater",
-                    status={"battery_mv": 4100, "packets_recv": 3, "err_events": 0},
-                    telemetry=[{"channel": 1, "type": "voltage", "value": 4.1}],
+                    status={"battery_mv": 4100, "uptime_secs": 7200, "packets_recv": 3, "err_events": 0},
+                    telemetry=[
+                        {"channel": 1, "type": "voltage", "value": 4.1},
+                        {"channel": 1, "type": "temperature", "value": 18.3},
+                    ],
                     polled_groups=frozenset({"firmware", "name", "status", "telemetry"}),
                 ),
                 ts=100,
@@ -60,7 +63,9 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(seen["firmware_version"], "v0.1.3")
             self.assertEqual(seen["name_heard"], "Repeater")
             self.assertEqual(seen["battery_mv"], 4100)
+            self.assertEqual(seen["uptime_secs"], 7200)
             self.assertEqual(seen["voltage"], 4.1)
+            self.assertEqual(seen["temperature"], 18.3)
             bats = history_series(conn, "me0001", "battery_mv")
             self.assertEqual(len(bats), 1)
             self.assertEqual(bats[0]["value"], 4100)

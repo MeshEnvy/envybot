@@ -127,7 +127,9 @@ class SnapshotTests(unittest.TestCase):
             u1 = snap["units"]["me0001"]
             self.assertNotIn("acl", u1)
             self.assertEqual(u1["status"]["battery_mv"], 4200)
+            self.assertEqual(u1["status"]["uptime_secs"], 3600)
             self.assertEqual(u1["telemetry"]["voltage"], 4.2)
+            self.assertEqual(u1["telemetry"]["temperature"], 22.5)
             self.assertTrue(u1["mapped"])
             self.assertEqual(u1["position"]["source"], "site")
             self.assertEqual(u1["site_name"], "Test")

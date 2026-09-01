@@ -223,10 +223,13 @@ def sanitize_unit(
     normalize_fleet_node(node)
     heard = last_heard(node, seen)
     position = resolve_position(node, sites)
-    tele_src = None
-    if seen and seen.get("voltage") is not None:
-        tele_src = [{"type": "voltage", "value": seen.get("voltage")}]
-    tele = extract_telemetry(tele_src)
+    tele_src: list[dict[str, Any]] = []
+    if seen:
+        if seen.get("voltage") is not None:
+            tele_src.append({"type": "voltage", "value": seen.get("voltage")})
+        if seen.get("temperature") is not None:
+            tele_src.append({"type": "temperature", "value": seen.get("temperature")})
+    tele = extract_telemetry(tele_src or None)
     if seen and seen.get("battery_mv") is not None:
         status = {
             "battery_mv": seen.get("battery_mv"),
@@ -234,6 +237,7 @@ def sanitize_unit(
             "packets_sent": seen.get("packets_sent"),
             "err_events": seen.get("err_events"),
             "recv_errors": seen.get("recv_errors"),
+            "uptime_secs": seen.get("uptime_secs"),
         }
     else:
         status = None

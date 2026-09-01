@@ -37,7 +37,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 
 - Greenfield: no `monitor` alias, no `polls.jsonl`, no last-seen in YAML.
 - `nodes.yaml` is SoT for **desired** identity. Cite sqlite `last_seen` for
-  reachability / fw / battery.
+  reachability / fw / battery / uptime / temperature.
 - GPS lives only on `sites.yaml` (`loc` + `node: me####`). Nodes have no
   `site` / `lat` / `lon`. Apply SETs `0,0` unless `public: true`. Never
   GET device coords into YAML.
