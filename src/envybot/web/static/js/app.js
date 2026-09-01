@@ -7,7 +7,9 @@ import {
   patchSession,
   patchUnit as storePatchUnit,
   replaceSnapshot,
-} from './state.js?v=2'
+  startClock,
+  stopClock,
+} from './state.js?v=3'
 import {
   formatAgo,
   formatBattery,
@@ -32,8 +34,8 @@ import {
   compareUnits,
   unitLabel,
   unitTitle,
-} from './format.js?v=22'
-import { buildNeighborEdges, createMapController, unitStage, unitStatus } from './map.js?v=23'
+} from './format.js?v=23'
+import { buildNeighborEdges, createMapController, unitStage, unitStatus } from './map.js?v=27'
 import { seriesFromHistories, sparklineWallTime, SPARK_MIN_SPAN } from './sparklines.js?v=8'
 
 const App = {
@@ -253,13 +255,13 @@ const App = {
       }
       selectedKey.value = key
       mapCtrl?.flyTo(key, fleet)
-      mapCtrl?.sync(fleet, key)
+      mapCtrl?.sync(fleet, key, fleet.now)
       loadHistoriesFor(key)
     }
 
     function clearSelection() {
       selectedKey.value = null
-      mapCtrl?.sync(fleet, null)
+      mapCtrl?.sync(fleet, null, fleet.now)
     }
 
     /** @param {Record<string, unknown> | undefined} unit */
@@ -366,13 +368,18 @@ const App = {
       }
     }
     function pushMap() {
-      mapCtrl?.sync(fleet, selectedKey.value)
+      mapCtrl?.sync(fleet, selectedKey.value, fleet.now)
     }
 
     onMounted(async () => {
       // Let Vue finish layout so #map has non-zero size before MapLibre inits.
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+      startClock()
       mapCtrl = createMapController('map', selectUnit, clearSelection)
+      watch(
+        () => fleet.now,
+        () => pushMap()
+      )
       const onKey = (e) => {
         if (e.key === 'Escape') clearSelection()
       }
@@ -404,6 +411,7 @@ const App = {
     watch(search, () => {})
 
     onUnmounted(() => {
+      stopClock()
       es?.close()
       mapCtrl?.destroy()
     })
@@ -523,7 +531,7 @@ const App = {
           <p class="sub">
             {{ selectedUnit.unit_id }}
             · {{ selectedUnit.public ? 'public' : 'private' }}
-            · {{ formatRelative(selectedUnit.last_heard) }}
+            · {{ formatRelative(selectedUnit.last_heard, fleet.now) }}
             <span v-if="selectedUnit.drift"> · {{ selectedUnit.drift }}</span>
           </p>
           <div class="detail-toolbar">
@@ -764,7 +772,7 @@ const App = {
                     :key="'st-' + pi"
                     :class="{ 'poll-reboot': row.reboot }"
                   >
-                    <td>{{ formatRelative(row.ts) }}</td>
+                    <td>{{ formatRelative(row.ts, fleet.now) }}</td>
                     <td>
                       <span
                         v-if="sunEmoji(row.sun)"
@@ -814,7 +822,7 @@ const App = {
                 </thead>
                 <tbody>
                   <tr v-for="(row, pi) in unitHistory.telemetry" :key="'te-' + pi">
-                    <td>{{ formatRelative(row.ts) }}</td>
+                    <td>{{ formatRelative(row.ts, fleet.now) }}</td>
                     <td>
                       <span
                         v-if="sunEmoji(row.sun)"
@@ -869,7 +877,7 @@ const App = {
                 </thead>
                 <tbody>
                   <tr v-for="(row, pi) in unitHistory.neighbors" :key="'nb-' + pi">
-                    <td>{{ formatRelative(row.ts) }}</td>
+                    <td>{{ formatRelative(row.ts, fleet.now) }}</td>
                     <td>{{ row.count ?? '—' }}</td>
                     <td>{{ row.delta_count != null ? (row.delta_count >= 0 ? '+' : '') + row.delta_count : '—' }}</td>
                     <td>
@@ -897,7 +905,7 @@ const App = {
                 </thead>
                 <tbody>
                   <tr v-for="(row, pi) in unitHistory.acl" :key="'ac-' + pi">
-                    <td>{{ formatRelative(row.ts) }}</td>
+                    <td>{{ formatRelative(row.ts, fleet.now) }}</td>
                     <td>{{ row.count ?? '—' }}</td>
                     <td>{{ row.delta_count != null ? (row.delta_count >= 0 ? '+' : '') + row.delta_count : '—' }}</td>
                     <td>
@@ -953,7 +961,7 @@ const App = {
                 <span class="unit-name" :class="'unit-name-' + healthHeadline(unit)">{{ cardPrimary(unit) }}</span>
                 <span class="unit-meta">
                   <span v-if="cardShowNodeId(unit)" class="unit-id">{{ cardNodeId(unit) }}</span>
-                  <span class="unit-ago">{{ formatRelative(unit.last_heard) }}</span>
+                  <span class="unit-ago">{{ formatRelative(unit.last_heard, fleet.now) }}</span>
                 </span>
               </span>
               <button

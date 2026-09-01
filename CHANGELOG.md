@@ -17,6 +17,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Map pins color by last-heard age (green → amber → red over 24h). Labels
+  include compact age (`PV Peak (3h)`) and tick live from `last_heard`.
 - Live GET default is **1h** for status/telemetry (`--min-interval`).
   Neighbors stay **24h**. A long-running fleet re-checks due groups about
   every 60s while idle. UI stale remains 24h. Poll history default limit

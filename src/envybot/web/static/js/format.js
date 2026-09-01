@@ -8,10 +8,10 @@ export function formatAgo(secs) {
   return `${(age / 86400).toFixed(1)}d ago`
 }
 
-/** @param {number | null | undefined} ts */
-export function formatRelative(ts) {
+/** @param {number | null | undefined} ts @param {number} [now] unix seconds */
+export function formatRelative(ts, now = Date.now() / 1000) {
   if (ts == null) return 'never'
-  return formatAgo(Math.max(0, Math.floor(Date.now() / 1000 - ts)))
+  return formatAgo(Math.max(0, Math.floor(now - ts)))
 }
 
 /** @param {number | null | undefined} mv battery millivolts from status */

@@ -128,6 +128,8 @@ Separate USB OTA repeater for `motatool serve`.
   Needs attention. Status/telemetry history times show ☀️ or 🌙
   (clear-sky sun up = charging expected). Detail sparklines share a 72h
   wall-clock axis; Sun is elevation vs horizon. Detail card edits book `alias` and `notes` (blur saves).
+  Map pins color by last-heard age (green→red over 24h); labels include
+  `(3h)` and tick from `last_heard` + store clock.
   In-flight cards show the current job stage (Logging in, Fetching ACL, …).
   `unreachable` is only after the scheduler gives up
   (`--attempts`) or a hard fail. A login timeout parks the unit and keeps

@@ -161,8 +161,9 @@ Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
 ## UI
 
 Map pins use **book** position (`sites.yaml` loc for the bound unit), never
-device `0,0`. Pin labels are site name when bound, else book alias, else unit
-id. Detail shows unit id and site name, editable **alias** and **notes**
+device `0,0`. Pin color is last-heard age (green now, amber at 12h, red at
+24h+; never-heard is gray). Labels are `Site (3h)` when bound, else book
+alias, else unit id. Age ticks live from `last_heard`. Detail shows unit id and site name, editable **alias** and **notes**
 (when bag/bench, alias becomes the list title), a `public` toggle, and drift
 from the apply stamp (`leak` if a private profile is due, `mismatch` if a
 public profile is due). List cards show the same primary label with unit id

@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import { buildNeighborEdges } from './map.js?v=22'
+import { buildNeighborEdges } from './map.js?v=27'
 
 /** @typedef {{ ts: number, [key: string]: unknown }} HistoryRow */
 /** @typedef {{ status: HistoryRow[], telemetry: HistoryRow[], neighbors: HistoryRow[], acl: HistoryRow[], sun?: HistoryRow[] }} UnitHistory */
@@ -18,7 +18,25 @@ export const fleetStore = reactive({
   poll: /** @type {Record<string, unknown>} */ ({}),
   companion: /** @type {string | null} */ (null),
   edges: /** @type {unknown[]} */ ([]),
+  now: Math.floor(Date.now() / 1000),
 })
+
+/** @type {ReturnType<typeof setInterval> | null} */
+let clockId = null
+
+export function startClock() {
+  stopClock()
+  fleetStore.now = Math.floor(Date.now() / 1000)
+  clockId = setInterval(() => {
+    fleetStore.now = Math.floor(Date.now() / 1000)
+  }, 1000)
+}
+
+export function stopClock() {
+  if (clockId == null) return
+  clearInterval(clockId)
+  clockId = null
+}
 
 function ensureUnit(key) {
   if (!fleetStore.units[key]) {
@@ -77,6 +95,13 @@ export function patchUnit(unit) {
   const sample = unit.sample
   if (sample && sample.source && sample.row) {
     prependHistory(key, sample.source, sample.row)
+    const ts = sample.row.ts
+    if (typeof ts === 'number' && Number.isFinite(ts)) {
+      const heard = fleetStore.units[key].last_heard
+      if (heard == null || ts > Number(heard)) {
+        fleetStore.units[key].last_heard = ts
+      }
+    }
     delete fleetStore.units[key].sample
   }
   recomputeEdges()

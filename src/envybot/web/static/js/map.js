@@ -1,19 +1,43 @@
 import maplibregl from 'maplibre-gl'
 
-const STATUS_COLOR = {
-  polling: '#4ea1ff',
-  unreachable: '#f06e6e',
-  queued: '#a896ff',
-  refreshing: '#a896ff',
-  pulling: '#9b8cff',
-  pushing: '#c49bff',
-  paused: '#8aa0b5',
-  healthy: '#6ee7a0',
-  attention: '#f0b86e',
-  fresh: '#6ee7a0',
-  stale: '#f0b86e',
-  never: '#8aa0b5',
-  unmapped: '#667788',
+const PIN_STALE_SECS = 86400
+const PIN_NEVER = '#8aa0b5'
+const PIN_FRESH = [0x6e, 0xe7, 0xa0]
+const PIN_MID = [0xf0, 0xb8, 0x6e]
+const PIN_STALE = [0xf0, 0x6e, 0x6e]
+
+function hexRgb(rgb) {
+  return `#${rgb.map((c) => Math.round(c).toString(16).padStart(2, '0')).join('')}`
+}
+
+function lerpRgb(a, b, t) {
+  return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
+}
+
+/** Green at 0s → amber at 12h → red at 24h+. Never-heard is gray. */
+export function pinFreshnessColor(lastHeard, now = Date.now() / 1000) {
+  if (lastHeard == null || !Number.isFinite(Number(lastHeard))) return PIN_NEVER
+  const t = Math.min(1, Math.max(0, now - Number(lastHeard)) / PIN_STALE_SECS)
+  if (t <= 0.5) return hexRgb(lerpRgb(PIN_FRESH, PIN_MID, t / 0.5))
+  return hexRgb(lerpRgb(PIN_MID, PIN_STALE, (t - 0.5) / 0.5))
+}
+
+/** Largest unit only: 12s, 5m, 3h, 1d. */
+export function formatMapAge(secs) {
+  const s = Math.max(0, Math.floor(Number(secs)))
+  if (s < 60) return `${s}s`
+  if (s < 3600) return `${Math.floor(s / 60)}m`
+  if (s < 86400) return `${Math.floor(s / 3600)}h`
+  return `${Math.floor(s / 86400)}d`
+}
+
+/** @param {Record<string, unknown> | undefined} unit */
+export function mapPinLabel(unit, now = Date.now() / 1000) {
+  const name = String(unit?.label || unit?.site_name || unit?.alias || unit?.unit_id || unit?.key || '')
+  const heard = unit?.last_heard
+  if (heard == null || !Number.isFinite(Number(heard))) return name
+  const age = Math.max(0, Math.floor(now - Number(heard)))
+  return `${name} (${formatMapAge(age)})`
 }
 
 /** @param {Record<string, Record<string, unknown>> | undefined} units */
@@ -124,36 +148,10 @@ export function createMapController(containerId, onSelect, onClear) {
   let pendingFleet = null
   /** @type {string | null} */
   let pendingSelected = null
+  /** @type {number | undefined} */
+  let pendingNow = undefined
 
-  const colorExpr = [
-    'match',
-    ['get', 'status'],
-    'polling',
-    STATUS_COLOR.polling,
-    'unreachable',
-    STATUS_COLOR.unreachable,
-    'queued',
-    STATUS_COLOR.queued,
-    'refreshing',
-    STATUS_COLOR.refreshing,
-    'pulling',
-    STATUS_COLOR.pulling,
-    'pushing',
-    STATUS_COLOR.pushing,
-    'paused',
-    STATUS_COLOR.paused,
-    'healthy',
-    STATUS_COLOR.healthy,
-    'attention',
-    STATUS_COLOR.attention,
-    'fresh',
-    STATUS_COLOR.fresh,
-    'stale',
-    STATUS_COLOR.stale,
-    'unmapped',
-    STATUS_COLOR.unmapped,
-    STATUS_COLOR.never,
-  ]
+  const colorExpr = ['get', 'pin']
 
   function ensureLayers() {
     if (map.getSource('units')) return
@@ -235,11 +233,12 @@ export function createMapController(containerId, onSelect, onClear) {
     })
   }
 
-  /** @param {Record<string, unknown>} fleet @param {string | null} selectedKey */
-  function sync(fleet, selectedKey) {
+  /** @param {Record<string, unknown>} fleet @param {string | null} selectedKey @param {number} [now] */
+  function sync(fleet, selectedKey, now = Date.now() / 1000) {
     if (!ready) {
       pendingFleet = fleet
       pendingSelected = selectedKey
+      pendingNow = now
       return
     }
     ensureLayers()
@@ -257,8 +256,8 @@ export function createMapController(containerId, onSelect, onClear) {
         geometry: { type: 'Point', coordinates: [lon, lat] },
         properties: {
           key: String(unit.key),
-          label: String(unit.label || unit.site_name || unit.alias || unit.unit_id || unit.key),
-          status: unitStatus(unit),
+          label: mapPinLabel(unit, now),
+          pin: pinFreshnessColor(unit.last_heard, now),
           selected: unit.key === selectedKey ? 1 : 0,
         },
       })
@@ -300,7 +299,7 @@ export function createMapController(containerId, onSelect, onClear) {
     ensureLayers()
     map.resize()
     if (pendingFleet) {
-      sync(pendingFleet, pendingSelected)
+      sync(pendingFleet, pendingSelected, pendingNow)
       pendingFleet = null
     }
   }
