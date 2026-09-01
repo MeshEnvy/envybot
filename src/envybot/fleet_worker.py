@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from envybot.apply import (
@@ -152,7 +152,10 @@ class PollAccumulator:
 
     def record_group(self, ctx: WorkerContext, unit: str, group: str) -> None:
         self.polled_groups.add(group)
-        res = self.to_result(unit)
+        # Persist only this group. The accumulator is cumulative; replaying
+        # earlier groups would insert duplicate status/telemetry with a new ts
+        # and fake +0 packet deltas.
+        res = replace(self.to_result(unit), polled_groups=frozenset({group}))
         record_poll(
             ctx.conn,
             unit=unit,

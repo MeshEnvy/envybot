@@ -122,7 +122,8 @@ Separate USB OTA repeater for `motatool serve`.
   Units carry `health` (worst-of component checks) and interval traffic
   deltas. Detail sparklines use native sqlite series; poll history is four
   orthogonal sections (status, telemetry, neighbors, ACL) from
-  `/api/polls/{unit}` (`source_histories`). SSE `unit` events carry
+  `/api/polls/{unit}` (`source_histories`). Each GET persists only that
+  group (no replay of earlier status). SSE `unit` events carry
   `{ source, sample }` so the open card updates live via `state.js`.
   List meta line shows a headline mark: Paused, Healthy, Unreachable,
   Needs attention. Status/telemetry history times show ☀️ or 🌙

@@ -15,6 +15,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   sparklines share a 72h axis; Sun is a solar-elevation wave with a
   horizon line. Temperature displays as °F (radio still reports °C).
 
+### Fixed
+
+- Status/telemetry history no longer re-inserts the previous group's
+  payload when a later GET records. That was the fake `+0 / +0` In/out
+  on a 2-minute gap.
+
 ### Changed
 
 - Map pins color by last-heard age (green → amber → red over 24h). Labels
