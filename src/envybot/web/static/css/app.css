@@ -137,6 +137,13 @@ body {
   font-size: 0.9rem;
 }
 
+.unit-badges {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
 .unit-meta {
   margin-top: 4px;
   font-size: 0.75rem;
@@ -194,6 +201,12 @@ body {
 .badge-unmapped {
   background: #2a3440;
   color: #8aa0b5;
+}
+
+.badge-leak,
+.badge-mismatch {
+  background: #3d221a;
+  color: #ff9b6e;
 }
 
 @keyframes pulse {

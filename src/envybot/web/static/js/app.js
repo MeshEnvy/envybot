@@ -309,7 +309,10 @@ const App = {
             <div class="unit-top">
               <span v-if="!unit.site_name" class="unit-id">{{ unit.unit_id || unit.key }}</span>
               <span class="unit-name">{{ unit.site_name || unit.name || unitLabel(unit) }}</span>
-              <span class="badge" :class="'badge-' + unitStatus(unit)">{{ unitStatus(unit) }}</span>
+              <span class="unit-badges">
+                <span class="badge" :class="'badge-' + unitStatus(unit)">{{ unitStatus(unit) }}</span>
+                <span v-if="unit.drift" class="badge" :class="'badge-' + unit.drift">{{ unit.drift }}</span>
+              </span>
             </div>
             <div class="unit-meta">{{ cardMeta(unit) }}</div>
           </div>

@@ -28,6 +28,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- Fleet list cards show a `leak` / `mismatch` badge next to freshness
+  when heard identity drifts from book policy.
 - Fleet reconnects the BLE/USB companion after an unexpected transport
   drop (clock sync, contacts, fleet favorites, cleared login cache).
 - Admin `password` SET treats MeshCore's `password now: …` echo as success.
