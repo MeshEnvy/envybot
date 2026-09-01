@@ -112,6 +112,11 @@ export function healthHeadline(unit) {
 }
 
 /** @param {Record<string, unknown> | undefined} unit */
+export function showHealthMark(unit) {
+  return healthHeadline(unit) !== 'healthy'
+}
+
+/** @param {Record<string, unknown> | undefined} unit */
 export function healthEmoji(unit) {
   const mark = HEALTH_MARKS[healthHeadline(unit)] || HEALTH_MARKS.healthy
   return mark.emoji

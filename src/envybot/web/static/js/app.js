@@ -17,14 +17,13 @@ import {
   hasHealthIssues,
   hasTrafficInterval,
   hasTrafficStats,
-  healthEmoji,
   healthHeadline,
   healthMark,
   healthTooltip,
   compareUnits,
   unitLabel,
   unitTitle,
-} from './format.js?v=14'
+} from './format.js?v=15'
 import { buildNeighborEdges, createMapController, hasMapPin, unitStage, unitStatus } from './map.js?v=18'
 import { healthStroke, sparklinePath } from './sparklines.js?v=1'
 
@@ -81,15 +80,6 @@ const App = {
       Object.assign(fleet.poll, poll)
       if (poll.companion != null) fleet.companion = poll.companion
     }
-
-    const pollLine = computed(() => {
-      const p = fleet.poll || {}
-      const parts = [p.phase || 'idle']
-      if (p.round) parts.push(`round ${p.round}`)
-      if (p.pending != null) parts.push(`${p.pending} pending`)
-      if (fleet.companion) parts.push(`companion ${String(fleet.companion).slice(0, 12)}…`)
-      return parts.join(' · ')
-    })
 
     const manualAccepting = computed(() => !!fleet.poll?.accepting)
 
@@ -268,24 +258,18 @@ const App = {
       return parts.join(' · ')
     }
 
-    function cardTitle(unit) {
+    function cardPrimary(unit) {
       if (unit.site_name) return unit.site_name
       return String(unit.unit_id || unit.key || '')
     }
 
-    function cardMeta(unit) {
-      const parts = []
-      if (unit.site_name) {
-        parts.push(unit.unit_id || unit.key)
-      } else if (!unit.site) {
-        parts.push(formatSite(unit.site))
-      }
-      if (unit.firmware_version) parts.push(`fw ${unit.firmware_version}`)
-      const bat = unit.status?.battery_mv
-      if (bat != null) parts.push(formatBattery(bat))
-      parts.push(formatRelative(unit.last_heard))
-      if (!unit.mapped) parts.push('no map pin')
-      return parts.join(' · ')
+    function cardNodeId(unit) {
+      return String(unit.unit_id || unit.key || '')
+    }
+
+    function cardShowNodeId(unit) {
+      const id = cardNodeId(unit)
+      return !!unit.site_name && !!id && id !== cardPrimary(unit)
     }
 
     async function togglePublic(unit, ev) {
@@ -364,7 +348,6 @@ const App = {
       selectedKey,
       detailEl,
       detailHasMapPin,
-      pollLine,
       manualAccepting,
       canManualUnit,
       runManualJob,
@@ -375,10 +358,11 @@ const App = {
       isInFlight,
       sessionBadgeTitle,
       healthHeadline,
-      healthEmoji,
       healthMark,
-      cardTitle,
-      cardMeta,
+      healthTooltip,
+      cardPrimary,
+      cardNodeId,
+      cardShowNodeId,
       formatAgo,
       formatRelative,
       formatSite,
@@ -409,19 +393,26 @@ const App = {
   template: `
     <header id="header">
       <div class="brand">
-        <h1>EnvyBot Fleet</h1>
-        <p id="poll-line">{{ pollLine }}</p>
-      </div>
-      <div id="stats" class="stats">
-        <span class="stat"><strong>{{ fleet.counts?.total ?? 0 }}</strong> units</span>
-        <span class="stat"><strong>{{ fleet.counts?.mapped ?? 0 }}</strong> mapped</span>
-        <span class="stat"><strong>{{ fleet.counts?.fresh ?? 0 }}</strong> fresh</span>
-        <span class="stat"><strong>{{ fleet.counts?.stale ?? 0 }}</strong> stale</span>
-        <span class="stat"><strong>{{ fleet.counts?.never ?? 0 }}</strong> never</span>
-        <span class="stat"><strong>{{ fleet.counts?.paused ?? 0 }}</strong> paused</span>
+        <h1>FleetEnvy</h1>
       </div>
       <div class="search-wrap">
-        <input v-model="search" type="search" placeholder="Search site, unit, name…" autocomplete="off" />
+        <label class="search-field">
+          <span class="search-icon" aria-hidden="true">
+            <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75">
+              <circle cx="8.5" cy="8.5" r="5.25" />
+              <path d="M13 13l3.5 3.5" stroke-linecap="round" />
+            </svg>
+          </span>
+          <input
+            id="search"
+            v-model="search"
+            class="search-input"
+            type="search"
+            placeholder="Search site, unit, name…"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </label>
       </div>
     </header>
     <div id="layout">
@@ -441,7 +432,6 @@ const App = {
           <p class="sub">
             {{ selectedUnit.unit_id }}
             · {{ selectedUnit.public ? 'public' : 'private' }}
-            · {{ isInFlight(selectedUnit) ? unitStage(selectedUnit) : healthMark(selectedUnit) }}
             · {{ formatRelative(selectedUnit.last_heard) }}
             <span v-if="selectedUnit.drift"> · {{ selectedUnit.drift }}</span>
           </p>
@@ -723,12 +713,13 @@ const App = {
             @click="selectUnit(unit.key)"
           >
             <div class="unit-row1">
-              <span
-                class="health-mark"
-                :class="'health-mark-' + healthHeadline(unit)"
-                :title="healthTooltip(unit.health)"
-              >{{ healthEmoji(unit) }}</span>
-              <span class="unit-title">{{ cardTitle(unit) }}</span>
+              <span class="unit-title" :title="healthTooltip(unit.health)">
+                <span class="unit-name" :class="'unit-name-' + healthHeadline(unit)">{{ cardPrimary(unit) }}</span>
+                <span class="unit-meta">
+                  <span v-if="cardShowNodeId(unit)" class="unit-id">{{ cardNodeId(unit) }}</span>
+                  <span class="unit-ago">{{ formatRelative(unit.last_heard) }}</span>
+                </span>
+              </span>
               <button
                 v-if="manualAccepting"
                 type="button"
@@ -742,7 +733,6 @@ const App = {
                 <span class="unit-refresh-icon" aria-hidden="true">↻</span>
               </button>
             </div>
-            <div class="unit-row2">{{ cardMeta(unit) }}</div>
             <Transition name="stage">
               <div
                 v-if="isInFlight(unit)"
