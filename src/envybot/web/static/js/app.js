@@ -51,6 +51,7 @@ const App = {
       temperature: [],
       unreadable_pct: [],
       recv_rate: [],
+      noise_floor: [],
     })
     /** @type {import('vue').Ref<HTMLElement | null>} */
     const detailEl = ref(null)
@@ -135,7 +136,7 @@ const App = {
     }
 
     async function loadSparklines(key) {
-      const metrics = ['voltage', 'temperature', 'unreadable_pct', 'recv_rate']
+      const metrics = ['voltage', 'temperature', 'unreadable_pct', 'recv_rate', 'noise_floor']
       const results = await Promise.all(
         metrics.map((m) =>
           fetchHistory(key, m)
@@ -157,6 +158,7 @@ const App = {
       temperature: (v) => `${v.toFixed(1)} °C`,
       unreadable_pct: (v) => `${v.toFixed(1)}%`,
       recv_rate: (v) => `${v.toFixed(1)}/h`,
+      noise_floor: (v) => `${Math.trunc(v)} dBm`,
     }
 
     /** Latest value as text when there are too few points for a line. */
@@ -188,6 +190,7 @@ const App = {
       sparkData.temperature = []
       sparkData.unreadable_pct = []
       sparkData.recv_rate = []
+      sparkData.noise_floor = []
       mapCtrl?.detachDetail()
       mapCtrl?.sync(fleet, null)
     }
@@ -382,6 +385,13 @@ const App = {
                   <polyline fill="none" stroke="#4ea1ff" stroke-width="1.5" :points="sparkPath('recv_rate')" />
                 </svg>
                 <span v-else class="spark-empty">{{ sparkFallback('recv_rate') }}</span>
+              </div>
+              <div class="spark-row">
+                <span class="spark-label">Noise floor</span>
+                <svg v-if="sparkPath('noise_floor')" class="spark" width="120" height="28" viewBox="0 0 120 28" aria-hidden="true">
+                  <polyline fill="none" stroke="#a78bfa" stroke-width="1.5" :points="sparkPath('noise_floor')" />
+                </svg>
+                <span v-else class="spark-empty">{{ sparkFallback('noise_floor') }}</span>
               </div>
             </div>
           </section>

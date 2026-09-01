@@ -54,7 +54,13 @@ class HistoryTests(unittest.TestCase):
                 res=_Res(
                     firmware_version="v0.1.3",
                     name="Repeater",
-                    status={"battery_mv": 4100, "uptime_secs": 7200, "packets_recv": 3, "err_events": 0},
+                    status={
+                        "battery_mv": 4100,
+                        "uptime_secs": 7200,
+                        "packets_recv": 3,
+                        "err_events": 0,
+                        "noise_floor": -94,
+                    },
                     telemetry=[
                         {"channel": 1, "type": "voltage", "value": 4.1},
                         {"channel": 1, "type": "temperature", "value": 18.3},
@@ -76,6 +82,9 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual(bats[0]["value"], 4100)
             volts = history_series(conn, "me0001", "voltage")
             self.assertEqual(volts[0]["value"], 4.1)
+            noise = history_series(conn, "me0001", "noise_floor")
+            self.assertEqual(len(noise), 1)
+            self.assertEqual(noise[0]["value"], -94)
 
     def test_apply_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

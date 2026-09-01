@@ -39,8 +39,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   power, stability, traffic, RF quality, channel utilization, config drift,
   and temperature. Sidebar cards show a colored health bar; detail popup
   lists failing checks with reasons.
-- Fleet detail **sparklines** (voltage, temperature, unreadable %, in-rate/h)
-  from sqlite poll history via `/api/history/{unit}?metric=`.
+- Fleet detail **sparklines** (voltage, temperature, unreadable %, in-rate/h,
+  noise floor) from sqlite poll history via `/api/history/{unit}?metric=`.
 - Since-last-poll interval deltas now include flood/direct, dup counters,
   and RX airtime utilization %.
 - Fleet node detail shows traffic since boot (in/out packets,

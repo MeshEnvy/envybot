@@ -547,8 +547,8 @@ def history_series(
             (unit, since, limit),
         ).fetchall()
         return [{"ts": r["ts"], "value": r["value"]} for r in reversed(rows)]
-    if metric == "battery_mv":
-        key = "battery_mv"
+    if metric in ("battery_mv", "noise_floor"):
+        key = metric
         rows = conn.execute(
             "SELECT ts, payload FROM status WHERE unit = ? AND ts >= ? "
             "ORDER BY ts DESC LIMIT ?",
