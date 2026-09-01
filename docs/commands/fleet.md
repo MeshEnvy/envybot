@@ -31,8 +31,8 @@ First run imports leftover `polls.jsonl` (then deletes it) and YAML
 | inventory | `firmware`, `bootloader` | until sqlite stamp exists |
 | audit | `name`, `lat`, `lon`, `advert`, `flood_advert`, `acl` | `--force` or `--group` only |
 
-Default runs never GET sticky identity fields. Use `--force --poll-only` to
-refresh leak/mismatch in the UI without SET.
+Default runs never GET sticky identity fields. Leak / mismatch in the UI
+follow the apply profile stamp, not a heard-identity GET.
 
 ## Apply
 
@@ -90,6 +90,7 @@ Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
 ## UI
 
 Map pins use **book** position (`sites.yaml` loc for the bound unit), never
-device `0,0`. Detail shows book name + site name, a `public` toggle, drift
-(`leak` vs `mismatch`). List cards show the same drift badge next to
+device `0,0`. Detail shows book name + site name, a `public` toggle, and
+drift from the apply stamp (`leak` if a private profile is due, `mismatch`
+if a public profile is due). List cards show the same badge next to
 freshness. Rows with `decommissioned:` are omitted entirely.

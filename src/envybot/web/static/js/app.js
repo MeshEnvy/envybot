@@ -256,7 +256,6 @@ const App = {
             · {{ formatRelative(selectedUnit.last_heard) }}
             <span v-if="selectedUnit.drift"> · {{ selectedUnit.drift }}</span>
           </p>
-          <p class="sub" v-if="selectedUnit.name_heard">heard {{ selectedUnit.name_heard }}</p>
           <label class="public-toggle">
             <input type="checkbox" :checked="!!selectedUnit.public" @change="togglePublic(selectedUnit, $event)" />
             public (push book name + GPS)

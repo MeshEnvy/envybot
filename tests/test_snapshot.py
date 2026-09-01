@@ -8,11 +8,13 @@ from pathlib import Path
 
 from ruamel.yaml import YAML
 
-from envybot.history import import_yaml_last_seen, open_history
+from envybot.apply import profile_id
+from envybot.history import import_yaml_last_seen, insert_apply, open_history
 from envybot.position import is_placeholder_gps
 from envybot.web.snapshot import (
     assert_no_secrets,
     build_fleet_snapshot,
+    drift_state,
     is_secret_key,
     lookup_site_name,
     resolve_position,
@@ -175,6 +177,63 @@ class SnapshotTests(unittest.TestCase):
             self.assertIn("me0001", snap["units"])
             self.assertNotIn("me0002", snap["units"])
             self.assertEqual(snap["counts"]["total"], 1)
+
+    def test_drift_follows_profile_stamp(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            yaml = YAML()
+            yaml.dump({"sites": {}}, sites_path.open("w", encoding="utf-8"))
+            private = {
+                "unit_id": "ME0001",
+                "name": "Patrick",
+                "guest_password": "GuestOneStrong1",
+                "admin_password": "AdminOneStrong1",
+                "identity_pubkey": "aa" * 32,
+            }
+            public = {
+                "unit_id": "ME0002",
+                "name": "Ophir",
+                "public": True,
+                "guest_password": "GuestTwoStrong2",
+                "admin_password": "AdminTwoStrong2",
+                "identity_pubkey": "bb" * 32,
+            }
+            yaml.dump(
+                {
+                    "next_unit": 3,
+                    "nodes": {"me0001": private, "me0002": public},
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            conn = open_history(book)
+            insert_apply(
+                conn,
+                unit="me0001",
+                field="profile",
+                desired=profile_id(private, {}, doc={"nodes": {"me0001": private}}, keys={}),
+                ok=True,
+            )
+            conn.close()
+            snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
+            self.assertIsNone(snap["units"]["me0001"]["drift"])
+            self.assertEqual(snap["units"]["me0002"]["drift"], "mismatch")
+
+
+class DriftStateTests(unittest.TestCase):
+    def test_profile_ok_clears_drift(self) -> None:
+        self.assertIsNone(drift_state({"name": "Patrick"}, profile_ok=True))
+        self.assertIsNone(drift_state({"name": "Ophir", "public": True}, profile_ok=True))
+
+    def test_due_private_is_leak(self) -> None:
+        self.assertEqual(drift_state({"name": "Patrick"}, profile_ok=False), "leak")
+
+    def test_due_public_is_mismatch(self) -> None:
+        self.assertEqual(
+            drift_state({"name": "Ophir", "public": True}, profile_ok=False),
+            "mismatch",
+        )
 
 
 class LabelTests(unittest.TestCase):

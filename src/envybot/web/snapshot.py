@@ -7,9 +7,11 @@ import time
 from pathlib import Path
 from typing import Any
 
+from envybot.apply import apply_is_due
 from envybot.history import all_last_seen, latest_neighbors, open_history
+from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import is_decommissioned, is_public, load_nodes_doc, normalize_fleet_node
-from envybot.position import is_placeholder_gps, load_sites, resolve_book_position, site_binding
+from envybot.position import load_sites, resolve_book_position, site_binding
 
 SECRET_KEY_RE = re.compile(r"(password|secret)", re.I)
 PULLED_AT_SUFFIX = "_pulled_at"
@@ -187,24 +189,11 @@ def _neighbors_from_seen(seen: dict[str, Any] | None) -> list[Any]:
     return []
 
 
-def drift_state(node: dict[str, Any], seen: dict[str, Any] | None) -> str | None:
-    """None = ok. leak (private) or mismatch (public)."""
-    if not seen:
+def drift_state(node: dict[str, Any], *, profile_ok: bool) -> str | None:
+    """None = profile OK. leak (private due) or mismatch (public due)."""
+    if profile_ok:
         return None
-    name_heard = seen.get("name_heard")
-    lat, lon = seen.get("lat_heard"), seen.get("lon_heard")
-    if is_public(node):
-        book = str(node.get("name") or "")
-        if name_heard and book and name_heard != book:
-            return "mismatch"
-        return None
-    if name_heard and name_heard not in ("Repeater", ""):
-        return "leak"
-    if lat is not None and lon is not None and not is_placeholder_gps(lat, lon):
-        return "leak"
-    if seen.get("advert_interval_min") not in (None, 0):
-        return "leak"
-    return None
+    return "mismatch" if is_public(node) else "leak"
 
 
 def sanitize_unit(
@@ -219,6 +208,7 @@ def sanitize_unit(
     session: dict[str, Any] | None = None,
     seen: dict[str, Any] | None = None,
     neighbors_raw: Any = None,
+    profile_ok: bool = False,
 ) -> dict[str, Any]:
     normalize_fleet_node(node)
     heard = last_heard(node, seen)
@@ -260,7 +250,6 @@ def sanitize_unit(
         "firmware_version": (seen or {}).get("firmware_version"),
         "firmware_platform": node.get("firmware_platform"),
         "bootloader_version": (seen or {}).get("bootloader_version"),
-        "name_heard": (seen or {}).get("name_heard"),
         "identity_pubkey": str(node.get("identity_pubkey") or "").lower() or None,
         "position": position,
         "mapped": position is not None,
@@ -276,12 +265,10 @@ def sanitize_unit(
         ),
         "neighbor_count": len(nbs or []) if isinstance(nbs, list) else 0,
         "acl_count": None,
-        "advert_interval_min": (seen or {}).get("advert_interval_min"),
-        "flood_advert_interval_h": (seen or {}).get("flood_advert_interval_h"),
         "path_hash_mode": node.get("path_hash_mode"),
         "dutycycle": node.get("dutycycle"),
         "node_clock": (seen or {}).get("node_clock"),
-        "drift": drift_state(node, seen),
+        "drift": drift_state(node, profile_ok=profile_ok),
     }
     if session:
         unit["session"] = session
@@ -307,39 +294,51 @@ def build_fleet_snapshot(
     if sites_path is None:
         sites_path = book_dir / "sites.yaml"
     sites = load_sites(sites_path)
+    keys = load_keys(keys_path(nodes_path))
     pubkey_index = build_pubkey_index(nodes)
     now = int(time.time())
     states = session_states or {}
     seen_map = last_seen
     neighbors_map: dict[str, Any] = {}
-    if seen_map is None:
-        try:
-            conn = open_history(book_dir)
+    conn = None
+    try:
+        conn = open_history(book_dir)
+        if seen_map is None:
             seen_map = all_last_seen(conn)
             for key in nodes:
                 nbs = latest_neighbors(conn, key)
                 if nbs is not None:
                     neighbors_map[key] = nbs
-            conn.close()
-        except OSError:
-            seen_map = {}
+    except OSError:
+        seen_map = seen_map or {}
+        conn = None
 
-    units: dict[str, dict[str, Any]] = {}
-    for key, node in nodes.items():
-        if not isinstance(node, dict) or is_decommissioned(node):
-            continue
-        units[key] = sanitize_unit(
-            key,
-            node,
-            sites=sites,
-            pubkey_index=pubkey_index,
-            nodes=nodes,
-            now=now,
-            stale_secs=stale_secs,
-            session=states.get(key),
-            seen=seen_map.get(key),
-            neighbors_raw=neighbors_map.get(key),
-        )
+    try:
+        units: dict[str, dict[str, Any]] = {}
+        for key, node in nodes.items():
+            if not isinstance(node, dict) or is_decommissioned(node):
+                continue
+            profile_ok = False
+            if conn is not None:
+                profile_ok = not apply_is_due(
+                    conn, key, node, sites, doc=doc, keys=keys
+                )
+            units[key] = sanitize_unit(
+                key,
+                node,
+                sites=sites,
+                pubkey_index=pubkey_index,
+                nodes=nodes,
+                now=now,
+                stale_secs=stale_secs,
+                session=states.get(key),
+                seen=seen_map.get(key),
+                neighbors_raw=neighbors_map.get(key),
+                profile_ok=profile_ok,
+            )
+    finally:
+        if conn is not None:
+            conn.close()
 
     mapped = sum(1 for u in units.values() if u.get("mapped"))
     fresh = sum(1 for u in units.values() if u.get("freshness") == "fresh")

@@ -64,7 +64,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 - Apply due = `profile_id` vs last ok sqlite stamp, or weak guest assign.
   Per-field stamps in sqlite `applies` (name, lat, lon, …). Legacy
   `profile` ok row still counts as fully synced. `--force` clears stamps.
-  Not due from heard leak/mismatch. Poll default: status/telemetry/neighbors
+  UI leak / mismatch is the inverse of that stamp (private due / public
+  due), not heard last-seen identity. Poll default: status/telemetry/neighbors
   on interval; fw/bl once; name/gps/advert/acl audit-only (`--force`).
   Apply GETs ACL when due to drop extras. SET fields use the full retry
   budget (login is the reachability check). Any due field failure aborts

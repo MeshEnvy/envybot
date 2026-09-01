@@ -8,6 +8,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Fleet `leak` / `mismatch` follow the apply profile stamp (due vs OK),
+  not heard name/GPS/advert in last-seen. Profile OK clears the badge.
+
 - Apply stamps each SET field in sqlite (`applies.name`, `.lat`, …).
   Synced fields skip on the next run; `--force` clears stamps and re-SETs.
   Legacy `applies.profile` ok rows still count as fully synced.
@@ -29,7 +32,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 ### Added
 
 - Fleet list cards show a `leak` / `mismatch` badge next to freshness
-  when heard identity drifts from book policy.
+  when the apply profile is still due.
 - Decommissioned `nodes.yaml` rows are omitted from fleet UI, poll,
   apply, trust, cmd, and onboard. The stamp stays in the book.
 - Fleet reconnects the BLE/USB companion after an unexpected transport
