@@ -64,12 +64,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   on interval; fw/bl once; name/gps/advert/acl audit-only (`--force`).
   Apply GETs ACL when due to drop extras. First due SET uses at most two
   attempts (direct + flood); any due field failure aborts the rest for
-  that unit this pass. Apply-only runs password login when poll did not.
-- Skip password login when the companion is a resolved **admin** key.
-  Live RTC is `clock` CLI (or login timestamp). Clock is the skip-login
-  reachability probe: timeout = unreachable, skip remaining GET/apply
-  for that unit. Out of sync: drop the companion from the ACL so the
-  next run logs in.
+  that unit this pass. Poll and apply password-login every unit. Live RTC
+  from login timestamp or ``clock`` CLI.
 - Duty-cycle default is 100% (`nodes.yaml` `dutycycle` overrides).
   `set dutycycle` needs MeshCore 1.15+; older 1.x uses `set af`.
   Onboard also SETs `path.hash.mode` 1 (2-byte), same as fleet apply.

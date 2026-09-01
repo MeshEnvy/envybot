@@ -148,5 +148,38 @@ class TrustStampTests(unittest.TestCase):
             self.assertNotEqual(pre, post)
 
 
+class GetPlanTests(unittest.TestCase):
+    def test_format_get_plan_need_and_skip(self) -> None:
+        from envybot.poll import format_get_plan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            record_poll(
+                conn,
+                unit="me0001",
+                res=_Res(
+                    firmware_version="1.14.0",
+                    status={"uptime_secs": 1},
+                    telemetry=[1],
+                    polled_groups=frozenset(
+                        {"firmware", "status", "telemetry", "neighbors"}
+                    ),
+                ),
+            )
+            need, skip = format_get_plan(
+                conn,
+                "me0001",
+                ["status", "telemetry"],
+                policy=PollPolicy(min_interval=86400.0),
+                now=1_700_086_400,
+            )
+        self.assertIn("status", need)
+        self.assertIn("telemetry", need)
+        self.assertIn("(have)", skip)
+        self.assertIn("neighbors (fresh", skip)
+        self.assertIn("name", skip)
+        self.assertIn("(audit)", skip)
+
+
 if __name__ == "__main__":
     unittest.main()

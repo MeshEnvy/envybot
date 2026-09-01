@@ -10,13 +10,15 @@ import time
 from pathlib import Path
 from typing import Any
 
-from envybot.apply import apply_is_due, apply_one, persist_guest_if_new
+from envybot.apply import apply_is_due, apply_one, format_apply_plan, persist_guest_if_new
 from envybot.history import migrate_legacy, record_poll
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import load_nodes_doc, load_sites_for_book, migrate_desired, write_nodes_doc
 from envybot.poll import (
     GET_GROUP_ORDER,
     PollPolicy,
+    due_groups,
+    format_get_plan,
     format_interval,
     gaps_from_poll,
     partition_due,
@@ -197,6 +199,28 @@ async def run(args: argparse.Namespace) -> int:
                     continue
                 prefix = f"[{n}] " if retry_mode and n > 1 else ""
                 print(f"{prefix}{target_label(target)} …", flush=True)
+                if not args.quiet and n == 1:
+                    if do_poll and target.due_groups:
+                        need, skip_plan = format_get_plan(
+                            conn,
+                            target.key,
+                            target.due_groups,
+                            policy=policy,
+                            now=int(time.time()),
+                        )
+                        print(f"  poll need: {need}")
+                        print(f"  poll skip: {skip_plan}")
+                    if target.key in apply_keys:
+                        apply_plan = format_apply_plan(
+                            conn,
+                            target.key,
+                            nodes.get(target.key) or {},
+                            sites,
+                            force=args.force,
+                            doc=doc,
+                            keys=keys,
+                        )
+                        print(f"  apply need: {apply_plan}")
                 if not await session.ensure_companion_connected(log=log):
                     print("  companion disconnected (reconnect failed)")
                     next_pending.append(target)

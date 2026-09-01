@@ -13,7 +13,6 @@ from typing import Any, Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
-from envybot.keys_doc import companion_in_desired_acl
 from envybot.nodes_doc import (
     HEX_PUBKEY_RE,
     PLACEHOLDER_PW,
@@ -53,12 +52,11 @@ DUTYCYCLE_CLI_SINCE = (1, 15)
 ADMIN_PASSWORD_NOW_RE = re.compile(r"^password now:\s*(.*)\s*$", re.I)
 
 # Decision notes (do not reintroduce the opposite without updating this):
-# - Skip login when the companion is already on the book's ACL for that unit
-#   (keys.yaml + trust.admin). ACL-admin can send CLI without a password.
-#   Out of sync: drop the companion from that ACL so the next run logs in.
-#   Live RTC is ``clock`` CLI (or LOGIN_SUCCESS timestamp). STATUS is uptime,
-#   not wall clock. Clock is the skip-login reachability probe: a timeout
-#   means the unit is unreachable. Do not continue GET/SET on that unit.
+# - Password login (0x1a) before poll GET or apply SET on every unit.
+#   Book ACL admin is not enough: remote repeaters need the login handshake
+#   to register the companion and refresh mesh paths. Live RTC comes from
+#   LOGIN_SUCCESS timestamp or ``clock`` CLI. STATUS is uptime, not wall
+#   clock.
 # - Clock set is one CLI: ``time <host epoch>``. Drift is vs host, so set from
 #   host, not companion RTC (``clock sync``). Only from a live clock
 #   (login timestamp or ``clock``), or stored clock that is unset (0 / pre-2020).
@@ -1265,6 +1263,7 @@ async def pull_repeater_status(
     raw = await retry_binary_req(
         "GET_STATUS",
         fetch,
+        client=client,
         attempts=attempts,
         log=log,
         on_retry=flood_on_retry,
@@ -1354,6 +1353,43 @@ class PollLog:
 
 def contact_display_name(target: RouterTarget) -> str:
     return f"{target.unit_id} {target.name}"[:32]
+
+
+def contact_out_path_label(contact: dict[str, Any] | None) -> str | None:
+    """Format companion out_path as space-separated hop hashes (4 hex = 2-byte mode)."""
+    if not contact:
+        return None
+    plen = contact.get("out_path_len")
+    if plen is None or int(plen) <= 0:
+        return None
+    raw = str(contact.get("out_path") or "").strip().lower()
+    if not raw:
+        return None
+    mode = contact.get("out_path_hash_mode")
+    if mode is None or int(mode) < 0:
+        mode = FLEET_PATH_HASH_MODE
+    chunk = (int(mode) + 1) * 2
+    hops = [raw[i : i + chunk] for i in range(0, len(raw), chunk)]
+    hops = [h for h in hops if h]
+    return " ".join(hops) if hops else None
+
+
+def log_contact_path(
+    client: MeshCore, target: RouterTarget, *, log: PollLog | None = None
+) -> None:
+    """Log the companion's cached route for this target before a mesh send.
+
+    ``out_path`` lives on the companion contact record. It is usually learned
+    when a flood login (or other flood exchange) succeeds and the repeater
+    returns a path; later sends ride that direct route until reset or timeout.
+    """
+    log = log or PollLog()
+    contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])
+    label = contact_out_path_label(contact)
+    if label:
+        log.step(f"path: {label}")
+    else:
+        log.step("path: flood")
 
 
 def flood_contact_stub(target: RouterTarget) -> dict[str, Any]:
@@ -1639,9 +1675,7 @@ async def reset_to_flood(
     """
     res = await client.commands.reset_path(target.pubkey_hex)
     if res.type == EventType.ERROR:
-        log.detail(f"path: flood (reset_path warning: {res.payload})")
-    else:
-        log.step("path: flood")
+        log.detail(f"reset_path warning: {res.payload}")
 
 
 async def wait_login_response(
@@ -1682,7 +1716,7 @@ async def admin_login(
     session: FleetSession | None = None,
     log: PollLog | None = None,
 ) -> tuple[bool, str | None, int | None]:
-    """Password login. Skip this when ``companion_in_desired_acl`` is true."""
+    """Password login before poll GET or remote CLI."""
     log = log or PollLog()
 
     dst = target.pubkey_hex
@@ -1697,6 +1731,7 @@ async def admin_login(
                 # Saved direct path didn't answer — fall back to flood. The flood
                 # login triggers a path return, restoring the direct path on success.
                 await reset_to_flood(client, target, log=log)
+            log_contact_path(client, target, log=log)
             sent = await send_login_frame(client, dst, target.admin_password)
             if sent is None or sent.type == EventType.ERROR:
                 err = sent.payload if sent else "no response"
@@ -1798,28 +1833,8 @@ async def maybe_admin_access(
     fetch_clock: bool = True,
     keys: dict[str, list[str]] | None = None,
 ) -> tuple[bool, str | None, int | None]:
-    """Skip password login when the companion is already on the book ACL."""
-    companion = companion_identity(client)
-    if companion is None and session is not None:
-        companion = session.companion_id
-    if companion_in_desired_acl(doc or {}, node, companion, keys):
-        log.step("skip login (companion in book ACL)")
-        if session is not None:
-            session.mark_authed(target.key)
-        if not fetch_clock:
-            return True, None, None
-        clock, heard = await fetch_repeater_clock(
-            client,
-            target,
-            cmd_timeout=cmd_timeout,
-            attempts=attempts,
-            log=log,
-            session=session,
-        )
-        if not heard:
-            log.step("clock timeout, skip remaining ops")
-            return False, "clock timeout", None
-        return True, None, clock
+    """Password login. ``node``/``doc``/``keys``/``fetch_clock`` kept for callers."""
+    _ = (node, doc, keys, fetch_clock, cmd_timeout)
     return await admin_login(
         client,
         target,
@@ -1876,6 +1891,7 @@ async def send_cmd_sync(
             if attempt == 2:
                 # Saved direct path didn't answer — fall back to flood (same as login).
                 await reset_to_flood(client, target, log=log)
+            log_contact_path(client, target, log=log)
             sent = await send_cli_frame(client, dst_hex, framed, attempt=attempt - 1)
             if sent is None or sent.type == EventType.ERROR:
                 err = sent.payload if sent else "no response"
@@ -1938,6 +1954,7 @@ async def retry_binary_req(
     label: str,
     fetch: Callable[[float], Awaitable[Any]],
     *,
+    client: MeshCore,
     attempts: int,
     log: PollLog,
     success: Callable[[Any], bool] | None = None,
@@ -1959,6 +1976,8 @@ async def retry_binary_req(
         if session is not None and not await session.ensure_companion_connected(log=log):
             log.step(f"{label}: aborted — companion not connected")
             break
+        if target is not None:
+            log_contact_path(client, target, log=log)
         n_of = attempt_label(attempt, attempts)
         dest_wait = wait_s
         if session is not None and target is not None:
@@ -2164,6 +2183,7 @@ async def poll_one(
                 lambda dest_wait: client.commands.req_telemetry_sync(
                     target.pubkey_hex, timeout=dest_wait, min_timeout=8
                 ),
+                client=client,
                 attempts=attempts,
                 log=log,
                 on_retry=flood_on_retry,
@@ -2185,6 +2205,7 @@ async def poll_one(
                 lambda dest_wait: client.commands.req_acl_sync(
                     target.pubkey_hex, timeout=dest_wait, min_timeout=8
                 ),
+                client=client,
                 attempts=attempts,
                 log=log,
                 on_retry=flood_on_retry,
@@ -2209,6 +2230,7 @@ async def poll_one(
                 lambda dest_wait: client.commands.fetch_all_neighbours(
                     target.pubkey_hex, timeout=dest_wait, min_timeout=8
                 ),
+                client=client,
                 attempts=attempts,
                 log=log,
                 on_retry=flood_on_retry,

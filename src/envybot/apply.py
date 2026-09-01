@@ -242,6 +242,32 @@ def apply_due_fields(
     return [f for f, des in applicable.items() if last_ok_apply(conn, unit, f) != des]
 
 
+def radio_apply_due_fields(due: list[str]) -> list[str]:
+    """SET fields still due (identity is book metadata, not pushed over mesh)."""
+    return [f for f in due if f != "identity"]
+
+
+def format_apply_plan(
+    conn: sqlite3.Connection,
+    unit: str,
+    node: dict[str, Any],
+    sites: dict[str, dict[str, Any]] | None,
+    *,
+    force: bool = False,
+    doc: dict[str, Any] | None = None,
+    keys: dict[str, list[str]] | None = None,
+) -> str:
+    """One-line apply summary: due SET fields and profile hash."""
+    due = apply_due_fields(conn, unit, node, sites, force=force, doc=doc, keys=keys)
+    pid = profile_id(node, sites, doc=doc, keys=keys)
+    if not due:
+        return f"synced ({pid})"
+    parts = radio_apply_due_fields(due)
+    if "identity" in due:
+        parts = [*parts, "identity"]
+    return f"{', '.join(parts)} ({pid})"
+
+
 def apply_is_due(
     conn: sqlite3.Connection,
     unit: str,
@@ -633,6 +659,7 @@ async def apply_one(
                 lambda dest_wait: client.commands.req_acl_sync(
                     target.pubkey_hex, timeout=dest_wait, min_timeout=8
                 ),
+                client=client,
                 attempts=attempts,
                 log=log,
                 on_retry=flood_on_retry,
@@ -655,9 +682,13 @@ async def apply_one(
         log.step("acl: skip (synced)")
 
     remaining = apply_due_fields(conn, target.key, node, sites, doc=doc, keys=keys)
-    if not remaining:
-        if "identity" in applicable:
+    if not radio_apply_due_fields(remaining):
+        if "identity" in applicable and "identity" in remaining:
             stamp("identity")
+        remaining = apply_due_fields(
+            conn, target.key, node, sites, doc=doc, keys=keys
+        )
+    if not remaining:
         pid = profile_id(node, sites, doc=doc, keys=keys)
         log.step(f"profile OK ({pid})")
         return True

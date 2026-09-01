@@ -13,6 +13,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   Legacy `applies.profile` ok rows still count as fully synced.
   First due field caps at two mesh attempts; failure aborts remaining SETs.
   Apply-only password-logins when poll did not run.
+- Fleet and `cmd` always password-login; skip-login removed (remote
+  repeaters need the login handshake even when the book ACL lists admin).
+- Log companion route (`path: abcd …` or `path: flood`) before each
+  mesh send attempt (CLI, login, binary).
 - Fleet poll cadence: default GET is status/telemetry/neighbors only.
   Name/GPS/advert/ACL are audit-only (`--force` / `--group`). Apply no
   longer triggers on heard leak/mismatch.

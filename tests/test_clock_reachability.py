@@ -1,4 +1,4 @@
-"""Skip-login clock is the reachability probe. Timeout skips remaining ops."""
+"""Reachability and admin access helpers."""
 
 from __future__ import annotations
 
@@ -45,51 +45,25 @@ class FetchRepeaterClockTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(heard)
 
 
-class SkipLoginClockTests(unittest.IsolatedAsyncioTestCase):
-    async def test_clock_timeout_fails_access(self) -> None:
-        with (
-            patch("envybot.radio.companion_identity", return_value="bb" * 16),
-            patch("envybot.radio.companion_in_desired_acl", return_value=True),
-            patch(
-                "envybot.radio.fetch_repeater_clock",
-                new=AsyncMock(return_value=(None, False)),
-            ),
-        ):
+class AdminAccessTests(unittest.IsolatedAsyncioTestCase):
+    async def test_maybe_admin_access_always_password_logins(self) -> None:
+        with patch(
+            "envybot.radio.admin_login",
+            new=AsyncMock(return_value=(True, None, 1_700_000_000)),
+        ) as login:
             ok, err, clock = await maybe_admin_access(
                 MagicMock(),
                 _target(),
                 node={},
-                doc={},
+                doc={"trust": {"admin": ["ben"]}},
                 login_timeout=8,
                 cmd_timeout=8,
                 attempts=1,
                 session=None,
                 log=PollLog(progress=False),
+                keys={"ben": ["bb" * 32]},
             )
-        self.assertFalse(ok)
-        self.assertEqual(err, "clock timeout")
-        self.assertIsNone(clock)
-
-    async def test_clock_heard_allows_access(self) -> None:
-        with (
-            patch("envybot.radio.companion_identity", return_value="bb" * 16),
-            patch("envybot.radio.companion_in_desired_acl", return_value=True),
-            patch(
-                "envybot.radio.fetch_repeater_clock",
-                new=AsyncMock(return_value=(1_700_000_000, True)),
-            ),
-        ):
-            ok, err, clock = await maybe_admin_access(
-                MagicMock(),
-                _target(),
-                node={},
-                doc={},
-                login_timeout=8,
-                cmd_timeout=8,
-                attempts=1,
-                session=None,
-                log=PollLog(progress=False),
-            )
+        login.assert_awaited_once()
         self.assertTrue(ok)
         self.assertIsNone(err)
         self.assertEqual(clock, 1_700_000_000)

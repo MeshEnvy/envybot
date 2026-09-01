@@ -128,6 +128,52 @@ def partition_due(
     return due, skipped
 
 
+def _get_need_note(seen: dict[str, Any] | None, group: str) -> str:
+    if not group_complete(seen, group):
+        return "missing"
+    return "refresh"
+
+
+def format_get_plan(
+    conn: sqlite3.Connection,
+    unit: str,
+    due_groups: list[str],
+    *,
+    policy: PollPolicy,
+    now: int | None = None,
+) -> tuple[str, str]:
+    """Human plan for one unit: GET groups this session will fetch vs skip."""
+    now = now or int(time.time())
+    seen = get_last_seen(conn, unit)
+    need = (
+        ", ".join(f"{g} ({_get_need_note(seen, g)})" for g in due_groups) or "none"
+    )
+    skip_inv: list[str] = []
+    skip_audit: list[str] = []
+    skip_fresh: list[str] = []
+    for group in GET_GROUP_ORDER:
+        if group in due_groups:
+            continue
+        spec = GET_GROUPS[group]
+        if spec.mode == "inventory":
+            skip_inv.append(group)
+        elif spec.mode == "audit":
+            skip_audit.append(group)
+        else:
+            skip_fresh.append(group)
+    skip_bits: list[str] = []
+    if skip_inv:
+        skip_bits.append(f"{', '.join(skip_inv)} (have)")
+    if skip_audit:
+        skip_bits.append(f"{', '.join(skip_audit)} (audit)")
+    if skip_fresh:
+        skip_bits.append(
+            f"{', '.join(skip_fresh)} (fresh <{format_interval(policy.min_interval)})"
+        )
+    skip = "; ".join(skip_bits) if skip_bits else "none"
+    return need, skip
+
+
 def gaps_from_poll(res: PollResult) -> list[str]:
     gaps: list[str] = []
     if "firmware" in res.polled_groups and not res.firmware_version:
@@ -165,6 +211,7 @@ __all__ = [
     "PollResult",
     "PullPolicy",
     "due_groups",
+    "format_get_plan",
     "format_interval",
     "format_pull_plan",
     "gaps_from_poll",

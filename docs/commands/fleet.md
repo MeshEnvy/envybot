@@ -45,11 +45,9 @@ resolved GPS.
 
 Always also SETs `path.hash.mode` (default 1 = 2-byte), `dutycycle`
 (default 100), a strong book admin via `password`, and clock if unset
-or behind. Password login is skipped when the companion is a resolved
-**admin** key for that unit. Live clock then comes from the `clock`
-CLI, which is also the reachability probe. If `clock` times out, that
-unit is unreachable and remaining GET/SET ops are skipped. Drop the
-companion from the ACL to force login if that belief is wrong.
+or behind. Password-login every unit before GET or SET (login establishes
+the repeater session and refreshes mesh paths). Live clock comes from
+the login timestamp or `clock` CLI afterward.
 
 Apply is due when any SET field stamp misses the book desired value
 (stored in sqlite `applies` per field: name, lat, lon, advert, flood,
@@ -61,8 +59,6 @@ assign. Heard name/GPS/adverts do **not** trigger apply. Edit a hashed field in 
 When apply runs, GET ACL once to drop keys not in the book allowlist.
 The first due SET field uses at most two mesh attempts (direct + flood).
 If it gets no response, apply aborts for that unit (no lat/lon/guest/…).
-Apply-only (`--apply-only` or when poll groups are up to date) password-
-logins before SET (no skip-login on that path).
 
 Hashed: public/name/gps/adverts, guest + admin (tokens), identity pubkey,
 path.hash, dutycycle, resolved ACL (pubkey + perm). Not hashed / not pushed here:

@@ -10,8 +10,10 @@ from envybot.apply import (
     apply_due_fields,
     apply_is_due,
     applicable_field_desireds,
+    format_apply_plan,
     profile_id,
     profile_parts,
+    radio_apply_due_fields,
 )
 from envybot.history import insert_apply, open_history, record_poll
 from envybot.radio import format_book_coord
@@ -162,6 +164,25 @@ class DueTests(unittest.TestCase):
             self.assertNotIn("lon", due)
             self.assertNotIn("advert", due)
             self.assertNotIn("path_hash", due)
+
+    def test_identity_only_due_when_radio_synced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            applicable = applicable_field_desireds(_STRONG, None)
+            for field, des in applicable.items():
+                if field == "identity":
+                    continue
+                insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
+            due = apply_due_fields(conn, "me0001", _STRONG, None)
+            self.assertEqual(due, ["identity"])
+            self.assertEqual(radio_apply_due_fields(due), [])
+
+    def test_format_apply_plan_shows_due_fields_and_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            plan = format_apply_plan(conn, "me0001", _STRONG, None)
+            self.assertTrue(plan.startswith("name,") or plan.startswith("name ("))
+            self.assertTrue(plan.startswith("v1:") or "(v1:" in plan)
 
 
 class FormatTests(unittest.TestCase):
