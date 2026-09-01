@@ -284,6 +284,13 @@ body {
   line-height: 1;
 }
 
+.poll-sun-elev {
+  margin-left: 2px;
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+  color: #8aa0b5;
+}
+
 .unit-stage {
   margin-top: 4px;
   padding-left: 0;

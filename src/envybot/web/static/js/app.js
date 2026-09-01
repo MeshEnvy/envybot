@@ -22,6 +22,7 @@ import {
   formatTemp,
   formatUptime,
   sunEmoji,
+  sunElev,
   sunTitle,
   hasHealthIssues,
   hasTrafficStats,
@@ -31,7 +32,7 @@ import {
   compareUnits,
   unitLabel,
   unitTitle,
-} from './format.js?v=21'
+} from './format.js?v=22'
 import { buildNeighborEdges, createMapController, unitStage, unitStatus } from './map.js?v=23'
 import { seriesFromHistories, sparklineWallTime, SPARK_MIN_SPAN } from './sparklines.js?v=8'
 
@@ -466,6 +467,7 @@ const App = {
       voltageStock,
       tempStock,
       sunEmoji,
+      sunElev,
       sunTitle,
       unitLabel,
       unitTitle,
@@ -750,6 +752,7 @@ const App = {
                 <thead>
                   <tr>
                     <th>When</th>
+                    <th>Sun</th>
                     <th>V</th>
                     <th>In / out</th>
                     <th>Gap</th>
@@ -761,13 +764,19 @@ const App = {
                     :key="'st-' + pi"
                     :class="{ 'poll-reboot': row.reboot }"
                   >
+                    <td>{{ formatRelative(row.ts) }}</td>
                     <td>
                       <span
                         v-if="sunEmoji(row.sun)"
                         class="poll-sun"
                         :title="sunTitle(row.sun)"
-                      >{{ sunEmoji(row.sun) }}</span>
-                      {{ formatRelative(row.ts) }}
+                      >
+                        {{ sunEmoji(row.sun) }}
+                        <span v-if="sunElev(row.sun)" class="poll-sun-elev">{{
+                          sunElev(row.sun)
+                        }}</span>
+                      </span>
+                      <template v-else>—</template>
                     </td>
                     <td class="poll-metric">
                       {{ formatPollVoltage(row) }}
@@ -797,6 +806,7 @@ const App = {
                 <thead>
                   <tr>
                     <th>When</th>
+                    <th>Sun</th>
                     <th>V</th>
                     <th>Temp</th>
                     <th>Gap</th>
@@ -804,13 +814,19 @@ const App = {
                 </thead>
                 <tbody>
                   <tr v-for="(row, pi) in unitHistory.telemetry" :key="'te-' + pi">
+                    <td>{{ formatRelative(row.ts) }}</td>
                     <td>
                       <span
                         v-if="sunEmoji(row.sun)"
                         class="poll-sun"
                         :title="sunTitle(row.sun)"
-                      >{{ sunEmoji(row.sun) }}</span>
-                      {{ formatRelative(row.ts) }}
+                      >
+                        {{ sunEmoji(row.sun) }}
+                        <span v-if="sunElev(row.sun)" class="poll-sun-elev">{{
+                          sunElev(row.sun)
+                        }}</span>
+                      </span>
+                      <template v-else>—</template>
                     </td>
                     <td class="poll-metric">
                       {{ row.voltage != null ? Number(row.voltage).toFixed(2) + ' V' : '—' }}

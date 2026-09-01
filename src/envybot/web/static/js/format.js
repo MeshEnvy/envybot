@@ -227,6 +227,13 @@ export function sunTitle(sun) {
   return typeof sun?.label === 'string' ? sun.label : ''
 }
 
+/** @param {Record<string, unknown> | null | undefined} sun */
+export function sunElev(sun) {
+  const elev = Number(sun?.elev)
+  if (!Number.isFinite(elev)) return ''
+  return `${Math.round(elev)}∠`
+}
+
 export function formatSite(slug) {
   if (!slug) return 'bag / bench'
   return slug
