@@ -9,7 +9,7 @@ from pathlib import Path
 from ruamel.yaml import YAML
 
 from envybot.apply import profile_id
-from envybot.history import import_yaml_last_seen, insert_apply, open_history
+from envybot.history import import_yaml_last_seen, insert_apply, open_history, record_poll
 from envybot.position import is_placeholder_gps
 from envybot.web.snapshot import (
     assert_no_secrets,
@@ -252,6 +252,60 @@ class SnapshotTests(unittest.TestCase):
             snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
             self.assertIsNone(snap["units"]["me0001"]["drift"])
             self.assertEqual(snap["units"]["me0002"]["drift"], "mismatch")
+
+    def test_status_traffic_from_latest_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            yaml = YAML()
+            yaml.dump({"sites": {}}, sites_path.open("w", encoding="utf-8"))
+            yaml.dump(
+                {
+                    "next_unit": 2,
+                    "nodes": {
+                        "me0001": {
+                            "unit_id": "ME0001",
+                            "name": "Traffic",
+                            "identity_pubkey": "a" * 64,
+                            "admin_password": "secret-admin",
+                            "guest_password": "secret-guest",
+                        },
+                    },
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            conn = open_history(book)
+
+            class _Res:
+                polled_groups = frozenset({"status"})
+                status = {
+                    "packets_recv": 500,
+                    "packets_sent": 120,
+                    "recv_errors": 3,
+                    "err_events": 0,
+                    "uptime_secs": 3600,
+                    "recv_flood": 400,
+                    "recv_direct": 100,
+                    "sent_flood": 90,
+                    "sent_direct": 30,
+                    "last_snr": 4.25,
+                    "last_rssi": -95,
+                    "noise_floor": -110,
+                }
+
+            record_poll(conn, unit="me0001", res=_Res(), ts=100)
+            conn.close()
+            snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
+            status = snap["units"]["me0001"]["status"]
+            assert status is not None
+            self.assertEqual(status["packets_recv"], 500)
+            self.assertEqual(status["recv_errors"], 3)
+            self.assertEqual(status["uptime_secs"], 3600)
+            self.assertEqual(status["recv_flood"], 400)
+            self.assertAlmostEqual(status["last_snr"], 4.25)
+            self.assertEqual(status["last_rssi"], -95)
+            self.assertEqual(status["noise_floor"], -110)
 
 
 class DriftStateTests(unittest.TestCase):

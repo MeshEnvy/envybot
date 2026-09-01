@@ -28,6 +28,60 @@ export function formatUptime(secs) {
   return `${(secs / 86400).toFixed(1)}d`
 }
 
+/** @param {number | null | undefined} n */
+export function formatCount(n) {
+  if (n == null) return '—'
+  return String(Math.trunc(n))
+}
+
+/** @param {number | null | undefined} recvErrors @param {number | null | undefined} packetsRecv */
+export function formatErrorRate(recvErrors, packetsRecv) {
+  const errs = recvErrors ?? 0
+  const recv = packetsRecv ?? 0
+  if (recv === 0) return errs === 0 ? '0' : '—'
+  const pct = (errs / recv) * 100
+  if (pct === 0) return '0'
+  if (pct < 0.01) return '<0.01%'
+  if (pct < 10) return `${pct.toFixed(2)}%`
+  return `${pct.toFixed(1)}%`
+}
+
+/** @param {number | null | undefined} snr */
+export function formatSnr(snr) {
+  if (snr == null) return '—'
+  return `${Number(snr).toFixed(1)} dB`
+}
+
+/** @param {number | null | undefined} rssi */
+export function formatRssi(rssi) {
+  if (rssi == null) return '—'
+  return `${Math.trunc(rssi)} dBm`
+}
+
+/** @param {number | null | undefined} nf */
+export function formatNoiseFloor(nf) {
+  if (nf == null) return '—'
+  return `${Math.trunc(nf)} dBm`
+}
+
+/** @param {Record<string, unknown> | null | undefined} status */
+export function hasTrafficStats(status) {
+  if (!status) return false
+  return [
+    'packets_recv',
+    'packets_sent',
+    'recv_errors',
+    'err_events',
+    'recv_flood',
+    'recv_direct',
+    'sent_flood',
+    'sent_direct',
+    'last_snr',
+    'last_rssi',
+    'noise_floor',
+  ].some((k) => status[k] != null)
+}
+
 /** @param {string | null | undefined} slug */
 export function formatSite(slug) {
   if (!slug) return 'bag / bench'

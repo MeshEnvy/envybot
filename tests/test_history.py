@@ -14,6 +14,7 @@ from envybot.history import (
     import_yaml_last_seen,
     insert_apply,
     last_ok_apply,
+    latest_status,
     migrate_legacy,
     open_history,
     record_poll,
@@ -123,6 +124,36 @@ class HistoryTests(unittest.TestCase):
             assert seen is not None
             self.assertEqual(seen["name_heard"], "Ophir")
             self.assertEqual(seen["firmware_version"], "v1.16.0")
+
+    def test_latest_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            record_poll(
+                conn,
+                unit="me0004",
+                res=_Res(
+                    status={
+                        "packets_recv": 120,
+                        "packets_sent": 45,
+                        "recv_errors": 2,
+                        "err_events": 1,
+                        "uptime_secs": 86400,
+                        "recv_flood": 80,
+                        "recv_direct": 40,
+                        "last_snr": 5.5,
+                    },
+                    polled_groups=frozenset({"status"}),
+                ),
+                ts=200,
+            )
+            status = latest_status(conn, "me0004")
+            assert status is not None
+            self.assertEqual(status["packets_recv"], 120)
+            self.assertEqual(status["recv_errors"], 2)
+            self.assertEqual(status["uptime_secs"], 86400)
+            self.assertEqual(status["recv_flood"], 80)
+            self.assertAlmostEqual(status["last_snr"], 5.5)
+            self.assertIsNone(latest_status(conn, "me9999"))
 
 
 if __name__ == "__main__":

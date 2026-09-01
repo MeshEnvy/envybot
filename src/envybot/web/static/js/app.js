@@ -2,13 +2,19 @@ import { createApp, computed, nextTick, onMounted, onUnmounted, reactive, ref, w
 import { connectEvents, fetchFleet, patchUnit } from './api.js'
 import {
   formatBattery,
+  formatCount,
+  formatErrorRate,
+  formatNoiseFloor,
   formatRelative,
+  formatRssi,
   formatSite,
+  formatSnr,
   formatTemp,
   formatUptime,
+  hasTrafficStats,
   unitLabel,
   unitTitle,
-} from './format.js?v=3'
+} from './format.js?v=4'
 import { createMapController, unitStatus } from './map.js?v=11'
 
 const SESSION_RANK = {
@@ -212,8 +218,14 @@ const App = {
       formatRelative,
       formatSite,
       formatBattery,
+      formatCount,
+      formatErrorRate,
+      formatNoiseFloor,
       formatTemp,
       formatUptime,
+      formatRssi,
+      formatSnr,
+      hasTrafficStats,
       unitLabel,
       unitTitle,
       togglePublic,
@@ -284,6 +296,62 @@ const App = {
             <dt>Uptime</dt>
             <dd>{{ formatUptime(selectedUnit.status?.uptime_secs) }}</dd>
           </dl>
+          <section v-if="hasTrafficStats(selectedUnit.status)">
+            <h3>Traffic</h3>
+            <dl>
+              <dt>Recv / sent</dt>
+              <dd>
+                {{ formatCount(selectedUnit.status?.packets_recv) }} /
+                {{ formatCount(selectedUnit.status?.packets_sent) }}
+              </dd>
+              <dt>RX errors</dt>
+              <dd>
+                {{ formatCount(selectedUnit.status?.recv_errors) }}
+                ({{ formatErrorRate(selectedUnit.status?.recv_errors, selectedUnit.status?.packets_recv) }})
+              </dd>
+              <dt>Queue full</dt>
+              <dd>{{ formatCount(selectedUnit.status?.err_events) }}</dd>
+              <template
+                v-if="
+                  selectedUnit.status?.recv_flood != null ||
+                  selectedUnit.status?.recv_direct != null
+                "
+              >
+                <dt>Recv flood / direct</dt>
+                <dd>
+                  {{ formatCount(selectedUnit.status?.recv_flood) }} /
+                  {{ formatCount(selectedUnit.status?.recv_direct) }}
+                </dd>
+              </template>
+              <template
+                v-if="
+                  selectedUnit.status?.sent_flood != null ||
+                  selectedUnit.status?.sent_direct != null
+                "
+              >
+                <dt>Sent flood / direct</dt>
+                <dd>
+                  {{ formatCount(selectedUnit.status?.sent_flood) }} /
+                  {{ formatCount(selectedUnit.status?.sent_direct) }}
+                </dd>
+              </template>
+              <template
+                v-if="
+                  selectedUnit.status?.last_snr != null ||
+                  selectedUnit.status?.last_rssi != null ||
+                  selectedUnit.status?.noise_floor != null
+                "
+              >
+                <dt>Last SNR / RSSI</dt>
+                <dd>
+                  {{ formatSnr(selectedUnit.status?.last_snr) }} /
+                  {{ formatRssi(selectedUnit.status?.last_rssi) }}
+                </dd>
+                <dt>Noise floor</dt>
+                <dd>{{ formatNoiseFloor(selectedUnit.status?.noise_floor) }}</dd>
+              </template>
+            </dl>
+          </section>
           <section v-if="selectedUnit.neighbors?.length">
             <h3>Neighbors ({{ selectedUnit.neighbors.filter(n => n.unit_key).length }} in book)</h3>
             <div

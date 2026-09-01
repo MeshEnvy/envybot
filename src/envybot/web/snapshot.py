@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from envybot.apply import apply_is_due
-from envybot.history import all_last_seen, latest_neighbors, open_history
+from envybot.history import all_last_seen, latest_neighbors, latest_status, open_history
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
     is_decommissioned,
@@ -25,6 +25,27 @@ PULLED_AT_SUFFIX = "_pulled_at"
 DEFAULT_STALE_SECS = 86400.0
 
 SessionState = str  # idle | queued | polling | ok | unreachable
+
+STATUS_PUBLIC_KEYS = (
+    "battery_mv",
+    "packets_recv",
+    "packets_sent",
+    "err_events",
+    "recv_errors",
+    "uptime_secs",
+    "recv_flood",
+    "recv_direct",
+    "sent_flood",
+    "sent_direct",
+    "last_snr",
+    "last_rssi",
+    "noise_floor",
+    "tx_queue_len",
+    "tx_airtime_secs",
+    "rx_airtime_secs",
+    "direct_dups",
+    "flood_dups",
+)
 
 
 def is_secret_key(key: str) -> bool:
@@ -197,6 +218,24 @@ def _neighbors_from_seen(seen: dict[str, Any] | None) -> list[Any]:
     return []
 
 
+def build_unit_status(
+    seen: dict[str, Any] | None,
+    status_raw: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Merge latest status JSON with last_seen counters for the fleet UI."""
+    merged: dict[str, Any] = {}
+    if isinstance(status_raw, dict):
+        for key in STATUS_PUBLIC_KEYS:
+            val = status_raw.get(key)
+            if val is not None:
+                merged[key] = val
+    if seen:
+        for key in STATUS_PUBLIC_KEYS:
+            if merged.get(key) is None and seen.get(key) is not None:
+                merged[key] = seen[key]
+    return merged or None
+
+
 def drift_state(node: dict[str, Any], *, profile_ok: bool) -> str | None:
     """None = profile OK. leak (private due) or mismatch (public due)."""
     if profile_ok:
@@ -216,6 +255,7 @@ def sanitize_unit(
     session: dict[str, Any] | None = None,
     seen: dict[str, Any] | None = None,
     neighbors_raw: Any = None,
+    status_raw: dict[str, Any] | None = None,
     profile_ok: bool = False,
 ) -> dict[str, Any]:
     normalize_fleet_node(node)
@@ -228,17 +268,7 @@ def sanitize_unit(
         if seen.get("temperature") is not None:
             tele_src.append({"type": "temperature", "value": seen.get("temperature")})
     tele = extract_telemetry(tele_src or None)
-    if seen and seen.get("battery_mv") is not None:
-        status = {
-            "battery_mv": seen.get("battery_mv"),
-            "packets_recv": seen.get("packets_recv"),
-            "packets_sent": seen.get("packets_sent"),
-            "err_events": seen.get("err_events"),
-            "recv_errors": seen.get("recv_errors"),
-            "uptime_secs": seen.get("uptime_secs"),
-        }
-    else:
-        status = None
+    status = build_unit_status(seen, status_raw)
     nbs = neighbors_raw if neighbors_raw is not None else node.get("neighbors")
     bind = site_binding(key, node, sites)
     site_slug = bind[0] if bind else None
@@ -308,6 +338,7 @@ def build_fleet_snapshot(
     states = session_states or {}
     seen_map = last_seen
     neighbors_map: dict[str, Any] = {}
+    status_map: dict[str, dict[str, Any]] = {}
     conn = None
     try:
         conn = open_history(book_dir)
@@ -317,6 +348,9 @@ def build_fleet_snapshot(
                 nbs = latest_neighbors(conn, key)
                 if nbs is not None:
                     neighbors_map[key] = nbs
+                status = latest_status(conn, key)
+                if status is not None:
+                    status_map[key] = status
     except OSError:
         seen_map = seen_map or {}
         conn = None
@@ -344,6 +378,7 @@ def build_fleet_snapshot(
                 session=states.get(key),
                 seen=seen_map.get(key),
                 neighbors_raw=neighbors_map.get(key),
+                status_raw=status_map.get(key),
                 profile_ok=profile_ok,
             )
     finally:

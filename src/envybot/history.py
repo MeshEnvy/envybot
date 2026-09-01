@@ -218,6 +218,20 @@ def latest_neighbors(conn: sqlite3.Connection, unit: str) -> list[Any] | None:
     return data if isinstance(data, list) else None
 
 
+def latest_status(conn: sqlite3.Connection, unit: str) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT payload FROM status WHERE unit = ? ORDER BY ts DESC LIMIT 1",
+        (unit,),
+    ).fetchone()
+    if not row:
+        return None
+    try:
+        data = json.loads(row["payload"])
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def all_last_seen(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for row in conn.execute("SELECT * FROM last_seen"):
