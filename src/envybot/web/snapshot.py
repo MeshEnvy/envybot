@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from envybot.history import all_last_seen, latest_neighbors, open_history
-from envybot.nodes_doc import is_public, load_nodes_doc, normalize_fleet_node
+from envybot.nodes_doc import is_decommissioned, is_public, load_nodes_doc, normalize_fleet_node
 from envybot.position import is_placeholder_gps, load_sites, resolve_book_position, site_binding
 
 SECRET_KEY_RE = re.compile(r"(password|secret)", re.I)
@@ -126,7 +126,7 @@ def resolve_position(
 def build_pubkey_index(nodes: dict[str, Any]) -> dict[str, str]:
     index: dict[str, str] = {}
     for key, node in nodes.items():
-        if not isinstance(node, dict):
+        if not isinstance(node, dict) or is_decommissioned(node):
             continue
         pk = str(node.get("identity_pubkey") or "").lower()
         if not pk:
@@ -257,7 +257,6 @@ def sanitize_unit(
         "public": is_public(node),
         "hardware": node.get("hardware"),
         "notes": node.get("notes"),
-        "decommissioned": node.get("decommissioned"),
         "firmware_version": (seen or {}).get("firmware_version"),
         "firmware_platform": node.get("firmware_platform"),
         "bootloader_version": (seen or {}).get("bootloader_version"),
@@ -327,7 +326,7 @@ def build_fleet_snapshot(
 
     units: dict[str, dict[str, Any]] = {}
     for key, node in nodes.items():
-        if not isinstance(node, dict):
+        if not isinstance(node, dict) or is_decommissioned(node):
             continue
         units[key] = sanitize_unit(
             key,

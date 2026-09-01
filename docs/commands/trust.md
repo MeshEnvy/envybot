@@ -18,7 +18,8 @@ trust roles.
 ```
 
 Contact name is the bound site's `name` (e.g. Ophir), or `unit_id` when
-the unit has no site. Includes bag/bench units. A stale last-heard
+the unit has no site. Includes bag/bench units. Skips `decommissioned`
+rows. A stale last-heard
 advert name is removed and re-added so the phone list picks up the
 book name. Reconnect the MeshCore app after trust.
 

@@ -43,6 +43,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   GET device coords into YAML.
 - `fleet` / `trust` / `cmd` skip `firmware_platform: meshtastic` even
   when leftover MeshCore pubkey/admin exist. Blank platform = meshcore.
+- `decommissioned:` (epoch) rows stay in `nodes.yaml` for the number
+  but envybot ignores them: no UI, poll, apply, trust, cmd, or onboard.
 - `trust` imports every pollable MeshCore unit, including bag/bench
   (no site bind). Contact name is the site `name` (e.g. Ophir), else
   `unit_id`. Stale advert names are removed and re-added. `trust ben`

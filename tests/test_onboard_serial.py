@@ -8,6 +8,7 @@ from envybot.commands.onboard import (
     RepeaterSerial,
     antenna_ready,
     apply_path_hash_policy,
+    resolve_unit,
     wait_usb_gone,
 )
 from envybot.keys_doc import parse_serial_acl
@@ -100,3 +101,17 @@ class AntennaPromptTests(unittest.TestCase):
         self.assertFalse(antenna_ready("s"))
         self.assertFalse(antenna_ready("skip"))
         self.assertFalse(antenna_ready("n"))
+
+
+class ResolveUnitTests(unittest.TestCase):
+    def test_refuses_decommissioned_pubkey(self) -> None:
+        nodes = {
+            "me0008": {
+                "unit_id": "ME0008",
+                "identity_pubkey": "a" * 64,
+                "decommissioned": 1787904120,
+            }
+        }
+        with self.assertRaises(SystemExit) as err:
+            resolve_unit(nodes, "a" * 64, unit=None)
+        self.assertIn("decommissioned", str(err.exception))

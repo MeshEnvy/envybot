@@ -92,4 +92,4 @@ Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
 Map pins use **book** position (`sites.yaml` loc for the bound unit), never
 device `0,0`. Detail shows book name + site name, a `public` toggle, drift
 (`leak` vs `mismatch`). List cards show the same drift badge next to
-freshness.
+freshness. Rows with `decommissioned:` are omitted entirely.

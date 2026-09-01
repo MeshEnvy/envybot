@@ -61,7 +61,7 @@ NODES_YAML_HEADER = (
     "# trust.admin / trust.guest: people from keys.yaml (MeshCore ACL).\n"
     "# admin1_pubkey / admin1_secret: Meshtastic remote-admin. Not MC ACL.\n"
     "# firmware_platform: meshcore | meshtastic.\n"
-    "# decommissioned: unix epoch when pulled from service.\n"
+    "# decommissioned: unix epoch when pulled from service. Envybot ignores the row.\n"
     "# next_unit: next free ME number (never reuse).\n"
     "# admin_password / guest_password: unique + strong per unit. Privacy apply\n"
     "#   rolls blank, weak, or colliding guest passwords (never reuse m35h3nvy).\n"
@@ -145,6 +145,13 @@ def write_nodes_doc(nodes_path: Path, doc: dict[str, Any]) -> None:
 
 def is_public(node: dict[str, Any] | None) -> bool:
     return bool(node and node.get("public") is True)
+
+
+def is_decommissioned(node: dict[str, Any] | None) -> bool:
+    """True when the book stamps a pull-from-service epoch (blank key is live)."""
+    if not node:
+        return False
+    return node.get("decommissioned") not in (None, "", False)
 
 
 def normalize_fleet_node(node: dict[str, Any]) -> None:

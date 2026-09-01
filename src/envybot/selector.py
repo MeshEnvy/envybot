@@ -10,6 +10,7 @@ from envybot.nodes_doc import (
     HEX_PUBKEY_RE,
     PLACEHOLDER_PW,
     UNIT_NUM_RE,
+    is_decommissioned,
     is_meshcore_platform,
     normalize_fleet_node,
 )
@@ -62,7 +63,7 @@ def iter_cmd_eligible(doc: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     for key, node in nodes.items():
         if not isinstance(node, dict):
             continue
-        if node.get("decommissioned"):
+        if is_decommissioned(node):
             continue
         if not is_meshcore_platform(node):
             continue
@@ -108,7 +109,7 @@ def _ineligible_reason(doc: dict[str, Any], selector: str) -> str | None:
             return f"{unit_id}: no admin password ({platform}; remote CLI unavailable)"
         if str(admin_pw).strip() in PLACEHOLDER_PW:
             return f"{unit_id}: placeholder admin password (remote CLI unavailable)"
-        if node.get("decommissioned"):
+        if is_decommissioned(node):
             return f"{unit_id}: decommissioned"
         if "RETIRED" in str(node.get("notes") or "").upper():
             return f"{unit_id}: retired"

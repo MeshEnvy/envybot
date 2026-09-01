@@ -143,6 +143,39 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(len(nbs), 1)
             self.assertEqual(nbs[0]["label"], "Beta")
 
+    def test_omits_decommissioned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            yaml = YAML()
+            yaml.dump({"sites": {}}, sites_path.open("w", encoding="utf-8"))
+            yaml.dump(
+                {
+                    "next_unit": 3,
+                    "nodes": {
+                        "me0001": {
+                            "unit_id": "ME0001",
+                            "name": "Live",
+                            "identity_pubkey": "a" * 64,
+                            "admin_password": "secret-admin",
+                        },
+                        "me0002": {
+                            "unit_id": "ME0002",
+                            "name": "Dead",
+                            "identity_pubkey": "b" * 64,
+                            "admin_password": "other",
+                            "decommissioned": 1787943600,
+                        },
+                    },
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
+            self.assertIn("me0001", snap["units"])
+            self.assertNotIn("me0002", snap["units"])
+            self.assertEqual(snap["counts"]["total"], 1)
+
 
 class LabelTests(unittest.TestCase):
     def test_bound_uses_site_name(self) -> None:

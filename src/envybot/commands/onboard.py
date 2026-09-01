@@ -40,6 +40,7 @@ from envybot.keys_doc import (
 )
 from envybot.nodes_doc import (
     allocate_unit_id,
+    is_decommissioned,
     load_nodes_doc,
     remember_unit_id,
     write_nodes_doc,
@@ -536,11 +537,15 @@ def resolve_unit(
     unit: str | None,
 ) -> tuple[str | None, dict[str, Any] | None]:
     existing = find_unit_by_pubkey(nodes, pubkey)
+    if existing and is_decommissioned(nodes.get(existing)):
+        raise SystemExit(f"{existing}: decommissioned")
     if unit:
         key = unit.lower()
         if existing and existing != key:
             raise SystemExit(f"pubkey already registered as {existing}; not using --unit {key}")
         node = nodes.get(key)
+        if is_decommissioned(node):
+            raise SystemExit(f"{key}: decommissioned")
         have = str((node or {}).get("identity_pubkey") or "").strip().lower()
         if have and have != pubkey.strip().lower():
             raise SystemExit(f"--unit {key} already has a different pubkey")
@@ -816,12 +821,16 @@ def register(nodes_path: Path, result: dict[str, Any], *, unit: str | None) -> t
     doc, nodes = load_registry(nodes_path)
     pubkey = result["pubkey"]
     existing = find_unit_by_pubkey(nodes, pubkey)
+    if existing and is_decommissioned(nodes.get(existing)):
+        raise SystemExit(f"{existing}: decommissioned")
     if unit:
         key = unit.lower()
         if existing and existing != key:
             raise SystemExit(
                 f"pubkey already registered as {existing}; not writing --unit {key}"
             )
+        if is_decommissioned(nodes.get(key)):
+            raise SystemExit(f"{key}: decommissioned")
         created = key not in nodes
         unit_id = key.upper()
         node = nodes.get(key) or new_node(unit_id)

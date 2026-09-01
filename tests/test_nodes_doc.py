@@ -8,6 +8,7 @@ from pathlib import Path
 
 from envybot.nodes_doc import (
     MASK_NAME,
+    is_decommissioned,
     is_public,
     migrate_desired,
     write_nodes_doc,
@@ -77,6 +78,17 @@ class MigrateTests(unittest.TestCase):
             self.assertEqual(loaded["next_unit"], 2)
             self.assertIn("desired identity", path.read_text(encoding="utf-8"))
             self.assertIn("sites.yaml", path.read_text(encoding="utf-8"))
+
+
+class DecommissionedTests(unittest.TestCase):
+    def test_blank_is_live(self) -> None:
+        self.assertFalse(is_decommissioned(None))
+        self.assertFalse(is_decommissioned({}))
+        self.assertFalse(is_decommissioned({"decommissioned": None}))
+        self.assertFalse(is_decommissioned({"decommissioned": ""}))
+
+    def test_epoch_is_decommissioned(self) -> None:
+        self.assertTrue(is_decommissioned({"decommissioned": 1787943600}))
 
 
 if __name__ == "__main__":

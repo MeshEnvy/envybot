@@ -31,7 +31,8 @@ No `alias:` field in the book. Short names work when unique after
 normalization (strip `{…}`, trailing `| …`, collapse space).
 
 Ambiguous matches print candidates on stderr and exit 1. Meshtastic rows
-(no admin password) are refused with a one-line reason.
+(no admin password) and `decommissioned` rows are refused with a one-line
+reason.
 
 Examples:
 
