@@ -11,6 +11,16 @@ const STATUS_COLOR = {
   unmapped: '#667788',
 }
 
+/** @param {unknown} pos */
+export function hasMapPin(pos) {
+  if (!pos || typeof pos !== 'object') return false
+  const lat = Number(/** @type {{ lat?: unknown }} */ (pos).lat)
+  const lon = Number(/** @type {{ lon?: unknown }} */ (pos).lon)
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false
+  if (Math.abs(lat) < 0.001 || Math.abs(lon) < 0.001) return false
+  return true
+}
+
 /** @param {Record<string, unknown> | undefined} unit */
 export function unitStatus(unit) {
   const s = unit?.session
@@ -179,12 +189,9 @@ export function createMapController(containerId, onSelect, onClear) {
     const features = []
     for (const unit of Object.values(units)) {
       const pos = unit.position
-      if (!pos || typeof pos !== 'object') continue
+      if (!hasMapPin(pos)) continue
       const lat = Number(/** @type {{ lat?: unknown }} */ (pos).lat)
       const lon = Number(/** @type {{ lon?: unknown }} */ (pos).lon)
-      // Skip unset GPS (0-axis) so fitBounds is not yanked to the equator.
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue
-      if (Math.abs(lat) < 0.001 || Math.abs(lon) < 0.001) continue
       features.push({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [lon, lat] },
@@ -277,10 +284,9 @@ export function createMapController(containerId, onSelect, onClear) {
   function flyTo(key, fleet) {
     const unit = key ? /** @type {Record<string, unknown>} */ (fleet.units)?.[key] : null
     const pos = unit?.position
-    if (!pos || typeof pos !== 'object') return
+    if (!hasMapPin(pos)) return
     const lat = Number(/** @type {{ lat?: unknown }} */ (pos).lat)
     const lon = Number(/** @type {{ lon?: unknown }} */ (pos).lon)
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return
     map.flyTo({ center: [lon, lat], zoom: 11, speed: 1.2 })
   }
 

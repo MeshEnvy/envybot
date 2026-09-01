@@ -236,6 +236,14 @@ body {
   display: none;
 }
 
+.detail.detail-unmapped {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  pointer-events: auto;
+}
+
 .detail-head {
   display: flex;
   align-items: flex-start;

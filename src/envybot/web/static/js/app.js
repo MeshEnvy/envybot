@@ -21,7 +21,7 @@ import {
   unitLabel,
   unitTitle,
 } from './format.js?v=10'
-import { createMapController, unitStatus } from './map.js?v=11'
+import { createMapController, hasMapPin, unitStatus } from './map.js?v=12'
 import { healthStroke, sparklinePath } from './sparklines.js?v=1'
 
 const SESSION_RANK = {
@@ -119,20 +119,31 @@ const App = {
 
     const selectedUnit = computed(() => (selectedKey.value ? fleet.units[selectedKey.value] : null))
 
+    const detailHasMapPin = computed(() => hasMapPin(selectedUnit.value?.position))
+
+    function restowDetailEl() {
+      const el = detailEl.value
+      if (!el) return
+      const wrap = document.getElementById('map-wrap')
+      if (wrap && el.parentElement !== wrap) wrap.appendChild(el)
+    }
+
     function syncDetailPopup() {
       const unit = selectedUnit.value
       const el = detailEl.value
-      if (!unit?.position || !el) {
+      if (!unit || !el) {
         mapCtrl?.detachDetail()
+        restowDetailEl()
         return
       }
-      const lat = Number(unit.position.lat)
-      const lon = Number(unit.position.lon)
-      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
-        mapCtrl?.detachDetail()
+      if (hasMapPin(unit.position)) {
+        const lat = Number(unit.position.lat)
+        const lon = Number(unit.position.lon)
+        mapCtrl.attachDetail(el, [lon, lat])
         return
       }
-      mapCtrl.attachDetail(el, [lon, lat])
+      mapCtrl?.detachDetail()
+      restowDetailEl()
     }
 
     async function loadSparklines(key) {
@@ -192,6 +203,7 @@ const App = {
       sparkData.recv_rate = []
       sparkData.noise_floor = []
       mapCtrl?.detachDetail()
+      restowDetailEl()
       mapCtrl?.sync(fleet, null)
     }
 
@@ -266,6 +278,7 @@ const App = {
       selectedUnit,
       selectedKey,
       detailEl,
+      detailHasMapPin,
       pollLine,
       selectUnit,
       clearSelection,
@@ -317,10 +330,11 @@ const App = {
       <main id="map-wrap">
         <div id="map"></div>
         <div
-          v-if="selectedUnit && selectedUnit.position"
+          v-if="selectedUnit"
           ref="detailEl"
           id="detail"
           class="detail"
+          :class="{ 'detail-unmapped': !detailHasMapPin }"
         >
           <div class="detail-head">
             <h2>{{ unitTitle(selectedUnit) }}</h2>
