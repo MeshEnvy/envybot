@@ -41,6 +41,11 @@ TTL, so ghosts stay in sqlite history.
 Default runs never GET sticky identity fields. Leak / mismatch in the UI
 follow the apply profile stamp, not a heard-identity GET.
 
+`paused: true` on a node skips auto GET and apply. The unit stays on the
+map. **Queue** still forces one GET+apply. Unpause (or delete the key)
+returns the unit to the next fleet run. Mid-run pause takes effect at the
+next unit boundary. `trust` / `cmd` do not honor pause.
+
 ## Apply
 
 Nodes without `public: true` get the privacy mask: name `Repeater`, lat/lon
@@ -103,6 +108,8 @@ device `0,0`. Detail shows book name + site name, a `public` toggle, and
 drift from the apply stamp (`leak` if a private profile is due, `mismatch`
 if a public profile is due). List cards show the same badge next to
 freshness. While the companion worker is live, **Queue** on a unit forces
-that unit back through GET+apply (overrides `--skip` and up-to-date skips).
-Rows with `decommissioned:` or `firmware_platform: meshtastic` are omitted
+that unit back through GET+apply (overrides `--skip`, `paused`, and
+up-to-date skips). Pause is a checkbox on the detail card
+(`paused: true`). Sidebar rows fade and badge as paused. Rows with
+`decommissioned:` or `firmware_platform: meshtastic` are omitted
 entirely.

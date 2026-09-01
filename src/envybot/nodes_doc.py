@@ -62,6 +62,7 @@ NODES_YAML_HEADER = (
     "# admin1_pubkey / admin1_secret: Meshtastic remote-admin. Not MC ACL.\n"
     "# firmware_platform: meshcore | meshtastic. Meshtastic rows stay in the\n"
     "#   book; envybot ignores them (no UI, poll, apply, trust, cmd).\n"
+    "# paused: true skips auto fleet poll/apply. Still in the UI. Queue overrides.\n"
     "# decommissioned: unix epoch when pulled from service. Envybot ignores the row.\n"
     "# next_unit: next free ME number (never reuse).\n"
     "# admin_password / guest_password: unique + strong per unit. Privacy apply\n"
@@ -146,6 +147,30 @@ def write_nodes_doc(nodes_path: Path, doc: dict[str, Any]) -> None:
 
 def is_public(node: dict[str, Any] | None) -> bool:
     return bool(node and node.get("public") is True)
+
+
+def is_paused(node: dict[str, Any] | None) -> bool:
+    """True when the book stamps paused: true (auto fleet poll/apply off)."""
+    return bool(node and node.get("paused") is True)
+
+
+def sync_paused(nodes_path: Path, nodes: dict[str, Any]) -> None:
+    """Copy paused flags from disk so UI edits survive an in-memory persist."""
+    try:
+        fresh = load_nodes_doc(nodes_path)
+    except OSError:
+        return
+    disk_nodes = fresh.get("nodes") or {}
+    if not isinstance(disk_nodes, dict):
+        return
+    for key, mem in nodes.items():
+        if not isinstance(mem, dict):
+            continue
+        disk = disk_nodes.get(key)
+        if isinstance(disk, dict) and disk.get("paused") is True:
+            mem["paused"] = True
+        else:
+            mem.pop("paused", None)
 
 
 def is_decommissioned(node: dict[str, Any] | None) -> bool:

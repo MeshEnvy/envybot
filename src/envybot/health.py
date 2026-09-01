@@ -107,13 +107,16 @@ def compute_health(
     traffic_interval: dict[str, Any] | None,
     status_rows: list[dict[str, Any]],
     reboot_count: int | None = None,
+    paused: bool = False,
 ) -> dict[str, Any]:
     """Return grade + component checks for a fleet unit."""
     checks: list[dict[str, Any]] = []
 
     # Reachability
     session_state = (session or {}).get("state")
-    if freshness == "never":
+    if paused:
+        checks.append(_check("Reachability", "unknown", "Polling paused"))
+    elif freshness == "never":
         checks.append(_check("Reachability", "bad", "Never heard from node"))
     elif session_state == "unreachable":
         checks.append(_check("Reachability", "bad", "Unreachable this poll pass"))

@@ -5,6 +5,7 @@ const STATUS_COLOR = {
   ok: '#6ee7a0',
   unreachable: '#f06e6e',
   queued: '#a896ff',
+  paused: '#8aa0b5',
   fresh: '#6ee7a0',
   stale: '#f0b86e',
   never: '#8aa0b5',
@@ -26,9 +27,10 @@ export function unitStatus(unit) {
   const s = unit?.session
   const state = s && typeof s === 'object' && 'state' in s ? s.state : null
   if (state === 'polling') return 'polling'
+  if (state === 'queued') return 'queued'
+  if (unit?.paused) return 'paused'
   if (state === 'ok') return 'ok'
   if (state === 'unreachable') return 'unreachable'
-  if (state === 'queued') return 'queued'
   if (!unit?.mapped) return 'unmapped'
   return typeof unit?.freshness === 'string' ? unit.freshness : 'never'
 }
@@ -85,6 +87,8 @@ export function createMapController(containerId, onSelect, onClear) {
     STATUS_COLOR.unreachable,
     'queued',
     STATUS_COLOR.queued,
+    'paused',
+    STATUS_COLOR.paused,
     'fresh',
     STATUS_COLOR.fresh,
     'stale',

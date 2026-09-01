@@ -137,3 +137,25 @@ class QueueHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(body.get("session", {}).get("state"), "queued")
         keys = await self.web_ctx.drain_manual_queue()
         self.assertEqual(keys, ["me0003"])
+
+    async def test_post_unit_paused(self) -> None:
+        resp = await self.client.post("/api/unit/me0003", json={"paused": True})
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertTrue(body.get("paused"))
+        resp = await self.client.post("/api/unit/me0003", json={"paused": False})
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertFalse(body.get("paused"))
+
+    async def test_queue_paused_unit(self) -> None:
+        await self.client.post("/api/unit/me0003", json={"paused": True})
+        self.web_ctx.set_worker_active(True)
+        self.web_ctx.sync_worker_state(
+            session_states={},
+            poll={"phase": "idle", "accepting": True},
+        )
+        resp = await self.client.post("/api/queue/me0003")
+        self.assertEqual(resp.status, 200)
+        keys = await self.web_ctx.drain_manual_queue()
+        self.assertEqual(keys, ["me0003"])

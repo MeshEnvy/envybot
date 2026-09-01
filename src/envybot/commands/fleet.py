@@ -13,7 +13,14 @@ from typing import Any
 from envybot.apply import apply_is_due, apply_one, format_apply_plan, persist_guest_if_new
 from envybot.history import migrate_legacy, record_poll
 from envybot.keys_doc import keys_path, load_keys
-from envybot.nodes_doc import load_nodes_doc, load_sites_for_book, migrate_desired, write_nodes_doc
+from envybot.nodes_doc import (
+    is_paused,
+    load_nodes_doc,
+    load_sites_for_book,
+    migrate_desired,
+    sync_paused,
+    write_nodes_doc,
+)
 from envybot.poll import (
     GET_GROUP_ORDER,
     PollPolicy,
@@ -22,6 +29,7 @@ from envybot.poll import (
     format_interval,
     gaps_from_poll,
     partition_due,
+    partition_paused,
     poll_one,
     poll_summary,
 )
@@ -130,6 +138,22 @@ async def _drain_manual_into(
             existing.add(target.key)
 
 
+def _drop_auto_paused(
+    pending: list[Any],
+    *,
+    nodes_path: Path,
+    nodes: dict[str, Any],
+    forced_keys: set[str],
+    session_states: dict[str, dict[str, Any]],
+) -> tuple[list[Any], list[Any]]:
+    """Drop book-paused units from auto work. Queue (forced) stays."""
+    sync_paused(nodes_path, nodes)
+    kept, dropped = partition_paused(pending, nodes, forced_keys=forced_keys)
+    for target in dropped:
+        session_states[target.key] = {"state": "paused"}
+    return kept, dropped
+
+
 async def run(args: argparse.Namespace) -> int:
     nodes_path: Path = args.nodes
     doc, conn = _migrate_book(nodes_path)
@@ -164,8 +188,14 @@ async def run(args: argparse.Namespace) -> int:
     all_targets = load_targets(
         nodes_path, deployed_only=args.deployed_only, include=include, skip=skip
     )
+    auto_targets, paused_targets = partition_paused(all_targets, nodes)
     if skip and not args.quiet:
         print(f"Excluding {len(skip)} unit(s): {', '.join(sorted(skip))}")
+    if paused_targets and not args.quiet:
+        print(
+            f"Paused {len(paused_targets)} unit(s): "
+            f"{', '.join(t.key for t in paused_targets)} (Queue still works)"
+        )
     if not all_targets:
         print("No pollable routers matched filters.", file=sys.stderr)
         if web_ctx:
@@ -183,14 +213,14 @@ async def run(args: argparse.Namespace) -> int:
     )
     now = int(time.time())
     if do_poll:
-        targets, skipped = partition_due(all_targets, conn, policy=policy, now=now)
+        targets, skipped = partition_due(auto_targets, conn, policy=policy, now=now)
     else:
-        targets, skipped = list(all_targets), []
+        targets, skipped = list(auto_targets), []
         for t in targets:
             t.due_groups = []
     apply_due = [
         t
-        for t in all_targets
+        for t in auto_targets
         if do_apply and apply_is_due(
             conn, t.key, nodes.get(t.key) or {}, sites, force=args.force, doc=doc, keys=keys
         )
@@ -202,7 +232,9 @@ async def run(args: argparse.Namespace) -> int:
             f"(live periodic within {format_interval(policy.min_interval)})"
         )
     work_keys = {t.key for t in targets} | apply_keys
-    work = [t for t in all_targets if t.key in work_keys]
+    work = [t for t in auto_targets if t.key in work_keys]
+    for target in paused_targets:
+        session_states[target.key] = {"state": "paused"}
     for target in work:
         session_states[target.key] = {
             "state": "queued",
@@ -223,7 +255,12 @@ async def run(args: argparse.Namespace) -> int:
             return await _serve_web_until_stop(web_ctx, 0)
         return 0
     if not work:
-        print(f"All {len(all_targets)} router(s) up to date — idle for manual queue.")
+        if paused_targets and not auto_targets:
+            print(
+                f"All {len(paused_targets)} matched unit(s) are paused — idle for manual queue."
+            )
+        else:
+            print(f"All {len(all_targets)} router(s) up to date — idle for manual queue.")
 
     retry_mode = not args.once
     if work:
@@ -292,6 +329,29 @@ async def run(args: argparse.Namespace) -> int:
                 print(f"Manual queue: {len(manual)} unit(s)")
                 continue
 
+            pending, newly_paused = _drop_auto_paused(
+                pending,
+                nodes_path=nodes_path,
+                nodes=nodes,
+                forced_keys=forced_keys,
+                session_states=session_states,
+            )
+            if newly_paused and not args.quiet:
+                print(
+                    f"Paused {len(newly_paused)} pending unit(s): "
+                    f"{', '.join(t.key for t in newly_paused)}"
+                )
+            if web_ctx:
+                for target in newly_paused:
+                    await web_ctx.publish_unit(
+                        target.key,
+                        session=session_states[target.key],
+                        session_states=session_states,
+                        companion=companion_short,
+                        poll=web_ctx._poll_state,
+                    )
+            if not pending:
+                continue
             round_num += 1
             if args.max_rounds and round_num > args.max_rounds:
                 break
@@ -299,6 +359,30 @@ async def run(args: argparse.Namespace) -> int:
                 print(f"\n--- round {round_num}: {len(pending)} still pending ---")
             next_pending = []
             for target in pending:
+                sync_paused(nodes_path, nodes)
+                if is_paused(nodes.get(target.key)) and target.key not in forced_keys:
+                    session_states[target.key] = {"state": "paused"}
+                    print(f"{target_label(target)} paused — skip")
+                    if web_ctx:
+                        await web_ctx.publish_unit(
+                            target.key,
+                            session=session_states[target.key],
+                            session_states=session_states,
+                            companion=companion_short,
+                            poll=web_ctx._poll_state,
+                        )
+                    await _drain_manual_into(
+                        web_ctx,
+                        next_pending,
+                        nodes_path=nodes_path,
+                        session_states=session_states,
+                        apply_keys=apply_keys,
+                        forced_keys=forced_keys,
+                        do_poll=do_poll,
+                        do_apply=do_apply,
+                        attempt_counts=attempt_counts,
+                    )
+                    continue
                 unit_force = args.force or target.key in forced_keys
                 unit_policy = PollPolicy(
                     force=unit_force,
@@ -446,6 +530,31 @@ async def run(args: argparse.Namespace) -> int:
                     target.due_groups = remaining
                     print(f"  OK {poll_summary(res)}")
                     poll_ok = not remaining
+                sync_paused(nodes_path, nodes)
+                if is_paused(nodes.get(target.key)) and target.key not in forced_keys:
+                    apply_keys.discard(target.key)
+                    session_states[target.key] = {"state": "paused"}
+                    print("  paused — skip apply")
+                    if web_ctx:
+                        await web_ctx.publish_unit(
+                            target.key,
+                            session=session_states[target.key],
+                            session_states=session_states,
+                            companion=companion_short,
+                            poll=web_ctx._poll_state,
+                        )
+                    await _drain_manual_into(
+                        web_ctx,
+                        next_pending,
+                        nodes_path=nodes_path,
+                        session_states=session_states,
+                        apply_keys=apply_keys,
+                        forced_keys=forced_keys,
+                        do_poll=do_poll,
+                        do_apply=do_apply,
+                        attempt_counts=attempt_counts,
+                    )
+                    continue
                 apply_ok = True
                 if do_apply and target.key in apply_keys:
                     apply_clock = login_clock
@@ -520,7 +629,14 @@ async def run(args: argparse.Namespace) -> int:
                     do_apply=do_apply,
                     attempt_counts=attempt_counts,
                 )
-            pending = sorted(next_pending, key=poll_staleness_key)
+            pending, _ = _drop_auto_paused(
+                next_pending,
+                nodes_path=nodes_path,
+                nodes=nodes,
+                forced_keys=forced_keys,
+                session_states=session_states,
+            )
+            pending = sorted(pending, key=poll_staleness_key)
             if not pending or args.once:
                 pending = []
                 if args.once:

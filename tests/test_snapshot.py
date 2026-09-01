@@ -180,6 +180,40 @@ class SnapshotTests(unittest.TestCase):
             self.assertNotIn("me0002", snap["units"])
             self.assertEqual(snap["counts"]["total"], 1)
 
+    def test_includes_paused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            yaml = YAML()
+            yaml.dump({"sites": {}}, sites_path.open("w", encoding="utf-8"))
+            yaml.dump(
+                {
+                    "next_unit": 3,
+                    "nodes": {
+                        "me0001": {
+                            "unit_id": "ME0001",
+                            "name": "Live",
+                            "identity_pubkey": "a" * 64,
+                            "admin_password": "secret-admin",
+                        },
+                        "me0002": {
+                            "unit_id": "ME0002",
+                            "name": "Quiet",
+                            "identity_pubkey": "b" * 64,
+                            "admin_password": "other",
+                            "paused": True,
+                        },
+                    },
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
+            self.assertFalse(snap["units"]["me0001"]["paused"])
+            self.assertTrue(snap["units"]["me0002"]["paused"])
+            self.assertEqual(snap["counts"]["paused"], 1)
+            self.assertEqual(snap["counts"]["total"], 2)
+
     def test_omits_meshtastic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             book = Path(tmp)

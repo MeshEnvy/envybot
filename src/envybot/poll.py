@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from envybot.history import get_last_seen, record_poll
+from envybot.nodes_doc import is_paused
 from envybot.radio import (
     DEFAULT_MIN_POLL_INTERVAL,
     PULL_GROUP_ORDER,
@@ -128,6 +129,24 @@ def partition_due(
     return due, skipped
 
 
+def partition_paused(
+    targets: list[RouterTarget],
+    nodes: dict[str, Any],
+    *,
+    forced_keys: set[str] | None = None,
+) -> tuple[list[RouterTarget], list[RouterTarget]]:
+    """Split auto-work targets from paused ones. Forced (Queue) stays active."""
+    forced = forced_keys or set()
+    active: list[RouterTarget] = []
+    paused: list[RouterTarget] = []
+    for target in targets:
+        if is_paused(nodes.get(target.key)) and target.key not in forced:
+            paused.append(target)
+        else:
+            active.append(target)
+    return active, paused
+
+
 def _get_need_note(seen: dict[str, Any] | None, group: str) -> str:
     if not group_complete(seen, group):
         return "missing"
@@ -216,6 +235,7 @@ __all__ = [
     "format_pull_plan",
     "gaps_from_poll",
     "partition_due",
+    "partition_paused",
     "poll_one",
     "poll_summary",
     "record_poll",

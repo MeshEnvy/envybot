@@ -9,8 +9,10 @@ from pathlib import Path
 from envybot.nodes_doc import (
     MASK_NAME,
     is_decommissioned,
+    is_paused,
     is_public,
     migrate_desired,
+    sync_paused,
     write_nodes_doc,
 )
 from ruamel.yaml import YAML
@@ -78,6 +80,61 @@ class MigrateTests(unittest.TestCase):
             self.assertEqual(loaded["next_unit"], 2)
             self.assertIn("desired identity", path.read_text(encoding="utf-8"))
             self.assertIn("sites.yaml", path.read_text(encoding="utf-8"))
+
+
+class PausedTests(unittest.TestCase):
+    def test_blank_is_live(self) -> None:
+        self.assertFalse(is_paused(None))
+        self.assertFalse(is_paused({}))
+        self.assertFalse(is_paused({"paused": False}))
+        self.assertFalse(is_paused({"paused": None}))
+
+    def test_true_is_paused(self) -> None:
+        self.assertTrue(is_paused({"paused": True}))
+
+    def test_sync_paused_from_disk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "nodes.yaml"
+            disk = {
+                "next_unit": 3,
+                "nodes": {
+                    "me0001": {"unit_id": "ME0001", "paused": True},
+                    "me0002": {"unit_id": "ME0002"},
+                },
+            }
+            write_nodes_doc(path, disk)
+            mem = {
+                "me0001": {"unit_id": "ME0001", "guest_password": "new"},
+                "me0002": {"unit_id": "ME0002", "paused": True},
+            }
+            sync_paused(path, mem)
+            self.assertTrue(is_paused(mem["me0001"]))
+            self.assertEqual(mem["me0001"]["guest_password"], "new")
+            self.assertFalse(is_paused(mem["me0002"]))
+
+    def test_persist_guest_keeps_disk_paused(self) -> None:
+        from envybot.apply import persist_guest_if_new
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "nodes.yaml"
+            write_nodes_doc(
+                path,
+                {
+                    "next_unit": 2,
+                    "nodes": {"me0001": {"unit_id": "ME0001", "paused": True}},
+                },
+            )
+            mem_doc = {
+                "next_unit": 2,
+                "nodes": {"me0001": {"unit_id": "ME0001", "guest_password": "rolled"}},
+            }
+            persist_guest_if_new(path, mem_doc)
+            self.assertTrue(is_paused(mem_doc["nodes"]["me0001"]))
+            from envybot.nodes_doc import load_nodes_doc
+
+            disk = load_nodes_doc(path)
+            self.assertTrue(is_paused(disk["nodes"]["me0001"]))
+            self.assertEqual(disk["nodes"]["me0001"]["guest_password"], "rolled")
 
 
 class DecommissionedTests(unittest.TestCase):

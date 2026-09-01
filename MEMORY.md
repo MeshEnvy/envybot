@@ -45,6 +45,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 - `fleet` / `trust` / `cmd` skip `firmware_platform: meshtastic` even
   when leftover MeshCore pubkey/admin exist. No UI, poll, apply, or
   edits. Blank platform = meshcore.
+- `paused: true` stays in the UI. Fleet skips auto poll/apply. Queue
+  still hits the radio. Trust/cmd ignore the flag.
 - `decommissioned:` (epoch) rows stay in `nodes.yaml` for the number
   but envybot ignores them: no UI, poll, apply, trust, cmd, or onboard.
 - `fleet` and `trust` poll every pollable MeshCore unit, including
@@ -95,7 +97,10 @@ Separate USB OTA repeater for `motatool serve`.
 - **Fleet UI:** `./envybot fleet` serves `127.0.0.1:8787` by default.
   `--web-only` browses the book without a radio. Never expose secrets.
   **Queue** (detail + list) re-enqueues one unit for forced GET+apply while
-  the companion worker is idle or polling; overrides `--skip`.
+  the companion worker is idle or polling; overrides `--skip` and `paused`.
+  **Pause** (detail checkbox) writes `paused: true` and drops the unit from
+  auto poll/apply on the next unit boundary (in-flight login finishes).
+  Sidebar fades paused rows and shows a paused badge.
   Units carry `health` (worst-of component checks) and interval traffic
   deltas; detail sparklines use `/api/history/{unit}?metric=`.
 - Long BLE apply can drop the companion link; fleet reconnects transport,

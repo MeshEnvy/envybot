@@ -40,6 +40,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- Fleet **pause**: `paused: true` in `nodes.yaml` skips auto poll/apply.
+  Toggle lives on the detail card. Sidebar rows fade and show a paused
+  badge. Queue still forces a one-shot GET+apply. Mid-run pause drops
+  the unit on the next unit boundary. Trust/cmd ignore the flag.
 - Fleet **node health**: per-unit grade (ok/warn/bad) from reachability,
   power, stability, traffic, RF quality, channel utilization, config drift,
   and temperature. Sidebar cards show a colored health bar; detail popup

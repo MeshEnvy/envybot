@@ -7,7 +7,8 @@ import unittest
 from pathlib import Path
 
 from envybot.history import open_history, record_poll
-from envybot.poll import PollPolicy, group_is_due
+from envybot.poll import PollPolicy, group_is_due, partition_paused
+from envybot.radio import RouterTarget
 
 
 class _Res:
@@ -146,6 +147,33 @@ class TrustStampTests(unittest.TestCase):
 
             self.assertIsNone(last_ok_apply(conn, "me0001", "profile"))
             self.assertNotEqual(pre, post)
+
+
+def _target(key: str) -> RouterTarget:
+    return RouterTarget(
+        key=key,
+        unit_id=key.upper(),
+        name=key,
+        site=None,
+        pubkey_hex="a" * 64,
+        admin_password="pw",
+    )
+
+
+class PartitionPausedTests(unittest.TestCase):
+    def test_splits_paused_unless_forced(self) -> None:
+        targets = [_target("me0001"), _target("me0002"), _target("me0003")]
+        nodes = {
+            "me0001": {"paused": True},
+            "me0002": {},
+            "me0003": {"paused": True},
+        }
+        active, paused = partition_paused(targets, nodes)
+        self.assertEqual([t.key for t in active], ["me0002"])
+        self.assertEqual([t.key for t in paused], ["me0001", "me0003"])
+        active, paused = partition_paused(targets, nodes, forced_keys={"me0001"})
+        self.assertEqual([t.key for t in active], ["me0001", "me0002"])
+        self.assertEqual([t.key for t in paused], ["me0003"])
 
 
 class GetPlanTests(unittest.TestCase):

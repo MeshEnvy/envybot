@@ -21,18 +21,19 @@ import {
   unitLabel,
   unitTitle,
 } from './format.js?v=10'
-import { createMapController, hasMapPin, unitStatus } from './map.js?v=12'
+import { createMapController, hasMapPin, unitStatus } from './map.js?v=13'
 import { healthStroke, sparklinePath } from './sparklines.js?v=1'
 
 const SESSION_RANK = {
   polling: 0,
   unreachable: 1,
   queued: 2,
-  ok: 3,
-  fresh: 4,
-  stale: 5,
-  never: 6,
-  unmapped: 7,
+  paused: 3,
+  ok: 4,
+  fresh: 5,
+  stale: 6,
+  never: 7,
+  unmapped: 8,
 }
 
 const App = {
@@ -237,6 +238,19 @@ const App = {
     }
 
     /** @param {Record<string, unknown>} unit @param {Event} [ev] */
+    async function togglePaused(unit, ev) {
+      ev?.stopPropagation?.()
+      const next = ev && ev.target && 'checked' in ev.target ? !!ev.target.checked : !unit.paused
+      try {
+        const updated = await patchUnit(String(unit.key), { paused: next })
+        applyUnit(updated)
+        pushMap()
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
+    /** @param {Record<string, unknown>} unit @param {Event} [ev] */
     async function queueUnit(unit, ev) {
       ev?.stopPropagation?.()
       if (!canQueueUnit(unit)) return
@@ -331,6 +345,7 @@ const App = {
       unitLabel,
       unitTitle,
       togglePublic,
+      togglePaused,
       queueUnit,
     }
   },
@@ -346,6 +361,7 @@ const App = {
         <span class="stat"><strong>{{ fleet.counts?.fresh ?? 0 }}</strong> fresh</span>
         <span class="stat"><strong>{{ fleet.counts?.stale ?? 0 }}</strong> stale</span>
         <span class="stat"><strong>{{ fleet.counts?.never ?? 0 }}</strong> never</span>
+        <span class="stat"><strong>{{ fleet.counts?.paused ?? 0 }}</strong> paused</span>
       </div>
       <div class="search-wrap">
         <input v-model="search" type="search" placeholder="Search site, unit, name…" autocomplete="off" />
@@ -372,9 +388,13 @@ const App = {
             · {{ formatRelative(selectedUnit.last_heard) }}
             <span v-if="selectedUnit.drift"> · {{ selectedUnit.drift }}</span>
           </p>
-          <label class="public-toggle">
+          <label class="book-toggle">
             <input type="checkbox" :checked="!!selectedUnit.public" @change="togglePublic(selectedUnit, $event)" />
             public (push book name + GPS)
+          </label>
+          <label class="book-toggle">
+            <input type="checkbox" :checked="!!selectedUnit.paused" @change="togglePaused(selectedUnit, $event)" />
+            pause auto poll/apply (Queue still works)
           </label>
           <button
             v-if="queueAccepting"
@@ -597,7 +617,7 @@ const App = {
             v-for="unit in sortedUnits"
             :key="unit.key"
             class="unit-card"
-            :class="{ selected: unit.key === selectedKey }"
+            :class="{ selected: unit.key === selectedKey, paused: !!unit.paused }"
             @click="selectUnit(unit.key)"
           >
             <div class="unit-top">
@@ -605,6 +625,7 @@ const App = {
               <span class="unit-name">{{ unit.site_name || unit.name || unitLabel(unit) }}</span>
               <span class="unit-badges">
                 <span class="badge" :class="'badge-' + unitStatus(unit)">{{ unitStatus(unit) }}</span>
+                <span v-if="unit.paused && unitStatus(unit) !== 'paused'" class="badge badge-paused">paused</span>
                 <span v-if="unit.drift" class="badge" :class="'badge-' + unit.drift">{{ unit.drift }}</span>
                 <button
                   v-if="queueAccepting"

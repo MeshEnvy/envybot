@@ -335,6 +335,11 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
             node["public"] = True
         else:
             node.pop("public", None)
+    if "paused" in body:
+        if body["paused"] is True:
+            node["paused"] = True
+        else:
+            node.pop("paused", None)
     if "site" in body:
         site = body["site"]
         sites_doc = load_sites_doc(web_ctx.sites_path)

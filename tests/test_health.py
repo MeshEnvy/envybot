@@ -49,6 +49,21 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(health["grade"], "bad")
         self.assertTrue(any(i["name"] == "Reachability" for i in health["issues"]))
 
+    def test_paused_reachability_unknown(self) -> None:
+        health = compute_health(
+            freshness="never",
+            session={"state": "unreachable"},
+            drift=None,
+            status=None,
+            telemetry=None,
+            traffic_interval=None,
+            status_rows=[],
+            paused=True,
+        )
+        reach = next(c for c in health["checks"] if c["name"] == "Reachability")
+        self.assertEqual(reach["status"], "unknown")
+        self.assertEqual(reach["reason"], "Polling paused")
+
     def test_power_low_voltage(self) -> None:
         health = compute_health(
             freshness="fresh",

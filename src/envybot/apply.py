@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 from envybot.history import clear_apply_stamps, get_last_seen, insert_apply, last_ok_apply
@@ -17,6 +18,7 @@ from envybot.keys_doc import (
 from envybot.nodes_doc import (
     MASK_NAME,
     is_public,
+    sync_paused,
     write_nodes_doc,
 )
 from envybot.passwords import (
@@ -683,4 +685,7 @@ async def apply_one(
 
 
 def persist_guest_if_new(nodes_path: Any, doc: dict[str, Any]) -> None:
+    nodes = doc.get("nodes")
+    if isinstance(nodes, dict):
+        sync_paused(Path(nodes_path), nodes)
     write_nodes_doc(nodes_path, doc)

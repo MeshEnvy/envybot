@@ -120,6 +120,15 @@ body {
   border-left: 3px solid #4ea1ff;
 }
 
+.unit-card.paused {
+  opacity: 0.5;
+}
+
+.unit-card.paused:hover,
+.unit-card.paused.selected {
+  opacity: 0.75;
+}
+
 .unit-top {
   display: flex;
   align-items: baseline;
@@ -198,6 +207,11 @@ body {
   color: #a896ff;
 }
 
+.badge-paused {
+  background: #2a3440;
+  color: #8aa0b5;
+}
+
 .badge-unmapped {
   background: #2a3440;
   color: #8aa0b5;
@@ -236,6 +250,16 @@ body {
 .queue-btn:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+.book-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  color: #c5d3df;
+  cursor: pointer;
 }
 
 @keyframes pulse {

@@ -21,6 +21,7 @@ from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
     is_decommissioned,
     is_meshcore_platform,
+    is_paused,
     is_public,
     load_nodes_doc,
     normalize_fleet_node,
@@ -33,7 +34,7 @@ PULLED_AT_SUFFIX = "_pulled_at"
 DEFAULT_STALE_SECS = 86400.0
 NEIGHBOR_FRESH_SECS = 7 * 24 * 3600
 
-SessionState = str  # idle | queued | polling | ok | unreachable
+SessionState = str  # idle | queued | polling | ok | unreachable | paused
 
 STATUS_PUBLIC_KEYS = (
     "battery_mv",
@@ -308,6 +309,7 @@ def sanitize_unit(
         "site": site_slug,
         "site_name": site_name,
         "public": is_public(node),
+        "paused": is_paused(node),
         "hardware": node.get("hardware"),
         "notes": node.get("notes"),
         "firmware_version": (seen or {}).get("firmware_version"),
@@ -422,6 +424,7 @@ def build_fleet_snapshot(
                 telemetry=units[key].get("telemetry"),
                 traffic_interval=interval_map.get(key),
                 status_rows=status_rows_map.get(key, []),
+                paused=units[key]["paused"],
             )
     finally:
         if conn is not None:
@@ -431,6 +434,7 @@ def build_fleet_snapshot(
     fresh = sum(1 for u in units.values() if u.get("freshness") == "fresh")
     stale = sum(1 for u in units.values() if u.get("freshness") == "stale")
     never = sum(1 for u in units.values() if u.get("freshness") == "never")
+    paused = sum(1 for u in units.values() if u.get("paused"))
 
     return {
         "ts": now,
@@ -445,6 +449,7 @@ def build_fleet_snapshot(
             "fresh": fresh,
             "stale": stale,
             "never": never,
+            "paused": paused,
         },
         "units": units,
     }
