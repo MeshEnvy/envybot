@@ -179,17 +179,29 @@ def lookup_site_name(
     return site_slug
 
 
+def node_alias(node: dict[str, Any] | None) -> str | None:
+    """Book nickname for UI / selectors. Not pushed to the radio."""
+    raw = (node or {}).get("alias")
+    if not isinstance(raw, str):
+        return None
+    stripped = raw.strip()
+    return stripped or None
+
+
 def display_name(
     key: str | None,
     node: dict[str, Any] | None,
     sites: dict[str, dict[str, Any]] | None,
 ) -> str:
-    """Site name when bound; else unit id. Nodes have no book nickname."""
+    """Site name when bound; else book alias; else unit id."""
     unit_id = str((node or {}).get("unit_id") or (key or "").upper())
     bind = site_binding(key, node, sites)
     if bind:
         slug, _site = bind
         return lookup_site_name(slug, sites) or slug
+    alias = node_alias(node)
+    if alias:
+        return alias
     return unit_id
 
 
@@ -200,5 +212,11 @@ def public_radio_name(
     *,
     max_len: int = 32,
 ) -> str:
-    """On-air name for public apply / trust (site name or unit id)."""
-    return display_name(key, node, sites)[:max_len]
+    """On-air name for public apply / trust (site name or unit id; no alias)."""
+    unit_id = str((node or {}).get("unit_id") or (key or "").upper())
+    bind = site_binding(key, node, sites)
+    if bind:
+        slug, _site = bind
+        name = lookup_site_name(slug, sites) or slug
+        return name[:max_len]
+    return unit_id[:max_len]

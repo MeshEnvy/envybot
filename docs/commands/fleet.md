@@ -149,11 +149,12 @@ Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
 ## UI
 
 Map pins use **book** position (`sites.yaml` loc for the bound unit), never
-device `0,0`. Pin labels are site name when bound, else unit id. Detail
-shows unit id and site name, a `public` toggle, and drift from the apply
-stamp (`leak` if a private profile is due, `mismatch` if a public profile
-is due). List cards show site name with unit id when bound, or unit id
-alone for bag/bench. While the companion worker is live, **Refresh** on a
+device `0,0`. Pin labels are site name when bound, else book alias, else unit
+id. Detail shows unit id and site name, editable **alias** and **notes**
+(when bag/bench, alias becomes the list title), a `public` toggle, and drift
+from the apply stamp (`leak` if a private profile is due, `mismatch` if a
+public profile is due). List cards show the same primary label with unit id
+as secondary when it differs. While the companion worker is live, **Refresh** on a
 unit pulls live telemetry now; **Pull** also GETs fw/name/GPS/advert/acl;
 **Push** force-SETs the book profile (overrides `--skip`, `paused`, and
 up-to-date skips). Pause is a checkbox on the detail card

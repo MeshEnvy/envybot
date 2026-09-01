@@ -60,6 +60,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- Fleet detail card: editable book **alias** and **notes** (save on blur).
+  Bag/bench list and map labels use alias when no site name. Alias resolves
+  in `cmd` selectors but is not pushed to the radio (apply/trust still use
+  site name or unit id).
 - Fleet **pause**: `paused: true` in `nodes.yaml` skips auto poll/apply.
   Toggle lives on the detail card. Sidebar rows fade and show a paused
   badge. Refresh, Pull, and Push still work while paused. Mid-run pause drops

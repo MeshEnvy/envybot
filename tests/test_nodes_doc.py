@@ -112,6 +112,26 @@ class PausedTests(unittest.TestCase):
             self.assertEqual(mem["me0001"]["guest_password"], "new")
             self.assertFalse(is_paused(mem["me0002"]))
 
+    def test_sync_alias_and_notes_from_disk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "nodes.yaml"
+            disk = {
+                "next_unit": 2,
+                "nodes": {
+                    "me0001": {
+                        "unit_id": "ME0001",
+                        "alias": "Bag",
+                        "notes": "Spare repeater",
+                    },
+                },
+            }
+            write_nodes_doc(path, disk)
+            mem = {"me0001": {"unit_id": "ME0001", "guest_password": "new"}}
+            sync_paused(path, mem)
+            self.assertEqual(mem["me0001"]["alias"], "Bag")
+            self.assertEqual(mem["me0001"]["notes"], "Spare repeater")
+            self.assertEqual(mem["me0001"]["guest_password"], "new")
+
     def test_persist_guest_keeps_disk_paused(self) -> None:
         from envybot.apply import persist_guest_if_new
 

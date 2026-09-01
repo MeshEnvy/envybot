@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import unittest
 
-from envybot.position import book_coord, is_placeholder_gps, resolve_book_position, site_binding
+from envybot.position import (
+    book_coord,
+    display_name,
+    is_placeholder_gps,
+    node_alias,
+    public_radio_name,
+    resolve_book_position,
+    site_binding,
+)
 
 
 class PlaceholderTests(unittest.TestCase):
@@ -44,6 +52,22 @@ class ResolveTests(unittest.TestCase):
         self.assertIsNone(resolve_book_position({"unit_id": "ME0041"}, {}))
         self.assertIsNone(book_coord({"unit_id": "ME0041"}, "lat", {}))
         self.assertIsNone(site_binding("me0041", {"unit_id": "ME0041"}, {}))
+
+
+class DisplayNameTests(unittest.TestCase):
+    def test_alias_when_unbound(self) -> None:
+        node = {"unit_id": "ME0041", "alias": "Yuki"}
+        self.assertEqual(node_alias(node), "Yuki")
+        self.assertEqual(display_name("me0041", node, {}), "Yuki")
+
+    def test_site_wins_over_alias(self) -> None:
+        node = {"unit_id": "ME0003", "alias": "Bag"}
+        sites = {"ophir": {"name": "Ophir", "node": "me0003"}}
+        self.assertEqual(display_name("me0003", node, sites), "Ophir")
+
+    def test_public_radio_name_ignores_alias(self) -> None:
+        node = {"unit_id": "ME0041", "alias": "Yuki"}
+        self.assertEqual(public_radio_name("me0041", node, {}), "ME0041")
 
 
 if __name__ == "__main__":

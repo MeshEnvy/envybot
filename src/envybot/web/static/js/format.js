@@ -219,12 +219,15 @@ export function formatSite(slug) {
 }
 
 /**
- * List / map primary label: site name when bound, else unit id.
+ * List / map primary label: site name when bound, else alias, else unit id.
  * @param {Record<string, unknown> | undefined} unit
  */
 export function unitLabel(unit) {
   const siteName = unit?.site_name
   if (typeof siteName === 'string' && siteName) return siteName
+  const alias = unit?.alias
+  if (typeof alias === 'string' && alias) return alias
+  if (typeof unit?.label === 'string' && unit.label) return unit.label
   return String(unit?.unit_id || unit?.key || '')
 }
 

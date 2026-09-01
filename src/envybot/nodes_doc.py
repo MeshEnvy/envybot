@@ -55,8 +55,9 @@ NODES_YAML_HEADER = (
     "# One entry per physical unit (ME####): identity, credentials,\n"
     "# optional public: true. Location lives only on sites.yaml (loc + node).\n"
     "# Observed last-seen / telemetry live in data/fleet/history.sqlite.\n"
-    "# Display name lives on sites.yaml (name). Default apply SETs Repeater + 0,0\n"
-    "# + adverts off unless public: true (then site name + GPS).\n"
+    "# Display name: sites.yaml name when bound, else alias, else unit_id.\n"
+    "# alias is UI/selector only (not pushed to the radio). Default apply SETs\n"
+    "# Repeater + 0,0 + adverts off unless public: true (then site name + GPS).\n"
     "# path_hash_mode / dutycycle: radio prefs (apply/onboard default 1 / 100).\n"
     "# trust.admin / trust.guest: people from keys.yaml (MeshCore ACL).\n"
     "# admin1_pubkey / admin1_secret: Meshtastic remote-admin. Not MC ACL.\n"
@@ -155,7 +156,7 @@ def is_paused(node: dict[str, Any] | None) -> bool:
 
 
 def sync_paused(nodes_path: Path, nodes: dict[str, Any]) -> None:
-    """Copy paused flags from disk so UI edits survive an in-memory persist."""
+    """Copy UI book fields from disk so in-memory persist does not clobber them."""
     try:
         fresh = load_nodes_doc(nodes_path)
     except OSError:
@@ -167,10 +168,23 @@ def sync_paused(nodes_path: Path, nodes: dict[str, Any]) -> None:
         if not isinstance(mem, dict):
             continue
         disk = disk_nodes.get(key)
-        if isinstance(disk, dict) and disk.get("paused") is True:
+        if not isinstance(disk, dict):
+            continue
+        if disk.get("paused") is True:
             mem["paused"] = True
         else:
             mem.pop("paused", None)
+        for field in ("alias", "notes"):
+            val = disk.get(field)
+            if field == "notes":
+                if isinstance(val, str) and val.strip():
+                    mem[field] = val
+                else:
+                    mem.pop(field, None)
+            elif isinstance(val, str) and val.strip():
+                mem[field] = val.strip()
+            else:
+                mem.pop(field, None)
 
 
 def is_decommissioned(node: dict[str, Any] | None) -> bool:

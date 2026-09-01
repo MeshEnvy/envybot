@@ -491,6 +491,10 @@ class LabelTests(unittest.TestCase):
         self.assertIsNone(lookup_site_name(None, {}))
         self.assertEqual(unit_label(key="me0041", node=node, sites={}), "ME0041")
 
+    def test_unbound_uses_alias(self) -> None:
+        node = {"unit_id": "ME0041", "alias": "Bench A"}
+        self.assertEqual(unit_label(key="me0041", node=node, sites={}), "Bench A")
+
 
 if __name__ == "__main__":
     unittest.main()

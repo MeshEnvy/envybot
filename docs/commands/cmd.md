@@ -27,7 +27,8 @@ Does not update last-seen state. Use [`fleet`](fleet.md) for that.
 
 ## Selector
 
-No `alias:` field in the book. Short names work when unique after
+Book `alias` on bag/bench units resolves when unique (exact or normalized).
+Site name and unit id still work. Short names work when unique after
 normalization (strip `{…}`, trailing `| …`, collapse space).
 
 Ambiguous matches print candidates on stderr and exit 1. Meshtastic rows

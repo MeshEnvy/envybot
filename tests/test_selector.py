@@ -113,6 +113,37 @@ class ResolveSelectorTests(unittest.TestCase):
         self.assertIsNone(res.target)
         self.assertIn("unknown selector", res.error or "")
 
+    def test_unique_alias(self) -> None:
+        doc = sample_doc()
+        doc["nodes"]["me0041"] = {
+            "unit_id": "ME0041",
+            "alias": "Yuki",
+            "identity_pubkey": "f" * 64,
+            "admin_password": "bag-admin",
+        }
+        res = resolve_selector(doc, "yuki")
+        self.assertIsNotNone(res.target)
+        assert res.target is not None
+        self.assertEqual(res.target.key, "me0041")
+
+    def test_ambiguous_alias(self) -> None:
+        doc = sample_doc()
+        doc["nodes"]["me0041"] = {
+            "unit_id": "ME0041",
+            "alias": "Bag",
+            "identity_pubkey": "f" * 64,
+            "admin_password": "bag-admin",
+        }
+        doc["nodes"]["me0042"] = {
+            "unit_id": "ME0042",
+            "alias": "Bag",
+            "identity_pubkey": "0" * 64,
+            "admin_password": "bag-admin2",
+        }
+        res = resolve_selector(doc, "bag")
+        self.assertIsNone(res.target)
+        self.assertEqual(res.error, "ambiguous selector")
+
 
 class RedactionTests(unittest.TestCase):
     def test_password_redacted(self) -> None:

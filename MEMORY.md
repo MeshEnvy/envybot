@@ -64,8 +64,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   gets it (`everyone` or person slugs). `trust` add/updates granted
   channels on the companion; extras on the tag are left alone. Missing
   file skips channel work.
-- Mask name is `Repeater`. Display name is site `name` when bound, else `unit_id`.
-- `public: true` SETs that derived name + site GPS on the radio.
+- Mask name is `Repeater`. Display name is site `name` when bound, else book
+  `alias`, else `unit_id`. Alias is UI/selector only (not pushed to radio).
+- `public: true` SETs site name (or `unit_id` when bag/bench) + site GPS.
 - Passwords are unique and strong per unit. Apply/onboard roll blank, weak
   (`m35h3nvy`, placeholders, short), or colliding guests. Admin is never
   invented by apply. Apply SETs book admin (`password`) after ACL/login.
@@ -118,8 +119,9 @@ Separate USB OTA repeater for `motatool serve`.
   `/api/polls/{unit}` (`source_histories`). SSE `unit` events carry
   `{ source, sample }` so the open card updates live via `state.js`.
   List meta line shows a headline mark: Paused, Healthy, Unreachable,
-  Needs attention. In-flight cards show the current job stage (Logging in,
-  Fetching ACL, …). `unreachable` is only after the scheduler gives up
+  Needs attention. Detail card edits book `alias` and `notes` (blur saves).
+  In-flight cards show the current job stage (Logging in, Fetching ACL, …).
+  `unreachable` is only after the scheduler gives up
   (`--attempts`) or a hard fail. A login timeout parks the unit and keeps
   the stage.
 - Long BLE apply can drop the companion link; fleet reconnects transport,

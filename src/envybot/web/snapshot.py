@@ -27,7 +27,14 @@ from envybot.nodes_doc import (
     load_nodes_doc,
     normalize_fleet_node,
 )
-from envybot.position import display_name, load_sites, lookup_site_name, resolve_book_position, site_binding
+from envybot.position import (
+    display_name,
+    load_sites,
+    lookup_site_name,
+    node_alias,
+    resolve_book_position,
+    site_binding,
+)
 
 SECRET_KEY_RE = re.compile(r"(password|secret)", re.I)
 PULLED_AT_SUFFIX = "_pulled_at"
@@ -284,6 +291,7 @@ def sanitize_unit(
         "owner": node.get("owner"),
         "site": site_slug,
         "site_name": site_name,
+        "alias": node_alias(node),
         "public": is_public(node),
         "paused": is_paused(node),
         "hardware": node.get("hardware"),

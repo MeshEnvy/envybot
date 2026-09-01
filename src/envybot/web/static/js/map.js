@@ -257,7 +257,7 @@ export function createMapController(containerId, onSelect, onClear) {
         geometry: { type: 'Point', coordinates: [lon, lat] },
         properties: {
           key: String(unit.key),
-          label: String(unit.site_name || unit.unit_id || unit.key),
+          label: String(unit.label || unit.site_name || unit.alias || unit.unit_id || unit.key),
           status: unitStatus(unit),
           selected: unit.key === selectedKey ? 1 : 0,
         },

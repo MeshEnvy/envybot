@@ -14,7 +14,7 @@ from envybot.nodes_doc import (
     is_meshcore_platform,
     normalize_fleet_node,
 )
-from envybot.position import display_name, lookup_site_name, site_binding
+from envybot.position import display_name, lookup_site_name, node_alias, site_binding
 from envybot.radio import RouterTarget, target_label
 
 ADV_NAME_BRACE_RE = re.compile(r"\{[^}]*\}")
@@ -100,9 +100,12 @@ def _ineligible_reason(
         bind = site_binding(key, node, sites)
         site_slug = bind[0] if bind else None
         site_name = lookup_site_name(site_slug, sites) if site_slug else None
+        alias = node_alias(node)
         matched = (
             key.lower() == sel_lower
             or unit_id.lower() == sel_lower
+            or (alias and alias.lower() == sel_lower)
+            or (alias and normalize_adv_name(alias) == norm_sel)
             or (site_slug and site_slug.lower() == sel_lower)
             or (site_name and site_name.lower() == sel.lower())
             or (site_name and normalize_adv_name(site_name) == norm_sel)
@@ -169,6 +172,24 @@ def resolve_selector(
             predicate=lambda _key, node: str(node.get("unit_id") or "").lower() == sel_lower,
         )
     )
+
+    def _alias_exact(_key: str, node: dict[str, Any]) -> bool:
+        alias = node_alias(node)
+        return bool(alias and alias.lower() == sel_lower)
+
+    tiers.append(_tier_matches(eligible, sites=sites, predicate=_alias_exact))
+
+    def _alias_norm(_key: str, node: dict[str, Any]) -> bool:
+        alias = node_alias(node)
+        return bool(alias and normalize_adv_name(alias) == norm_sel)
+
+    tiers.append(_tier_matches(eligible, sites=sites, predicate=_alias_norm))
+
+    def _alias_prefix(_key: str, node: dict[str, Any]) -> bool:
+        alias = node_alias(node)
+        return bool(alias and norm_sel and normalize_adv_name(alias).startswith(norm_sel))
+
+    tiers.append(_tier_matches(eligible, sites=sites, predicate=_alias_prefix))
 
     if HEX_PUBKEY_RE.match(sel):
         tiers.append(

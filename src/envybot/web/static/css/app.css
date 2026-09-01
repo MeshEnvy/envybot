@@ -618,6 +618,61 @@ body {
   color: #8aa0b5;
 }
 
+.book-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #2a3440;
+}
+
+.book-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+
+.book-field-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #8aa0b5;
+}
+
+.book-input,
+.book-textarea {
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 6px;
+  border: 1px solid #2a3440;
+  background: #0c1014;
+  color: #e7ecf1;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  font-family: inherit;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.book-textarea {
+  resize: vertical;
+  min-height: 4.5rem;
+}
+
+.book-input::placeholder,
+.book-textarea::placeholder {
+  color: #6b7d8f;
+}
+
+.book-input:focus,
+.book-textarea:focus {
+  outline: none;
+  border-color: #4ea1ff;
+  background: #101820;
+}
+
 .detail .dim {
   margin-left: 6px;
   color: #8aa0b5;

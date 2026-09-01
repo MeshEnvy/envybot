@@ -205,6 +205,21 @@ class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
         body = await resp.json()
         self.assertFalse(body.get("paused"))
 
+    async def test_post_unit_alias_and_notes(self) -> None:
+        resp = await self.client.post(
+            "/api/unit/me0003",
+            json={"alias": "Bench", "notes": "Spare tag\nBag shelf"},
+        )
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertEqual(body.get("alias"), "Bench")
+        self.assertEqual(body.get("notes"), "Spare tag\nBag shelf")
+        resp = await self.client.post("/api/unit/me0003", json={"alias": "", "notes": ""})
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertIsNone(body.get("alias"))
+        self.assertIsNone(body.get("notes"))
+
     async def test_refresh_paused_unit(self) -> None:
         await self.client.post("/api/unit/me0003", json={"paused": True})
         self.web_ctx.set_worker_active(True)

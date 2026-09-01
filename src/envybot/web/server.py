@@ -413,6 +413,18 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
             node["paused"] = True
         else:
             node.pop("paused", None)
+    if "alias" in body:
+        alias = body["alias"]
+        if isinstance(alias, str) and alias.strip():
+            node["alias"] = alias.strip()
+        else:
+            node.pop("alias", None)
+    if "notes" in body:
+        notes = body["notes"]
+        if isinstance(notes, str) and notes.strip():
+            node["notes"] = notes
+        else:
+            node.pop("notes", None)
     if "site" in body:
         site = body["site"]
         sites_doc = load_sites_doc(web_ctx.sites_path)

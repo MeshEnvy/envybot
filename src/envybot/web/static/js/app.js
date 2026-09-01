@@ -29,8 +29,8 @@ import {
   compareUnits,
   unitLabel,
   unitTitle,
-} from './format.js?v=18'
-import { buildNeighborEdges, createMapController, unitStage, unitStatus } from './map.js?v=22'
+} from './format.js?v=19'
+import { buildNeighborEdges, createMapController, unitStage, unitStatus } from './map.js?v=23'
 import { seriesFromHistories, sparklineWallTime, SPARK_MIN_SPAN } from './sparklines.js?v=6'
 
 const App = {
@@ -39,6 +39,10 @@ const App = {
     const selectedKey = ref(null)
     const search = ref('')
     const listFilter = ref('all')
+    const aliasDraft = ref('')
+    const notesDraft = ref('')
+    const aliasEditing = ref(false)
+    const notesEditing = ref(false)
     const historyHours = 72
 
     const METRIC_ROWS = [
@@ -126,7 +130,7 @@ const App = {
       }
       if (q) {
         units = units.filter((u) => {
-          const hay = [u.key, u.unit_id, u.site, u.site_name, u.label]
+          const hay = [u.key, u.unit_id, u.site, u.site_name, u.alias, u.label, u.notes]
             .filter(Boolean)
             .join(' ')
             .toLowerCase()
@@ -252,8 +256,7 @@ const App = {
     }
 
     function cardPrimary(unit) {
-      if (unit.site_name) return unit.site_name
-      return String(unit.unit_id || unit.key || '')
+      return unitLabel(unit)
     }
 
     function cardNodeId(unit) {
@@ -262,7 +265,59 @@ const App = {
 
     function cardShowNodeId(unit) {
       const id = cardNodeId(unit)
-      return !!unit.site_name && !!id && id !== cardPrimary(unit)
+      return !!id && id !== cardPrimary(unit)
+    }
+
+    function syncBookDrafts(unit) {
+      if (!unit || aliasEditing.value || notesEditing.value) return
+      aliasDraft.value = typeof unit.alias === 'string' ? unit.alias : ''
+      notesDraft.value = typeof unit.notes === 'string' ? unit.notes : ''
+    }
+
+    watch(selectedKey, () => {
+      aliasEditing.value = false
+      notesEditing.value = false
+      syncBookDrafts(selectedUnit.value)
+    })
+
+    watch(
+      () => selectedUnit.value?.alias,
+      () => syncBookDrafts(selectedUnit.value)
+    )
+    watch(
+      () => selectedUnit.value?.notes,
+      () => syncBookDrafts(selectedUnit.value)
+    )
+
+    /** @param {Record<string, unknown>} unit */
+    async function saveAlias(unit) {
+      aliasEditing.value = false
+      const next = aliasDraft.value.trim()
+      const prev = typeof unit.alias === 'string' ? unit.alias : ''
+      if (next === prev) return
+      try {
+        const updated = await patchUnit(String(unit.key), { alias: next || null })
+        applyUnit(updated)
+        pushMap()
+      } catch (err) {
+        console.error(err)
+        aliasDraft.value = prev
+      }
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    async function saveNotes(unit) {
+      notesEditing.value = false
+      const next = notesDraft.value
+      const prev = typeof unit.notes === 'string' ? unit.notes : ''
+      if (next === prev) return
+      try {
+        const updated = await patchUnit(String(unit.key), { notes: next.trim() ? next : null })
+        applyUnit(updated)
+      } catch (err) {
+        console.error(err)
+        notesDraft.value = prev
+      }
     }
 
     async function togglePublic(unit, ev) {
@@ -353,6 +408,16 @@ const App = {
       cardPrimary,
       cardNodeId,
       cardShowNodeId,
+      aliasDraft,
+      notesDraft,
+      saveAlias,
+      saveNotes,
+      onAliasFocus: () => {
+        aliasEditing.value = true
+      },
+      onNotesFocus: () => {
+        notesEditing.value = true
+      },
       formatAgo,
       formatRelative,
       formatSite,
@@ -479,6 +544,33 @@ const App = {
               </button>
             </div>
           </div>
+          <section class="book-edit">
+            <label class="book-field">
+              <span class="book-field-label">Alias</span>
+              <input
+                v-model="aliasDraft"
+                class="book-input"
+                type="text"
+                placeholder="Bag label when no site"
+                autocomplete="off"
+                spellcheck="false"
+                @focus="onAliasFocus"
+                @blur="selectedUnit && saveAlias(selectedUnit)"
+              />
+            </label>
+            <label class="book-field">
+              <span class="book-field-label">Notes</span>
+              <textarea
+                v-model="notesDraft"
+                class="book-textarea"
+                rows="3"
+                placeholder="Bench notes, deployment history…"
+                spellcheck="true"
+                @focus="onNotesFocus"
+                @blur="selectedUnit && saveNotes(selectedUnit)"
+              ></textarea>
+            </label>
+          </section>
           <section v-if="selectedUnit.health" class="health-section">
             <div class="health-summary">
               <span
