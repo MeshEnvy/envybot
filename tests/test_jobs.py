@@ -61,6 +61,21 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
         await sched.run(execute, once=True)
         self.assertEqual(order[0], "me0002")
 
+    async def test_on_job_done_sees_settled_queue(self) -> None:
+        sched = FleetScheduler(max_attempts=2, retry_delay=0.0)
+        t = _target()
+        sched.enqueue_jobs(t, [RadioJob(kind="login", unit_key="me0001")])
+        remaining: list[int] = []
+
+        async def execute(job: RadioJob, uq: UnitQueue) -> tuple[JobOutcome, object | None]:
+            return JobOutcome.TIMEOUT, "login timeout"
+
+        async def on_done(uq: UnitQueue, job: RadioJob, outcome: JobOutcome, payload: object) -> None:
+            remaining.append(len(uq.jobs))
+
+        await sched.run(execute, on_job_done=on_done, once=True)
+        self.assertEqual(remaining, [1, 0])
+
     async def test_max_attempts_drops_job(self) -> None:
         sched = FleetScheduler(max_attempts=2, retry_delay=0.0)
         t = _target()

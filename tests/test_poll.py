@@ -29,6 +29,39 @@ class _Res:
         self.polled_groups = kwargs.get("polled_groups", frozenset())
 
 
+class JobStageTests(unittest.TestCase):
+    def test_known_kinds(self) -> None:
+        from envybot.poll import in_flight_session, job_stage_label
+
+        self.assertEqual(job_stage_label("login"), "Logging in")
+        self.assertEqual(job_stage_label("get:acl"), "Fetching ACL")
+        self.assertEqual(job_stage_label("get:status"), "Fetching status")
+        self.assertEqual(job_stage_label("apply:acl"), "Setting ACL")
+        self.assertEqual(job_stage_label(None), "Queued")
+
+    def test_in_flight_keeps_manual_state(self) -> None:
+        from envybot.poll import in_flight_session
+
+        sess = in_flight_session(
+            manual_job="refresh",
+            job_kind="login",
+            attempt=3,
+            max_attempts=10,
+            queued=True,
+        )
+        self.assertEqual(sess["state"], "refreshing")
+        self.assertEqual(sess["stage"], "Logging in")
+        self.assertEqual(sess["attempt"], 3)
+        self.assertTrue(sess["manual"])
+
+    def test_in_flight_auto_queued(self) -> None:
+        from envybot.poll import in_flight_session
+
+        sess = in_flight_session(manual_job=None, job_kind="get:acl", queued=True)
+        self.assertEqual(sess["state"], "queued")
+        self.assertEqual(sess["stage"], "Fetching ACL")
+
+
 class ManualDueGroupsTests(unittest.TestCase):
     def test_refresh_is_periodic_only(self) -> None:
         from envybot.poll import GET_GROUP_ORDER, PERIODIC_GROUPS, refresh_due_groups

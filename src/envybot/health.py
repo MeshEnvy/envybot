@@ -8,6 +8,9 @@ from envybot.history import count_reboots
 
 CheckStatus = Literal["ok", "warn", "bad", "unknown"]
 Grade = Literal["ok", "warn", "bad", "unknown"]
+Headline = Literal["paused", "healthy", "unreachable", "attention"]
+
+_IN_FLIGHT = frozenset({"queued", "refreshing", "pulling", "pushing", "polling"})
 
 # Power (volts)
 POWER_WARN_V = 3.7
@@ -38,8 +41,16 @@ TEMP_BAD_HIGH = 75.0
 _GRADE_RANK = {"ok": 0, "warn": 1, "bad": 2, "unknown": -1}
 
 
-def _check(name: str, status: CheckStatus, reason: str | None = None) -> dict[str, Any]:
-    return {"name": name, "status": status, "reason": reason}
+def _check(
+    name: str,
+    status: CheckStatus,
+    reason: str | None = None,
+    fix: str | None = None,
+) -> dict[str, Any]:
+    row: dict[str, Any] = {"name": name, "status": status, "reason": reason}
+    if fix:
+        row["fix"] = fix
+    return row
 
 
 def _voltage_volts(
@@ -116,12 +127,35 @@ def compute_health(
     session_state = (session or {}).get("state")
     if paused:
         checks.append(_check("Reachability", "unknown", "Polling paused"))
+    elif session_state in ("queued", "refreshing", "pulling", "pushing", "polling"):
+        checks.append(_check("Reachability", "unknown", "Poll in progress"))
     elif freshness == "never":
-        checks.append(_check("Reachability", "bad", "Never heard from node"))
+        checks.append(
+            _check(
+                "Reachability",
+                "bad",
+                "Never heard from node",
+                fix="Refresh. If it stays silent, check companion path and that the unit is on.",
+            )
+        )
     elif session_state == "unreachable":
-        checks.append(_check("Reachability", "bad", "Unreachable this poll pass"))
+        checks.append(
+            _check(
+                "Reachability",
+                "bad",
+                "Unreachable this poll pass",
+                fix="Refresh again. If login keeps timing out, check path, flood, and that the radio is up.",
+            )
+        )
     elif freshness == "stale":
-        checks.append(_check("Reachability", "warn", "Last heard is stale"))
+        checks.append(
+            _check(
+                "Reachability",
+                "warn",
+                "Last heard is stale",
+                fix="Refresh. If it stays stale, check the path and companion.",
+            )
+        )
     else:
         checks.append(_check("Reachability", "ok"))
 
@@ -138,13 +172,25 @@ def compute_health(
                 trend_drop = True
         if volts < POWER_BAD_V:
             checks.append(
-                _check("Power", "bad", f"{volts:.2f} V below {POWER_BAD_V:.1f} V")
+                _check(
+                    "Power",
+                    "bad",
+                    f"{volts:.2f} V below {POWER_BAD_V:.1f} V",
+                    fix="Check solar, battery, and charger. Replace the pack if it does not recover in sun.",
+                )
             )
         elif volts < POWER_WARN_V or trend_drop:
             reason = f"{volts:.2f} V"
             if trend_drop:
                 reason += " falling"
-            checks.append(_check("Power", "warn", reason))
+            checks.append(
+                _check(
+                    "Power",
+                    "warn",
+                    reason,
+                    fix="Watch voltage. Inspect the power path if it keeps dropping.",
+                )
+            )
         else:
             checks.append(_check("Power", "ok", f"{volts:.2f} V"))
 
@@ -159,6 +205,7 @@ def compute_health(
                 "Stability",
                 "bad",
                 f"{reboot_count} reboots in recent history",
+                fix="Look for brownouts, OTA reboot loops, or a hot enclosure.",
             )
         )
     elif reboot_count >= STABILITY_WARN_REBOOTS:
@@ -167,6 +214,7 @@ def compute_health(
                 "Stability",
                 "warn",
                 f"{reboot_count} reboot in recent history",
+                fix="Refresh again to confirm it stays up.",
             )
         )
     else:
@@ -183,13 +231,21 @@ def compute_health(
         d_out = interval.get("packets_sent")
         duration = interval.get("duration_secs") or 0
         if d_in == 0 and d_out == 0:
-            checks.append(_check("Traffic", "bad", "No packets in or out since last poll"))
+            checks.append(
+                _check(
+                    "Traffic",
+                    "bad",
+                    "No packets in or out since last poll",
+                    fix="Confirm the radio is on-air. Check neighbors and duty cycle.",
+                )
+            )
         elif d_in == 0 and duration >= TRAFFIC_DEAF_HOURS * 3600:
             checks.append(
                 _check(
                     "Traffic",
                     "warn",
                     f"No decoded RX over {TRAFFIC_DEAF_HOURS} h window",
+                    fix="Node may be deaf or isolated. Check antenna, noise floor, and neighbors.",
                 )
             )
         else:
@@ -209,7 +265,12 @@ def compute_health(
             checks.append(_check("RF quality", "unknown", "No interval RF data"))
         elif interval_pct >= RF_BAD_PCT:
             checks.append(
-                _check("RF quality", "bad", f"Unreadable {interval_pct:.0f}% this interval")
+                _check(
+                    "RF quality",
+                    "bad",
+                    f"Unreadable {interval_pct:.0f}% this interval",
+                    fix="Interference or a failing radio. Check noise floor, antenna, and nearby TX.",
+                )
             )
         elif lifetime_pct is not None and interval_pct >= lifetime_pct + RF_WARN_LIFETIME_DELTA_PTS:
             checks.append(
@@ -217,6 +278,7 @@ def compute_health(
                     "RF quality",
                     "warn",
                     f"Unreadable {interval_pct:.0f}% vs {lifetime_pct:.0f}% lifetime",
+                    fix="RF got worse this interval. Compare noise floor and channel utilization.",
                 )
             )
         else:
@@ -230,9 +292,23 @@ def compute_health(
         if util is None:
             checks.append(_check("Utilization", "unknown", "No airtime data"))
         elif util >= UTIL_BAD_PCT:
-            checks.append(_check("Utilization", "bad", f"RX airtime {util:.0f}%"))
+            checks.append(
+                _check(
+                    "Utilization",
+                    "bad",
+                    f"RX airtime {util:.0f}%",
+                    fix="Channel is jammed. Reduce flood advert or duty, or move off a busy frequency.",
+                )
+            )
         elif util >= UTIL_WARN_PCT:
-            checks.append(_check("Utilization", "warn", f"RX airtime {util:.0f}%"))
+            checks.append(
+                _check(
+                    "Utilization",
+                    "warn",
+                    f"RX airtime {util:.0f}%",
+                    fix="High channel use. Watch for collisions.",
+                )
+            )
         else:
             checks.append(_check("Utilization", "ok"))
     else:
@@ -240,9 +316,23 @@ def compute_health(
 
     # Config / drift
     if drift == "leak":
-        checks.append(_check("Config", "warn", "Private node needs profile apply (leak)"))
+        checks.append(
+            _check(
+                "Config",
+                "warn",
+                "Private node needs profile apply (leak)",
+                fix="Push from the detail pane to SET the book profile (name, GPS off, ACL).",
+            )
+        )
     elif drift == "mismatch":
-        checks.append(_check("Config", "warn", "Public node profile mismatch"))
+        checks.append(
+            _check(
+                "Config",
+                "warn",
+                "Public node profile mismatch",
+                fix="Push from the detail pane to SET name, GPS, and ACL to the book.",
+            )
+        )
     else:
         checks.append(_check("Config", "ok"))
 
@@ -258,9 +348,23 @@ def compute_health(
     if temp is None:
         checks.append(_check("Temperature", "unknown", "No temperature reading"))
     elif temp >= TEMP_BAD_HIGH:
-        checks.append(_check("Temperature", "bad", f"{temp:.0f} °C"))
+        checks.append(
+            _check(
+                "Temperature",
+                "bad",
+                f"{temp:.0f} °C",
+                fix="Shade, vent, or move the enclosure.",
+            )
+        )
     elif temp >= TEMP_WARN_HIGH or temp <= TEMP_WARN_LOW:
-        checks.append(_check("Temperature", "warn", f"{temp:.0f} °C"))
+        checks.append(
+            _check(
+                "Temperature",
+                "warn",
+                f"{temp:.0f} °C",
+                fix="Check enclosure placement and sun load.",
+            )
+        )
     else:
         checks.append(_check("Temperature", "ok", f"{temp:.0f} °C"))
 
@@ -272,8 +376,19 @@ def compute_health(
         first = issues[0]
         summary = f"{first['name']}: {first.get('reason') or first['status']}"
 
+    in_flight = session_state in _IN_FLIGHT
+    if paused and not in_flight:
+        headline: Headline = "paused"
+    elif not in_flight and (session_state == "unreachable" or freshness == "never"):
+        headline = "unreachable"
+    elif issues:
+        headline = "attention"
+    else:
+        headline = "healthy"
+
     return {
         "grade": grade,
+        "headline": headline,
         "summary": summary,
         "checks": checks,
         "issues": issues,

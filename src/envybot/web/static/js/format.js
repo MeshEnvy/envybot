@@ -91,9 +91,50 @@ export function formatAirtimePct(pct) {
   return `${Number(pct).toFixed(1)}% RX`
 }
 
+export const HEALTH_MARKS = {
+  paused: { emoji: '⏸', label: 'Paused' },
+  healthy: { emoji: '✅', label: 'Healthy' },
+  unreachable: { emoji: '🚫', label: 'Unreachable' },
+  attention: { emoji: '⚠️', label: 'Needs attention' },
+}
+
+/** @param {Record<string, unknown> | undefined} unit */
+export function healthHeadline(unit) {
+  const raw = unit?.health && typeof unit.health === 'object' ? unit.health.headline : null
+  if (raw === 'paused' || raw === 'healthy' || raw === 'unreachable' || raw === 'attention') {
+    return raw
+  }
+  if (unit?.paused) return 'paused'
+  const state = unit?.session && typeof unit.session === 'object' ? unit.session.state : null
+  if (state === 'unreachable' || unit?.freshness === 'never') return 'unreachable'
+  if (hasHealthIssues(unit?.health)) return 'attention'
+  return 'healthy'
+}
+
+/** @param {Record<string, unknown> | undefined} unit */
+export function healthEmoji(unit) {
+  const mark = HEALTH_MARKS[healthHeadline(unit)] || HEALTH_MARKS.healthy
+  return mark.emoji
+}
+
+/** @param {Record<string, unknown> | undefined} unit */
+export function healthMark(unit) {
+  const mark = HEALTH_MARKS[healthHeadline(unit)] || HEALTH_MARKS.healthy
+  return `${mark.emoji} ${mark.label}`
+}
+
 /** @param {Record<string, unknown> | null | undefined} health */
 export function healthTooltip(health) {
   if (!health) return 'Health unknown'
+  const issues = Array.isArray(health.issues) ? health.issues : []
+  if (issues.length) {
+    return issues
+      .map((issue) => {
+        const why = `${issue.name}: ${issue.reason || issue.status}`
+        return issue.fix ? `${why}\n→ ${issue.fix}` : why
+      })
+      .join('\n\n')
+  }
   const summary = health.summary
   if (typeof summary === 'string' && summary) return summary
   return String(health.grade || 'unknown')

@@ -116,7 +116,7 @@ class MonitorWeb:
 
     async def enqueue_job(self, key: str, job: str) -> tuple[int, str | None]:
         """Enqueue a manual Refresh, Pull, or Push. Returns (http_status, error)."""
-        from envybot.poll import MANUAL_JOBS, manual_job_session_state
+        from envybot.poll import IN_FLIGHT_STATES, MANUAL_JOBS, in_flight_session
 
         key = key.lower()
         job = job.lower()
@@ -131,8 +131,7 @@ class MonitorWeb:
             return 404, "unknown unit"
         session = self._session_states.get(key) or {}
         state = session.get("state")
-        busy = ("refreshing", "pulling", "pushing", "polling")
-        if state in busy:
+        if state in IN_FLIGHT_STATES:
             return 200, None
         if self._binding is None:
             return 409, "fleet worker not accepting manual jobs"
@@ -163,8 +162,11 @@ class MonitorWeb:
         )
         status, err = binding.scheduler.enqueue_manual(target, job, jobs)
         binding.manual_keys.add(key)
-        pending_state = manual_job_session_state(job)
-        self._session_states[key] = {"state": pending_state, "manual": True, "job": job}
+        self._session_states[key] = in_flight_session(
+            manual_job=job,
+            job_kind="login",
+            queued=True,
+        )
         return status, err
 
     async def refresh_snapshot(

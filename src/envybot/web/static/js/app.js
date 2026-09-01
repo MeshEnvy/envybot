@@ -17,24 +17,26 @@ import {
   hasHealthIssues,
   hasTrafficInterval,
   hasTrafficStats,
+  healthEmoji,
+  healthHeadline,
+  healthMark,
   healthTooltip,
   unitLabel,
   unitTitle,
-} from './format.js?v=10'
-import { buildNeighborEdges, createMapController, hasMapPin, unitStatus } from './map.js?v=16'
+} from './format.js?v=13'
+import { buildNeighborEdges, createMapController, hasMapPin, unitStage, unitStatus } from './map.js?v=18'
 import { healthStroke, sparklinePath } from './sparklines.js?v=1'
 
 const SESSION_RANK = {
   polling: 0,
-  unreachable: 1,
-  refreshing: 2,
-  pulling: 2,
-  pushing: 2,
-  paused: 3,
-  fresh: 4,
-  stale: 5,
-  never: 6,
-  unmapped: 7,
+  queued: 1,
+  refreshing: 1,
+  pulling: 1,
+  pushing: 1,
+  unreachable: 2,
+  attention: 3,
+  paused: 4,
+  healthy: 5,
 }
 
 const App = {
@@ -101,13 +103,19 @@ const App = {
 
     const manualAccepting = computed(() => !!fleet.poll?.accepting)
 
-    const MANUAL_BUSY = new Set(['refreshing', 'pulling', 'pushing', 'polling'])
+    const MANUAL_BUSY = new Set(['queued', 'refreshing', 'pulling', 'pushing', 'polling'])
+
+    /** @param {Record<string, unknown> | undefined} unit */
+    function isInFlight(unit) {
+      const s = unit?.session
+      const state = s && typeof s === 'object' && 'state' in s ? s.state : null
+      return MANUAL_BUSY.has(state)
+    }
 
     /** @param {Record<string, unknown> | undefined} unit */
     function canManualUnit(unit) {
       if (!unit || !manualAccepting.value) return false
-      const st = unitStatus(unit)
-      return !MANUAL_BUSY.has(st)
+      return !isInFlight(unit)
     }
 
     /** @param {Record<string, unknown>} unit @param {'refresh' | 'pull' | 'push'} job @param {Event} [ev] */
@@ -237,6 +245,22 @@ const App = {
       mapCtrl?.sync(fleet, null)
     }
 
+    /** @param {Record<string, unknown> | undefined} unit */
+    function sessionBadgeTitle(unit) {
+      const s = unit?.session
+      if (!s || typeof s !== 'object') return ''
+      const parts = []
+      const attempt = s.attempt
+      const max = s.max_attempts
+      if (typeof attempt === 'number' && attempt > 0 && typeof max === 'number' && max > 0) {
+        parts.push(`${attempt}/${max}`)
+      } else if (typeof attempt === 'number' && attempt > 0) {
+        parts.push(`attempt ${attempt}`)
+      }
+      if (typeof s.error === 'string' && s.error) parts.push(s.error)
+      return parts.join(' · ')
+    }
+
     function cardMeta(unit) {
       const parts = unit.site_name ? [unit.unit_id || unit.key] : [formatSite(unit.site)]
       if (unit.firmware_version) parts.push(`fw ${unit.firmware_version}`)
@@ -328,6 +352,12 @@ const App = {
       selectUnit,
       clearSelection,
       unitStatus,
+      unitStage,
+      isInFlight,
+      sessionBadgeTitle,
+      healthHeadline,
+      healthEmoji,
+      healthMark,
       cardMeta,
       formatAgo,
       formatRelative,
@@ -391,7 +421,7 @@ const App = {
           <p class="sub">
             {{ selectedUnit.unit_id }}
             · {{ selectedUnit.public ? 'public' : 'private' }}
-            · {{ unitStatus(selectedUnit) }}
+            · {{ isInFlight(selectedUnit) ? unitStage(selectedUnit) : healthMark(selectedUnit) }}
             · {{ formatRelative(selectedUnit.last_heard) }}
             <span v-if="selectedUnit.drift"> · {{ selectedUnit.drift }}</span>
           </p>
@@ -434,11 +464,13 @@ const App = {
             <p class="health-summary">
               <span
                 class="health-chip"
-                :class="'health-' + (selectedUnit.health.grade || 'unknown')"
+                :class="'health-' + healthHeadline(selectedUnit)"
               >
-                {{ selectedUnit.health.grade || 'unknown' }}
+                {{ healthMark(selectedUnit) }}
               </span>
-              {{ selectedUnit.health.summary }}
+              <template v-if="!hasHealthIssues(selectedUnit.health)">
+                {{ selectedUnit.health.summary }}
+              </template>
             </p>
             <ul v-if="hasHealthIssues(selectedUnit.health)" class="health-issues">
               <li
@@ -446,7 +478,8 @@ const App = {
                 :key="i"
                 :class="'health-' + issue.status"
               >
-                {{ issue.name }}: {{ issue.reason || issue.status }}
+                <div>{{ issue.name }}: {{ issue.reason || issue.status }}</div>
+                <div v-if="issue.fix" class="health-fix">{{ issue.fix }}</div>
               </li>
             </ul>
             <div class="spark-grid">
@@ -648,9 +681,12 @@ const App = {
               <span class="unit-name">{{ unit.site_name || unit.unit_id || unit.key }}</span>
               <span v-if="unit.site_name" class="unit-id">{{ unit.unit_id || unit.key }}</span>
               <span class="unit-badges">
-                <span class="badge" :class="'badge-' + unitStatus(unit)">{{ unitStatus(unit) }}</span>
-                <span v-if="unit.paused && unitStatus(unit) !== 'paused'" class="badge badge-paused">paused</span>
-                <span v-if="unit.drift" class="badge" :class="'badge-' + unit.drift">{{ unit.drift }}</span>
+                <span
+                  v-if="isInFlight(unit)"
+                  class="badge"
+                  :class="'badge-' + unitStatus(unit)"
+                  :title="sessionBadgeTitle(unit)"
+                >{{ unitStage(unit) }}</span>
                 <button
                   v-if="manualAccepting"
                   type="button"
@@ -662,13 +698,13 @@ const App = {
                 </button>
               </span>
             </div>
-            <div class="unit-meta">{{ cardMeta(unit) }}</div>
-            <div
-              v-if="unit.health"
-              class="health-bar"
-              :class="'health-' + (unit.health.grade || 'unknown')"
-              :title="healthTooltip(unit.health)"
-            ></div>
+            <div class="unit-meta">
+              <span
+                class="health-mark"
+                :class="'health-mark-' + healthHeadline(unit)"
+                :title="healthTooltip(unit.health)"
+              >{{ healthEmoji(unit) }}</span>{{ cardMeta(unit) }}
+            </div>
           </div>
         </div>
       </aside>

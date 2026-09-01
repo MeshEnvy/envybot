@@ -97,7 +97,7 @@ class FleetScheduler:
     ) -> tuple[int, str | None]:
         """Refresh / Pull / Push. Returns (http_status, error)."""
         uq = self.get_or_create(target)
-        busy_states = ("refreshing", "pulling", "pushing", "polling")
+        busy_states = ("queued", "refreshing", "pulling", "pushing", "polling")
         state = uq.session_extra.get("state")
         if state in busy_states and uq.jobs:
             return 200, None
@@ -226,9 +226,6 @@ class FleetScheduler:
 
             outcome, payload = await execute(job, uq)
 
-            if on_job_done is not None:
-                await on_job_done(uq, job, outcome, payload)
-
             if outcome in (JobOutcome.HEARD, JobOutcome.TIMER_DONE):
                 uq.jobs.popleft()
                 job.attempt = 0
@@ -257,6 +254,9 @@ class FleetScheduler:
                         uq.jobs.clear()
                 else:
                     uq.backoff_until = time.monotonic() + self.retry_delay
+
+            if on_job_done is not None:
+                await on_job_done(uq, job, outcome, payload)
 
             if once and self.pending_count() == 0:
                 break

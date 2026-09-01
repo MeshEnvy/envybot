@@ -3,10 +3,13 @@ import maplibregl from 'maplibre-gl'
 const STATUS_COLOR = {
   polling: '#4ea1ff',
   unreachable: '#f06e6e',
+  queued: '#a896ff',
   refreshing: '#a896ff',
   pulling: '#9b8cff',
   pushing: '#c49bff',
   paused: '#8aa0b5',
+  healthy: '#6ee7a0',
+  attention: '#f0b86e',
   fresh: '#6ee7a0',
   stale: '#f0b86e',
   never: '#8aa0b5',
@@ -58,13 +61,29 @@ export function unitStatus(unit) {
   const s = unit?.session
   const state = s && typeof s === 'object' && 'state' in s ? s.state : null
   if (state === 'polling') return 'polling'
+  if (state === 'queued') return 'queued'
   if (state === 'refreshing') return 'refreshing'
   if (state === 'pulling') return 'pulling'
   if (state === 'pushing') return 'pushing'
+  const headline =
+    unit?.health && typeof unit.health === 'object' && 'headline' in unit.health
+      ? unit.health.headline
+      : null
+  if (headline === 'paused' || headline === 'unreachable' || headline === 'attention' || headline === 'healthy') {
+    return headline
+  }
   if (unit?.paused) return 'paused'
   if (state === 'unreachable') return 'unreachable'
   if (!unit?.mapped) return 'unmapped'
   return typeof unit?.freshness === 'string' ? unit.freshness : 'never'
+}
+
+/** Badge text: current job stage when in flight, else unitStatus. */
+export function unitStage(unit) {
+  const s = unit?.session
+  const stage = s && typeof s === 'object' && typeof s.stage === 'string' ? s.stage.trim() : ''
+  if (stage) return stage
+  return unitStatus(unit)
 }
 
 /**
@@ -115,6 +134,8 @@ export function createMapController(containerId, onSelect, onClear) {
     STATUS_COLOR.polling,
     'unreachable',
     STATUS_COLOR.unreachable,
+    'queued',
+    STATUS_COLOR.queued,
     'refreshing',
     STATUS_COLOR.refreshing,
     'pulling',
@@ -123,6 +144,10 @@ export function createMapController(containerId, onSelect, onClear) {
     STATUS_COLOR.pushing,
     'paused',
     STATUS_COLOR.paused,
+    'healthy',
+    STATUS_COLOR.healthy,
+    'attention',
+    STATUS_COLOR.attention,
     'fresh',
     STATUS_COLOR.fresh,
     'stale',

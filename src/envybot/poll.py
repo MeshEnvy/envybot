@@ -41,6 +41,36 @@ GET_GROUPS: dict[str, PullGroupSpec] = {
 GET_GROUP_ORDER = tuple(GET_GROUPS.keys())
 PERIODIC_GROUPS = tuple(g for g in GET_GROUP_ORDER if GET_GROUPS[g].mode == "periodic")
 MANUAL_JOBS = frozenset({"refresh", "pull", "push"})
+IN_FLIGHT_STATES = frozenset({"queued", "refreshing", "pulling", "pushing", "polling"})
+
+_STAGE_LABELS = {
+    "login": "Logging in",
+    "get:firmware": "Fetching firmware",
+    "get:bootloader": "Fetching bootloader",
+    "get:name": "Fetching name",
+    "get:lat": "Fetching GPS",
+    "get:lon": "Fetching GPS",
+    "get:advert": "Fetching advert",
+    "get:flood_advert": "Fetching flood",
+    "get:acl": "Fetching ACL",
+    "get:status": "Fetching status",
+    "get:telemetry": "Fetching telemetry",
+    "get:neighbors_discover": "Discovering neighbors",
+    "get:neighbors_wait": "Neighbor wait",
+    "get:neighbors": "Fetching neighbors",
+    "apply:force_clear": "Clearing stamps",
+    "apply:name": "Setting name",
+    "apply:lat": "Setting GPS",
+    "apply:lon": "Setting GPS",
+    "apply:advert": "Setting advert",
+    "apply:flood": "Setting flood",
+    "apply:guest": "Setting guest",
+    "apply:admin": "Setting admin",
+    "apply:path_hash": "Setting path hash",
+    "apply:dutycycle": "Setting duty cycle",
+    "apply:acl": "Setting ACL",
+    "apply:clock": "Syncing clock",
+}
 
 
 def refresh_due_groups() -> list[str]:
@@ -56,6 +86,56 @@ def pull_due_groups() -> list[str]:
 def manual_job_session_state(job: str) -> str:
     """UI/worker session state for a pending manual job."""
     return {"refresh": "refreshing", "pull": "pulling", "push": "pushing"}[job]
+
+
+def job_stage_label(kind: str | None) -> str:
+    """Short badge label for a scheduler job kind."""
+    if not kind:
+        return "Queued"
+    if kind in _STAGE_LABELS:
+        return _STAGE_LABELS[kind]
+    _, _, tail = kind.partition(":")
+    name = (tail or kind).replace("_", " ")
+    if kind.startswith("get:"):
+        return f"Fetching {name}"
+    if kind.startswith("apply:"):
+        return f"Setting {name}"
+    return name[:1].upper() + name[1:] if name else "Queued"
+
+
+def in_flight_session(
+    *,
+    manual_job: str | None,
+    job_kind: str | None,
+    attempt: int = 0,
+    max_attempts: int = 0,
+    due_groups: list[str] | None = None,
+    apply: bool = False,
+    error: str | None = None,
+    queued: bool = False,
+) -> dict[str, Any]:
+    """Session payload for a unit that still has scheduler work."""
+    if manual_job:
+        state = manual_job_session_state(manual_job)
+    elif queued:
+        state = "queued"
+    else:
+        state = "polling"
+    sess: dict[str, Any] = {
+        "state": state,
+        "stage": job_stage_label(job_kind),
+        "kind": job_kind,
+        "due_groups": list(due_groups or []),
+        "apply": apply,
+        "job": manual_job,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+    }
+    if manual_job:
+        sess["manual"] = True
+    if error:
+        sess["error"] = error
+    return sess
 
 
 @dataclass

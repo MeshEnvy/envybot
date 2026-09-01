@@ -431,6 +431,7 @@ class SnapshotTests(unittest.TestCase):
             snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
             health = snap["units"]["me0001"]["health"]
             self.assertIn("grade", health)
+            self.assertIn("headline", health)
             self.assertIn("checks", health)
             self.assertIn("summary", health)
 

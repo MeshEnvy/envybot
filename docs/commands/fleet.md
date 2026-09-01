@@ -55,6 +55,9 @@ Fleet work is a **fair serial command queue** (`jobs.py` + `fleet_worker.py`):
   12s, radio idle), then `GET_NEIGHBOURS`.
 - One companion send+wait at a time across the whole fleet. Timeout **parks**
   that unit (head job kept, backoff, retry later) instead of blocking everyone.
+  The UI badge stays on the current job stage (Logging in, Fetching ACL, …)
+  while the unit is queued or retrying. `unreachable` only after `--attempts`
+  is exhausted (or a hard fail).
 - Pick order: manual Refresh/Pull/Push, inventory gaps (fw/bl), then
   least-recently-served among ready units.
 - `--attempts` (default 10) caps retries **per command** at the scheduler.

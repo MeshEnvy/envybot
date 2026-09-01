@@ -172,6 +172,7 @@ class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp.status, 200)
         body = await resp.json()
         self.assertEqual(body.get("session", {}).get("state"), "refreshing")
+        self.assertEqual(body.get("session", {}).get("stage"), "Logging in")
         uq = self.scheduler.units.get("me0003")
         self.assertIsNotNone(uq)
         assert uq is not None

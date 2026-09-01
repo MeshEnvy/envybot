@@ -34,7 +34,7 @@ from envybot.poll import (
     format_get_plan,
     format_interval,
     gaps_from_poll,
-    manual_job_session_state,
+    in_flight_session,
     partition_due,
     partition_paused,
     poll_summary,
@@ -219,11 +219,13 @@ async def run(args: argparse.Namespace) -> int:
             conn, target.key, nodes.get(target.key) or {}, sites, force=args.force, doc=doc, keys=keys
         )
         if due or apply_due:
-            session_states[target.key] = {
-                "state": "queued",
-                "due_groups": list(due),
-                "apply": apply_due,
-            }
+            session_states[target.key] = in_flight_session(
+                manual_job=None,
+                job_kind="login",
+                due_groups=list(due),
+                apply=apply_due,
+                queued=True,
+            )
 
     _seed_auto_work(
         scheduler,
@@ -338,15 +340,14 @@ async def run(args: argparse.Namespace) -> int:
                 )
                 print(f"  apply need: {apply_need}")
                 print(f"  apply skip: {apply_have}")
-        session_states[target.key] = {
-            "state": "polling",
-            "due_groups": list(getattr(target, "due_groups", [])),
-            "apply": apply_due_now,
-            "job": job_name,
-        }
-        if uq.manual and job_name:
-            session_states[target.key]["state"] = manual_job_session_state(job_name)
-            session_states[target.key]["manual"] = True
+        session_states[target.key] = in_flight_session(
+            manual_job=job_name if uq.manual else None,
+            job_kind=job.kind,
+            attempt=job.attempt + 1,
+            max_attempts=scheduler.max_attempts,
+            due_groups=list(getattr(target, "due_groups", [])),
+            apply=apply_due_now,
+        )
         if web_ctx:
             active_poll = {
                 "phase": "polling",
@@ -376,23 +377,36 @@ async def run(args: argparse.Namespace) -> int:
         node_record = nodes.get(target.key) or {}
         guest_before = str(node_record.get("guest_password") or "")
 
-        if outcome == JobOutcome.TIMEOUT and job.kind == "login":
-            session_states[target.key] = {
-                "state": "unreachable",
-                "error": payload or "login timeout",
-                "due_groups": list(getattr(target, "due_groups", [])),
-            }
-            if not args.quiet:
-                print(f"  unreachable: {payload}")
-        elif outcome == JobOutcome.HARD_FAIL:
+        prev = session_states.get(target.key) or {}
+        due = list(getattr(target, "due_groups", []))
+        if prev.get("state") == "paused":
+            pass
+        elif outcome == JobOutcome.HARD_FAIL or (
+            outcome == JobOutcome.TIMEOUT and not uq.jobs
+        ):
             session_states[target.key] = {
                 "state": "unreachable",
                 "error": str(payload or "failed"),
-                "due_groups": list(getattr(target, "due_groups", [])),
+                "due_groups": due,
             }
             if not args.quiet:
                 print(f"  unreachable: {payload}")
-        elif not uq.jobs:
+            manual_keys.discard(target.key)
+        elif uq.jobs:
+            head = uq.jobs[0]
+            session_states[target.key] = in_flight_session(
+                manual_job=uq.manual_job,
+                job_kind=head.kind,
+                attempt=head.attempt + 1,
+                max_attempts=scheduler.max_attempts,
+                due_groups=due,
+                apply=bool(prev.get("apply")),
+                error=str(payload) if outcome == JobOutcome.TIMEOUT else None,
+                queued=True,
+            )
+            if not args.quiet and outcome == JobOutcome.TIMEOUT:
+                print(f"  retrying: {payload}")
+        else:
             session_states[target.key] = {"state": "ok", "due_groups": []}
             if not args.quiet and job.kind != "get:neighbors_wait":
                 acc = uq.session_extra.get("poll_acc")
@@ -403,8 +417,7 @@ async def run(args: argparse.Namespace) -> int:
                         print(f"  partial OK {poll_summary(res)} (gaps: {', '.join(remaining)})")
                     else:
                         print(f"  OK {poll_summary(res)}")
-            if uq.manual:
-                manual_keys.discard(target.key)
+            manual_keys.discard(target.key)
 
         if str(node_record.get("guest_password") or "") != guest_before:
             yaml_dirty = True

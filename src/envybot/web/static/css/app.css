@@ -160,6 +160,26 @@ body {
   line-height: 1.4;
 }
 
+.health-mark {
+  margin-right: 0.35em;
+}
+
+.health-mark-healthy {
+  color: #6ee7a0;
+}
+
+.health-mark-attention {
+  color: #f0b86e;
+}
+
+.health-mark-unreachable {
+  color: #f06e6e;
+}
+
+.health-mark-paused {
+  color: #8aa0b5;
+}
+
 .badge {
   display: inline-block;
   font-size: 0.65rem;
@@ -197,6 +217,7 @@ body {
   color: #f06e6e;
 }
 
+.badge-queued,
 .badge-refreshing,
 .badge-pulling,
 .badge-pushing {
@@ -413,29 +434,6 @@ body {
   border-top-color: #151b22;
 }
 
-.health-bar {
-  margin-top: 6px;
-  height: 3px;
-  border-radius: 2px;
-  background: #2a3440;
-}
-
-.health-bar.health-ok {
-  background: #6ee7a0;
-}
-
-.health-bar.health-warn {
-  background: #f0b86e;
-}
-
-.health-bar.health-bad {
-  background: #f06e6e;
-}
-
-.health-bar.health-unknown {
-  background: #3a4654;
-}
-
 .health-section .health-summary {
   margin: 0 0 8px;
   font-size: 0.8rem;
@@ -447,30 +445,32 @@ body {
 
 .health-chip {
   display: inline-block;
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   padding: 2px 6px;
   border-radius: 4px;
 }
 
-.health-chip.health-ok {
+.health-chip.health-ok,
+.health-chip.health-healthy {
   background: #1a3d2e;
   color: #6ee7a0;
 }
 
-.health-chip.health-warn {
+.health-chip.health-warn,
+.health-chip.health-attention {
   background: #3d2e1a;
   color: #f0b86e;
 }
 
-.health-chip.health-bad {
+.health-chip.health-bad,
+.health-chip.health-unreachable {
   background: #3d1a1a;
   color: #f06e6e;
 }
 
-.health-chip.health-unknown {
+.health-chip.health-unknown,
+.health-chip.health-paused {
   background: #2a3440;
   color: #8aa0b5;
 }
@@ -488,6 +488,12 @@ body {
 
 .health-issues li.health-bad {
   color: #f06e6e;
+}
+
+.health-fix {
+  margin-top: 2px;
+  font-size: 0.7rem;
+  color: #8aa0b5;
 }
 
 .spark-grid {

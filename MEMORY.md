@@ -112,6 +112,11 @@ Separate USB OTA repeater for `motatool serve`.
   Sidebar fades paused rows and shows a paused badge.
   Units carry `health` (worst-of component checks) and interval traffic
   deltas; detail sparklines use `/api/history/{unit}?metric=`.
+  List meta line shows a headline mark: Paused, Healthy, Unreachable,
+  Needs attention. In-flight cards show the current job stage (Logging in,
+  Fetching ACL, …). `unreachable` is only after the scheduler gives up
+  (`--attempts`) or a hard fail. A login timeout parks the unit and keeps
+  the stage.
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 

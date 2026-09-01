@@ -33,8 +33,34 @@ class HealthTests(unittest.TestCase):
             reboot_count=0,
         )
         self.assertEqual(health["grade"], "ok")
+        self.assertEqual(health["headline"], "healthy")
         self.assertEqual(health["summary"], "Healthy — all checks pass")
         self.assertEqual(health["issues"], [])
+
+    def test_config_leak_has_fix(self) -> None:
+        health = compute_health(
+            freshness="fresh",
+            session={"state": "ok"},
+            drift="leak",
+            status={"battery_mv": 4200, "packets_recv": 1000, "recv_errors": 10},
+            telemetry={"voltage": 4.2, "temperature": 25.0},
+            traffic_interval={
+                "packets_recv": 50,
+                "packets_sent": 10,
+                "recv_errors": 2,
+                "duration_secs": 3600,
+                "rx_airtime_pct": 5.0,
+            },
+            status_rows=[
+                {"ts": 1, "battery_mv": 4200, "uptime_secs": 1000},
+                {"ts": 2, "battery_mv": 4190, "uptime_secs": 2000},
+            ],
+            reboot_count=0,
+        )
+        self.assertEqual(health["headline"], "attention")
+        cfg = next(i for i in health["issues"] if i["name"] == "Config")
+        self.assertIn("leak", cfg["reason"] or "")
+        self.assertIn("Push", cfg.get("fix") or "")
 
     def test_reachability_never(self) -> None:
         health = compute_health(
@@ -47,7 +73,23 @@ class HealthTests(unittest.TestCase):
             status_rows=[],
         )
         self.assertEqual(health["grade"], "bad")
+        self.assertEqual(health["headline"], "unreachable")
         self.assertTrue(any(i["name"] == "Reachability" for i in health["issues"]))
+
+    def test_in_flight_reachability_unknown(self) -> None:
+        health = compute_health(
+            freshness="never",
+            session={"state": "refreshing", "stage": "Logging in"},
+            drift=None,
+            status=None,
+            telemetry=None,
+            traffic_interval=None,
+            status_rows=[],
+        )
+        reach = next(c for c in health["checks"] if c["name"] == "Reachability")
+        self.assertEqual(reach["status"], "unknown")
+        self.assertEqual(reach["reason"], "Poll in progress")
+        self.assertEqual(health["headline"], "healthy")
 
     def test_paused_reachability_unknown(self) -> None:
         health = compute_health(
@@ -63,6 +105,7 @@ class HealthTests(unittest.TestCase):
         reach = next(c for c in health["checks"] if c["name"] == "Reachability")
         self.assertEqual(reach["status"], "unknown")
         self.assertEqual(reach["reason"], "Polling paused")
+        self.assertEqual(health["headline"], "paused")
 
     def test_power_low_voltage(self) -> None:
         health = compute_health(
@@ -76,6 +119,7 @@ class HealthTests(unittest.TestCase):
             reboot_count=0,
         )
         self.assertEqual(health["grade"], "bad")
+        self.assertEqual(health["headline"], "attention")
         power = next(c for c in health["checks"] if c["name"] == "Power")
         self.assertEqual(power["status"], "bad")
 
