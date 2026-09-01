@@ -100,7 +100,7 @@ async def run(args: argparse.Namespace) -> int:
     include = {u.lower() for u in args.unit} if args.unit else None
     skip = {u.lower() for u in args.skip} if args.skip else None
     all_targets = load_targets(
-        nodes_path, deployed_only=not args.all_units, include=include, skip=skip
+        nodes_path, deployed_only=args.deployed_only, include=include, skip=skip
     )
     if skip and not args.quiet:
         print(f"Excluding {len(skip)} unit(s): {', '.join(sorted(skip))}")
@@ -404,7 +404,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-rounds", type=int, default=0)
     parser.add_argument("--max-attempts", type=int, default=0)
     parser.add_argument("--once", action="store_true", help="Single pass only")
-    parser.add_argument("--all-units", action="store_true", help="Include bag/bench units")
+    parser.add_argument(
+        "--deployed-only",
+        action="store_true",
+        help="Poll only site-bound units (skip bag/bench)",
+    )
     parser.add_argument("--unit", action="append", metavar="me0003")
     parser.add_argument("--skip", action="append", metavar="me0001")
     parser.add_argument(

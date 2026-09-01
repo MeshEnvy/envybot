@@ -8,6 +8,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Fleet default poll/apply includes bag/bench units (same as `trust`).
+  `--deployed-only` skips unbound inventory; `--all-units` removed.
+- Fleet UI shows the node detail card for bag/bench units (no site bind)
+  as a map overlay; mapped units still anchor to their pin popup.
 - Fleet neighbor last-heard uses the same relative ago as node freshness
   (`24.4h ago`) instead of raw `87875s`.
 - Fleet `leak` / `mismatch` follow the apply profile stamp (due vs OK),

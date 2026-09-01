@@ -8,7 +8,8 @@ Localhost fleet manager. Serves the map UI, GETs telemetry into
 ```
 
 Default: UI at `http://127.0.0.1:8787/` plus live GET (status/telemetry/neighbors),
-inventory gaps (fw/bl), and apply when the profile hash misses.
+inventory gaps (fw/bl), and apply when the profile hash misses. Polls every
+pollable MeshCore unit in the book, including bag/bench (no site `node:` bind).
 `firmware_platform: meshtastic` is omitted from the UI and never polled or applied.
 
 ## Stores
@@ -85,7 +86,7 @@ Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
 | `--live` | Periodic GET only (status/telemetry/neighbors) |
 | `--poll-only` | GET only |
 | `--apply-only` | SET only |
-| `--all-units` | Include bag/bench (no site `node:` bind) |
+| `--deployed-only` | Site-bound units only (skip bag/bench) |
 
 ## UI
 

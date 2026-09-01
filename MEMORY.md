@@ -47,9 +47,10 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   edits. Blank platform = meshcore.
 - `decommissioned:` (epoch) rows stay in `nodes.yaml` for the number
   but envybot ignores them: no UI, poll, apply, trust, cmd, or onboard.
-- `trust` imports every pollable MeshCore unit, including bag/bench
-  (no site bind). Contact name is the site `name` (e.g. Ophir), else
-  `unit_id`. Stale advert names are removed and re-added. `trust ben`
+- `fleet` and `trust` poll every pollable MeshCore unit, including
+  bag/bench (no site bind). `--deployed-only` narrows fleet to
+  site-bound units only. Contact name is the site `name` (e.g. Ophir),
+  else `unit_id`. Stale advert names are removed and re-added. `trust ben`
   records the live tag in `keys.yaml` and password-auths onto MeshCore
   units (`--unit` scopes that pass; contacts still import the full book).
   On units already profile-synced, trust stamps the new hash so fleet
