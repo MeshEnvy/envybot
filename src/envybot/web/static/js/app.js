@@ -8,7 +8,7 @@ import {
   formatUptime,
   unitLabel,
   unitTitle,
-} from './format.js'
+} from './format.js?v=3'
 import { createMapController, unitStatus } from './map.js?v=11'
 
 const SESSION_RANK = {
@@ -278,7 +278,7 @@ const App = {
               </template>
               <template v-else>unmapped</template>
             </dd>
-            <dt>Battery</dt>
+            <dt>Voltage</dt>
             <dd>{{ formatBattery(selectedUnit.status?.battery_mv) }}</dd>
             <dt>Temp</dt>
             <dd>{{ formatTemp(selectedUnit.telemetry?.temperature) }}</dd>

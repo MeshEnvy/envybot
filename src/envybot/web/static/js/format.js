@@ -8,10 +8,10 @@ export function formatRelative(ts) {
   return `${(age / 86400).toFixed(1)}d ago`
 }
 
-/** @param {number | null | undefined} mv */
+/** @param {number | null | undefined} mv battery millivolts from status */
 export function formatBattery(mv) {
   if (mv == null) return '—'
-  return `${mv} mV (${(mv / 1000).toFixed(2)} V)`
+  return `${(mv / 1000).toFixed(2)} V`
 }
 
 /** @param {number | null | undefined} c */
