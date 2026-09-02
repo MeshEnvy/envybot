@@ -106,10 +106,6 @@ class FleetScheduler:
     ) -> tuple[int, str | None]:
         """Refresh / Pull / Push. Returns (http_status, error)."""
         uq = self.get_or_create(target)
-        busy_states = ("queued", "refreshing", "pulling", "pushing", "polling")
-        state = uq.session_extra.get("state")
-        if state in busy_states and uq.jobs:
-            return 200, None
         self._cancel_timer(uq)
         uq.manual = True
         uq.manual_job = manual_job
@@ -123,6 +119,7 @@ class FleetScheduler:
         uq.jobs.clear()
         uq.jobs.extend(jobs)
         uq.backoff_until = 0.0
+        uq.last_served = 0.0
         uq.has_inventory_gap = any(
             j.kind.startswith("get:") and j.kind.split(":", 1)[1] in INVENTORY_GROUPS
             for j in jobs
@@ -196,6 +193,14 @@ class FleetScheduler:
         payload: Any | None,
         succeeded: dict[str, bool],
     ) -> None:
+        head = uq.jobs[0] if uq.jobs else None
+        if head is not job:
+            if job.future and not job.future.done():
+                if outcome in (JobOutcome.HEARD, JobOutcome.TIMER_DONE):
+                    job.future.set_result(payload)
+                else:
+                    job.future.set_exception(RuntimeError(str(payload or "superseded")))
+            return
         if outcome in (JobOutcome.HEARD, JobOutcome.TIMER_DONE):
             uq.jobs.popleft()
             job.attempt = 0
@@ -260,15 +265,14 @@ class FleetScheduler:
             job = uq.jobs[0]
             if job.kind in TIMER_JOB_KINDS:
                 continue
-            tier = 0 if uq.manual_bump else 1
+            tier = 0 if uq.manual else 1
             candidates.append((tier, uq.last_served, key, uq, job))
         if not candidates:
             return None
         candidates.sort(key=lambda row: (row[0], row[1], row[2]))
         uq = candidates[0][3]
         job = candidates[0][4]
-        if uq.manual_bump:
-            uq.manual_bump = False
+        uq.manual_bump = False
         return uq, job
 
     def pick_next(self, now: float | None = None) -> tuple[UnitQueue, RadioJob] | None:

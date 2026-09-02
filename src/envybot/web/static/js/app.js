@@ -118,10 +118,10 @@ const App = {
       return MANUAL_BUSY.has(state)
     }
 
-    /** @param {Record<string, unknown> | undefined} unit */
-    function canManualUnit(unit) {
+    /** @param {Record<string, unknown> | undefined} unit @param {'refresh' | 'pull' | 'push'} [job] */
+    function canManualUnit(unit, job) {
       if (!unit || !manualAccepting.value) return false
-      return !isInFlight(unit)
+      return true
     }
 
     /** @param {Record<string, unknown>} unit @param {'refresh' | 'pull' | 'push'} job */
@@ -145,7 +145,7 @@ const App = {
     /** @param {Record<string, unknown>} unit @param {'refresh' | 'pull' | 'push'} job @param {Event} [ev] */
     async function runManualJob(unit, job, ev) {
       ev?.stopPropagation?.()
-      if (!canManualUnit(unit)) return
+      if (!canManualUnit(unit, job)) return
       markOptimistic(unit, job)
       pushMap()
       const fn = job === 'refresh' ? refreshUnit : job === 'pull' ? pullUnit : pushUnit
@@ -588,7 +588,7 @@ const App = {
               <button
                 type="button"
                 class="manual-btn"
-                :disabled="!canManualUnit(selectedUnit)"
+                :disabled="!canManualUnit(selectedUnit, 'refresh')"
                 @click="runManualJob(selectedUnit, 'refresh', $event)"
               >
                 Refresh
@@ -596,7 +596,7 @@ const App = {
               <button
                 type="button"
                 class="manual-btn"
-                :disabled="!canManualUnit(selectedUnit)"
+                :disabled="!canManualUnit(selectedUnit, 'pull')"
                 @click="runManualJob(selectedUnit, 'pull', $event)"
               >
                 Pull
@@ -604,7 +604,7 @@ const App = {
               <button
                 type="button"
                 class="manual-btn manual-btn-push"
-                :disabled="!canManualUnit(selectedUnit)"
+                :disabled="!canManualUnit(selectedUnit, 'push')"
                 @click="runManualJob(selectedUnit, 'push', $event)"
               >
                 Push
@@ -1025,7 +1025,7 @@ const App = {
                 type="button"
                 class="unit-refresh"
                 :class="{ spinning: isInFlight(unit) }"
-                :disabled="!canManualUnit(unit)"
+                :disabled="!canManualUnit(unit, 'refresh')"
                 :title="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
                 :aria-label="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
                 @click.stop="runManualJob(unit, 'refresh', $event)"

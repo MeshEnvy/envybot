@@ -79,21 +79,24 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   (`--min-interval`); neighbors
   stay 24h (`discover.neighbors` + wait + GET; UI drops rows older
   than 7d). Long-running fleet re-checks due groups about every 60s
-  while idle. fw/bl once; name/gps/advert/acl audit-only (Pull /
+  while idle, and after each swim-lane batch (so apply-due units
+  do not wait for the whole fleet to go quiet). fw/bl once; name/gps/advert/acl audit-only (Pull /
   `--group` / `--force`). Status/telemetry samples log bound-site GPS.
   One-shot `sample_loc_backfill` stamps current site loc onto older
   rows that lack it. Bench/unmapped stay blank. Voltage is status
   `battery_mv` only (telemetry voltage stored, unused). Voltage/temp When
   cells show ☀️/🌙 (sun above horizon = charging expected).
   **Fleet poll uses swim-lane round-robin:** each unit owns a FIFO deque
-  (login, GET groups, SET fields). One dispatcher sends one radio command per
+  (login, SET if profile due, then GET groups). Apply is spliced onto a
+  busy GET lane when the stamp is out of sync. One dispatcher sends one radio command per
   unit per turn, then rotates to the least-recently-served ready lane. Timeout
   parks that unit's head job; other lanes keep sending. `--attempts` is the
   per-command retry cap (scheduler-owned); logs show `N/max` not `N/1`.
   Every mesh send resets companion out_path to flood first (`mesh_audit.path`
   should read `flood`; hop strings indicate a firmware leak). Neighbor discover wait (default 12s) is a background timer, not radio hold.
-  Manual Refresh/Pull/Push bump **one** command for that unit, then it rejoins
-  rotation. Sqlite stamps incrementally per successful GET/SET. Apply GETs ACL when
+  Manual Refresh/Pull/Push always replace that unit's remaining jobs and
+  stay at the front of the radio until that click finishes. A click mid-GET
+  supersedes the in-flight result (does not pop the new head). Sqlite stamps incrementally per successful GET/SET. Apply GETs ACL when
   due to drop extras. Any due SET failure aborts the rest for that unit this
   pass. Poll and apply password-login every MeshCore unit. Live RTC from login
   timestamp or ``clock`` CLI.
@@ -114,10 +117,11 @@ Separate USB OTA repeater for `motatool serve`.
 
 - **Fleet UI:** `./envybot fleet` serves `127.0.0.1:8787` by default.
   `--web-only` browses the book without a radio. Never expose secrets.
-  **Refresh** (list + detail), **Pull**, and **Push** (detail) enqueue manual
-  jobs while the companion worker is idle or polling; overrides `--skip` and
-  `paused`. Refresh is live GET only; Pull adds sticky GET; Push force-SETs
-  profile (including passwords). CLI `--force` is Pull plus Push.
+  **Refresh**, **Pull**, and **Push** always enqueue (even while that unit
+  is polling) and run ahead of auto work until the click is done. Overrides
+  `--skip` and `paused`. Refresh is live GET only; Pull adds sticky GET;
+  Push force-SETs profile (including passwords). CLI `--force` is Pull plus
+  Push. Auto-apply queues when `apply_is_due` even if the fleet is mid-sync.
   **Pause** (detail checkbox) writes `paused: true` and drops the unit from
   auto poll/apply on the next job boundary (in-flight exchange finishes).
   Sidebar fades paused rows and shows a paused badge.

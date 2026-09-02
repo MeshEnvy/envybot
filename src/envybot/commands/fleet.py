@@ -14,9 +14,11 @@ from typing import Any
 from envybot.apply import apply_is_due, format_apply_plan, persist_guest_if_new
 from envybot.fleet_worker import (
     WorkerContext,
+    build_apply_jobs,
     build_manual_jobs,
     build_poll_jobs,
     execute_job,
+    insert_apply_jobs,
     job_sample,
 )
 from envybot.history import migrate_legacy
@@ -103,17 +105,34 @@ def _seed_auto_work(
     discover_wait: float = 12.0,
     session_states: dict[str, dict[str, Any]] | None = None,
 ) -> int:
-    """Queue due GET/apply for idle units. Skip units that already have jobs."""
+    """Queue due GET/apply. Busy units keep their GET lane; apply is spliced in."""
     queued = 0
     for target in auto_targets:
-        existing = scheduler.units.get(target.key)
-        if existing and existing.jobs:
-            continue
         due = due_groups(conn, target.key, policy=policy, now=now) if do_poll else []
         target.due_groups = due
         apply_due = do_apply and apply_is_due(
             conn, target.key, nodes.get(target.key) or {}, sites, force=force, doc=doc, keys=keys
         )
+        existing = scheduler.units.get(target.key)
+        if existing and existing.jobs:
+            if not apply_due:
+                continue
+            applied = insert_apply_jobs(
+                existing, build_apply_jobs(target.key, force=force)
+            )
+            if not applied:
+                continue
+            if session_states is not None:
+                prev = session_states.get(target.key) or {}
+                session_states[target.key] = in_flight_session(
+                    manual_job=existing.manual_job if existing.manual else None,
+                    job_kind=str(prev.get("kind") or "login"),
+                    due_groups=list(due),
+                    apply=True,
+                    queued=True,
+                )
+            queued += 1
+            continue
         if not due and not apply_due:
             continue
         jobs = build_poll_jobs(
@@ -572,6 +591,43 @@ async def run(args: argparse.Namespace) -> int:
                 break
             if scheduler.pending_count() == 0:
                 continue
+            cadence_policy = PollPolicy(
+                force=False,
+                live_only=args.live and not args.force,
+                force_groups=frozenset(args.group or ()),
+                min_interval=args.min_interval,
+            )
+            before_keys = {k for k, uq in scheduler.units.items() if uq.jobs}
+            seeded = _seed_auto_work(
+                scheduler,
+                auto_targets=auto_targets,
+                conn=conn,
+                nodes=nodes,
+                sites=sites,
+                doc=doc,
+                keys=keys,
+                policy=cadence_policy,
+                do_poll=do_poll,
+                do_apply=do_apply,
+                force=False,
+                now=int(time.time()),
+                skip_discover=args.no_discover,
+                discover_wait=args.discover_wait,
+                session_states=session_states,
+            )
+            if seeded:
+                new_units = [
+                    uq.target
+                    for k, uq in scheduler.units.items()
+                    if uq.jobs and k not in before_keys
+                ]
+                if new_units:
+                    await sync_fleet_contacts(client, new_units, log=log)
+                if not args.quiet:
+                    print(
+                        f"Cadence: {scheduler.active_unit_count()} unit(s), "
+                        f"{scheduler.pending_count()} command(s) queued"
+                    )
             if args.round_delay > 0:
                 if not args.quiet:
                     print(

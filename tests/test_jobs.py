@@ -56,7 +56,7 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(order[3:6], ["me0001", "me0002", "me0003"])
         self.assertEqual(order[6:9], ["me0001", "me0002", "me0003"])
 
-    async def test_manual_bump_one_command_then_rotate(self) -> None:
+    async def test_manual_runs_ahead_of_auto(self) -> None:
         sched = FleetScheduler(max_attempts=10, retry_delay=0.0)
         manual = _target("me0037")
         auto = _target("me0001")
@@ -77,10 +77,30 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
             return JobOutcome.HEARD, None
 
         await sched.run(execute, once=True)
-        self.assertEqual(order[0], "me0037")
-        self.assertEqual(order[1], "me0001")
-        self.assertEqual(order[2], "me0037")
-        self.assertEqual(order.count("me0001"), 1)
+        self.assertEqual(order[:3], ["me0037", "me0037", "me0037"])
+        self.assertEqual(order[3], "me0001")
+
+    async def test_settle_ignores_superseded_job(self) -> None:
+        sched = FleetScheduler(max_attempts=10, retry_delay=0.0)
+        t = _target("me0001")
+        first = RadioJob(kind="login", unit_key="me0001")
+        sched.enqueue_jobs(t, [first, RadioJob(kind="get:status", unit_key="me0001")])
+        ran: list[str] = []
+
+        async def execute(job: RadioJob, uq: UnitQueue) -> tuple[JobOutcome, object | None]:
+            ran.append(job.kind)
+            if job is first:
+                sched.enqueue_manual(
+                    t,
+                    "refresh",
+                    [RadioJob(kind="get:telemetry", unit_key="me0001", manual=True)],
+                )
+            return JobOutcome.HEARD, None
+
+        await sched.run(execute, once=True)
+        self.assertEqual(ran, ["login", "get:telemetry"])
+        self.assertFalse(sched.units["me0001"].jobs)
+        self.assertTrue(sched.units["me0001"].succeeded)
 
     async def test_discover_wait_does_not_block_transport(self) -> None:
         sched = FleetScheduler(max_attempts=3, retry_delay=0.0)
@@ -207,18 +227,19 @@ class PickNextTests(unittest.TestCase):
         uq, _ = picked
         self.assertEqual(uq.target.key, "me0002")
 
-    def test_manual_bump_wins_once(self) -> None:
+    def test_manual_lane_wins_until_done(self) -> None:
         sched = FleetScheduler()
         auto = _target("me0001")
         manual = _target("me0002")
         sched.enqueue_jobs(auto, [RadioJob(kind="login", unit_key="me0001")])
-        sched.enqueue_jobs(manual, [RadioJob(kind="login", unit_key="me0002")])
-        sched.units["me0002"].manual_bump = True
+        sched.enqueue_manual(
+            manual, "refresh", [RadioJob(kind="login", unit_key="me0002")]
+        )
         picked = sched.pick_next(0.0)
         assert picked is not None
         uq, _ = picked
         self.assertEqual(uq.target.key, "me0002")
-        self.assertFalse(sched.units["me0002"].manual_bump)
+        self.assertTrue(sched.units["me0002"].manual)
 
 
 if __name__ == "__main__":

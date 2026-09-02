@@ -337,6 +337,97 @@ class SeedAutoWorkTests(unittest.TestCase):
             self.assertEqual(busy, 0)
             self.assertEqual(len(sched.units["me0001"].jobs), 1)
 
+    def test_seed_splices_apply_onto_busy_unit(self) -> None:
+        from envybot.commands.fleet import _seed_auto_work
+        from envybot.jobs import FleetScheduler, RadioJob
+
+        target = RouterTarget(
+            key="me0001",
+            unit_id="ME0001",
+            name="Test",
+            site=None,
+            pubkey_hex="a" * 64,
+            admin_password="AdminOneStrong1",
+        )
+        node = {
+            "unit_id": "ME0001",
+            "admin_password": "AdminOneStrong1",
+            "guest_password": "GuestOneStrong1",
+            "identity_pubkey": "aa" * 32,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            sched = FleetScheduler()
+            sched.enqueue_jobs(
+                target,
+                [
+                    RadioJob(kind="login", unit_key="me0001"),
+                    RadioJob(kind="get:status", unit_key="me0001"),
+                ],
+            )
+            seeded = _seed_auto_work(
+                sched,
+                auto_targets=[target],
+                conn=conn,
+                nodes={"me0001": node},
+                sites={},
+                doc={"nodes": {"me0001": node}},
+                keys={},
+                policy=PollPolicy(),
+                do_poll=True,
+                do_apply=True,
+                force=False,
+                now=1_700_000_000,
+            )
+            self.assertEqual(seeded, 1)
+            kinds = [j.kind for j in sched.units["me0001"].jobs]
+            self.assertEqual(kinds[0], "login")
+            self.assertIn("apply:name", kinds)
+            self.assertLess(kinds.index("apply:name"), kinds.index("get:status"))
+            again = _seed_auto_work(
+                sched,
+                auto_targets=[target],
+                conn=conn,
+                nodes={"me0001": node},
+                sites={},
+                doc={"nodes": {"me0001": node}},
+                keys={},
+                policy=PollPolicy(),
+                do_poll=True,
+                do_apply=True,
+                force=False,
+                now=1_700_000_000,
+            )
+            self.assertEqual(again, 0)
+            self.assertEqual([j.kind for j in sched.units["me0001"].jobs], kinds)
+
+
+class BuildPollJobsTests(unittest.TestCase):
+    def test_apply_runs_after_login_before_get(self) -> None:
+        from envybot.fleet_worker import build_poll_jobs
+
+        target = RouterTarget(
+            key="me0001",
+            unit_id="ME0001",
+            name="Test",
+            site=None,
+            pubkey_hex="a" * 64,
+            admin_password="secret",
+        )
+        jobs = build_poll_jobs(
+            target,
+            ["status", "telemetry"],
+            do_apply=True,
+            apply_due=True,
+            force_apply=False,
+            skip_discover=True,
+        )
+        kinds = [j.kind for j in jobs]
+        self.assertEqual(kinds[0], "login")
+        self.assertIn("apply:name", kinds)
+        self.assertLess(kinds.index("apply:name"), kinds.index("get:status"))
+        self.assertLess(kinds.index("apply:clock"), kinds.index("get:status"))
+
 
 if __name__ == "__main__":
     unittest.main()

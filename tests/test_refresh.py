@@ -96,13 +96,29 @@ class MonitorWebManualJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(uq.manual)
         self.assertEqual(uq.manual_job, "pull")
 
-    async def test_enqueue_noop_when_busy(self) -> None:
+    async def test_enqueue_refresh_bumps_when_busy(self) -> None:
         self.web_ctx.set_worker_active(True)
-        self.web_ctx._session_states["me0003"] = {"state": "refreshing"}
+        self.web_ctx._session_states["me0003"] = {"state": "polling"}
         status, err = await self.web_ctx.enqueue_job("me0003", "refresh")
         self.assertEqual(status, 200)
         self.assertIsNone(err)
-        self.assertNotIn("me0003", self.scheduler.units)
+        uq = self.scheduler.units.get("me0003")
+        self.assertIsNotNone(uq)
+        assert uq is not None
+        self.assertEqual(uq.manual_job, "refresh")
+        self.assertTrue(uq.manual)
+
+    async def test_enqueue_push_bumps_when_busy(self) -> None:
+        self.web_ctx.set_worker_active(True)
+        self.web_ctx._session_states["me0003"] = {"state": "polling"}
+        status, err = await self.web_ctx.enqueue_job("me0003", "push")
+        self.assertEqual(status, 200)
+        self.assertIsNone(err)
+        uq = self.scheduler.units.get("me0003")
+        self.assertIsNotNone(uq)
+        assert uq is not None
+        self.assertEqual(uq.manual_job, "push")
+        self.assertTrue(any(j.kind.startswith("apply:") for j in uq.jobs))
 
     async def test_wait_for_work(self) -> None:
         from envybot.jobs import RadioJob

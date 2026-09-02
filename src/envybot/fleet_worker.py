@@ -258,6 +258,9 @@ def build_poll_jobs(
 ) -> list[RadioJob]:
     jobs: list[RadioJob] = []
     jobs.append(RadioJob(kind="login", unit_key=target.key))
+    if do_apply and apply_due:
+        # SET before GET so a long/retrying poll cannot starve profile apply.
+        jobs.extend(build_apply_jobs(target.key, force=force_apply))
     for group in GET_GROUP_ORDER:
         if group not in due_groups:
             continue
@@ -274,12 +277,10 @@ def build_poll_jobs(
             jobs.append(RadioJob(kind="get:neighbors", unit_key=target.key))
         else:
             jobs.append(RadioJob(kind=f"get:{group}", unit_key=target.key))
-    if do_apply and apply_due:
-        jobs.extend(_build_apply_jobs(target.key, force=force_apply))
     return jobs
 
 
-def _build_apply_jobs(unit_key: str, *, force: bool) -> list[RadioJob]:
+def build_apply_jobs(unit_key: str, *, force: bool) -> list[RadioJob]:
     jobs: list[RadioJob] = []
     if force:
         jobs.append(RadioJob(kind="apply:force_clear", unit_key=unit_key))
@@ -287,6 +288,24 @@ def _build_apply_jobs(unit_key: str, *, force: bool) -> list[RadioJob]:
         jobs.append(RadioJob(kind=f"apply:{field}", unit_key=unit_key))
     jobs.append(RadioJob(kind="apply:clock", unit_key=unit_key))
     return jobs
+
+
+def jobs_include_apply(jobs: Any) -> bool:
+    return any(j.kind.startswith("apply:") for j in jobs)
+
+
+def insert_apply_jobs(uq: UnitQueue, apply_jobs: list[RadioJob]) -> bool:
+    """Queue SET after the in-flight head. No-op if apply is already queued."""
+    if not apply_jobs or jobs_include_apply(uq.jobs):
+        return False
+    items = list(uq.jobs)
+    if items:
+        items[1:1] = apply_jobs
+    else:
+        items = list(apply_jobs)
+    uq.jobs.clear()
+    uq.jobs.extend(items)
+    return True
 
 
 def build_manual_jobs(

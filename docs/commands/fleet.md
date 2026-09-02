@@ -40,8 +40,10 @@ window (default 12). The UI hides rows older than 7 days. Firmware has no
 TTL, so ghosts stay in sqlite history.
 
 A long-running `fleet` (not `--once`) re-checks due groups about every 60s
-while idle. No radio traffic unless status/telemetry is ≥1h stale or
-neighbors ≥24h. UI freshness stays 24h.
+while idle, and after each swim-lane batch so a missing profile can SET
+while other units are still GETting. No extra radio traffic unless
+status/telemetry is ≥1h stale, neighbors ≥24h, or apply is due. UI
+freshness stays 24h.
 
 Default runs never GET sticky identity fields. Leak / mismatch in the UI
 follow the apply profile stamp, not a heard-identity GET.
@@ -56,17 +58,20 @@ takes effect at the next job boundary. `trust` / `cmd` do not honor pause.
 Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
 `fleet_worker.py`):
 
-- Each unit owns a FIFO deque: login, due GET groups (one exchange each), then
-  due SET fields. Neighbors = `discover.neighbors`, a **timer job** (default
-  12s, background sleep, radio idle), then `GET_NEIGHBOURS`.
+- Each unit owns a FIFO deque: login, due SET fields, then due GET groups
+  (one exchange each). Neighbors = `discover.neighbors`, a **timer job** (default
+  12s, background sleep, radio idle), then `GET_NEIGHBOURS`. If a unit is
+  already GETting and the profile stamp is due, SET jobs splice in after the
+  in-flight command.
 - One companion send+wait at a time across the whole fleet. After each radio
   command the lane goes to the back. Timeout **parks** that unit's head job
   (backoff, retry on its next turn) while other lanes keep sending. The UI
   badge stays on the current job stage (Logging in, Fetching ACL, …) while the
   unit is queued or retrying. `unreachable` only after `--attempts` is exhausted
   (or a hard fail).
-- Pick order: manual Refresh/Pull/Push **one-op bump** for that unit, then
-  least-recently-served among ready lanes. No inventory priority.
+- Pick order: a manual Refresh/Pull/Push stays at the front until that
+  click finishes, then least-recently-served among ready lanes. No inventory
+  priority. Two manuals interleave with each other.
 - `--attempts` (default 10) caps retries **per command** at the scheduler.
   Logs show scheduler `N/max` (e.g. `8/10`), not inner one-shot `N/1`.
   Every mesh send resets companion out_path to flood first. `--retry-delay` /
@@ -74,7 +79,8 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
   continuing`; on unit done with gaps: `partial OK`.
 - Per-attempt mesh audit rows land in sqlite `mesh_audit` (unit, kind, label,
   path, wait, outcome, reply snippet). Query the book DB; no UI yet.
-- UI Refresh/Pull/Push enqueue onto the same dispatcher (one command bump).
+- UI Refresh/Pull/Push always enqueue, even while that unit is polling.
+  The click replaces remaining jobs for that unit and runs next.
 - Sqlite updates incrementally after each successful GET group or SET field.
 
 ## Poll history (UI)

@@ -118,7 +118,7 @@ class MonitorWeb:
 
     async def enqueue_job(self, key: str, job: str) -> tuple[int, str | None]:
         """Enqueue a manual Refresh, Pull, or Push. Returns (http_status, error)."""
-        from envybot.poll import IN_FLIGHT_STATES, MANUAL_JOBS, in_flight_session
+        from envybot.poll import MANUAL_JOBS, in_flight_session
 
         key = key.lower()
         job = job.lower()
@@ -131,10 +131,6 @@ class MonitorWeb:
         node = nodes.get(key)
         if not isinstance(node, dict) or is_decommissioned(node) or not is_meshcore_platform(node):
             return 404, "unknown unit"
-        session = self._session_states.get(key) or {}
-        state = session.get("state")
-        if state in IN_FLIGHT_STATES:
-            return 200, None
         if self._binding is None:
             return 409, "fleet worker not accepting manual jobs"
         binding = self._binding

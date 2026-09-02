@@ -326,7 +326,7 @@ def compute_health(
                 "Config",
                 "warn",
                 "Private node needs profile apply (leak)",
-                fix="Push from the detail pane to SET the book profile (name, GPS off, ACL).",
+                fix="Fleet auto-queues a Push when the profile stamp is due. Use Push to force it now.",
             )
         )
     elif drift == "mismatch":
@@ -335,7 +335,7 @@ def compute_health(
                 "Config",
                 "warn",
                 "Public node profile mismatch",
-                fix="Push from the detail pane to SET name, GPS, and ACL to the book.",
+                fix="Fleet auto-queues a Push when the profile stamp is due. Use Push to force it now.",
             )
         )
     else:
