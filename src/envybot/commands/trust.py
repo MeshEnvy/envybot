@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -244,8 +245,10 @@ async def grant_companion_acl(
     login_timeout: float,
     attempts: int,
     log: PollLog,
+    conn: sqlite3.Connection | None = None,
 ) -> tuple[int, int, list[str]]:
     session = FleetSession()
+    session.conn = conn
     session.bind_companion(client)
     session.attach_orphan_watch(client, log)
     ok = 0
@@ -442,6 +445,7 @@ async def run(args: argparse.Namespace) -> int:
             login_timeout=args.login_timeout,
             attempts=args.attempts,
             log=log,
+            conn=conn,
         )
         nodes_after = doc_after.get("nodes") or {}
         for key in ok_keys:

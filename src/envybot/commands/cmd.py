@@ -193,6 +193,8 @@ async def run(args: argparse.Namespace) -> int:
     target = resolved.target
     log = CmdLog(progress=not args.quiet, verbose=args.verbose)
     session = FleetSession()
+    conn = open_history(args.nodes.parent)
+    session.conn = conn
     client = await connect(args)
     session.bind_companion(client)
     session.attach_orphan_watch(client, log)  # type: ignore[arg-type]
@@ -256,6 +258,7 @@ async def run(args: argparse.Namespace) -> int:
     finally:
         await client.stop_auto_message_fetching()
         await client.disconnect()
+        conn.close()
 
 
 def main(argv: list[str] | None = None) -> int:

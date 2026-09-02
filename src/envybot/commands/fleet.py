@@ -302,6 +302,7 @@ async def run(args: argparse.Namespace) -> int:
 
     log = PollLog(progress=not args.quiet, verbose=args.verbose)
     session = FleetSession()
+    session.conn = conn
     client = await connect(args)
     companion_label = companion_identity(client)
     companion_short = companion_label[:12] if companion_label else None

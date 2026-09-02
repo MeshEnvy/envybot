@@ -99,6 +99,23 @@ CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS mesh_audit (
+  id INTEGER PRIMARY KEY,
+  ts_sent REAL NOT NULL,
+  ts_reply REAL,
+  unit TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  label TEXT,
+  attempt INTEGER,
+  path TEXT NOT NULL,
+  wait_s REAL,
+  ok INTEGER NOT NULL,
+  outcome TEXT NOT NULL,
+  reply TEXT,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS mesh_audit_unit_ts ON mesh_audit (unit, ts_sent);
 """
 
 
@@ -1544,6 +1561,67 @@ def import_jsonl(conn: sqlite3.Connection, path: Path) -> int:
             record_poll(conn, unit=str(unit), res=tmp, ts=ts)
             n += 1
     return n
+
+
+def begin_mesh_audit(
+    conn: sqlite3.Connection | None,
+    *,
+    unit: str,
+    kind: str,
+    label: str | None,
+    attempt: int | None,
+    path: str,
+    wait_s: float | None,
+) -> int | None:
+    """Insert a mesh send row at send time. Returns row id or None if conn is omitted."""
+    if conn is None:
+        return None
+    cur = conn.execute(
+        "INSERT INTO mesh_audit "
+        "(ts_sent, unit, kind, label, attempt, path, wait_s, ok, outcome) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'pending')",
+        (time.time(), unit.lower(), kind, label, attempt, path, wait_s),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def finish_mesh_audit(
+    conn: sqlite3.Connection | None,
+    audit_id: int | None,
+    *,
+    ok: bool,
+    outcome: str,
+    reply: str | None = None,
+    error: str | None = None,
+) -> None:
+    """Close an open mesh_audit row. Timeout keeps ts_reply NULL."""
+    if conn is None or audit_id is None:
+        return
+    ts_reply = None if outcome == "timeout" else time.time()
+    conn.execute(
+        "UPDATE mesh_audit SET ts_reply = ?, ok = ?, outcome = ?, reply = ?, error = ? "
+        "WHERE id = ? AND outcome = 'pending'",
+        (ts_reply, 1 if ok else 0, outcome, reply, error, audit_id),
+    )
+    conn.commit()
+
+
+def mark_mesh_audit_late(
+    conn: sqlite3.Connection | None,
+    audit_id: int | None,
+    *,
+    reply: str | None = None,
+) -> None:
+    """Mark a timed-out row that got a late reply."""
+    if conn is None or audit_id is None:
+        return
+    conn.execute(
+        "UPDATE mesh_audit SET ts_reply = ?, ok = 1, outcome = 'late', "
+        "reply = COALESCE(?, reply) WHERE id = ? AND outcome = 'timeout'",
+        (time.time(), reply, audit_id),
+    )
+    conn.commit()
 
 
 def migrate_legacy(book: Path, nodes: dict[str, Any]) -> sqlite3.Connection:

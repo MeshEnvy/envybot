@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import re
+import sqlite3
 import sys
 import time
 from dataclasses import dataclass, field
@@ -23,6 +24,7 @@ from envybot.nodes_doc import (
     normalize_fleet_node,
 )
 from envybot.position import book_coord, display_name, load_sites, site_binding
+from envybot.history import begin_mesh_audit, finish_mesh_audit, mark_mesh_audit_late
 
 try:
     from meshcore import EventType, MeshCore
@@ -169,6 +171,7 @@ class ReplyExpect:
     deadline: float
     n_of: str
     resolved: bool = False
+    audit_id: int | None = None
 
 
 @dataclass
@@ -180,6 +183,7 @@ class FleetSession:
     companion_acl_prefix: str | None = None
     expects: list[ReplyExpect] = field(default_factory=list)
     wait_slack: dict[str, float] = field(default_factory=dict)
+    conn: sqlite3.Connection | None = field(default=None, repr=False)
     _orphan_log: PollLog | None = None
     _orphan_subs: list[Any] = field(default_factory=list)
     _binary_inflight: dict[str, Any] | None = None
@@ -302,6 +306,7 @@ class FleetSession:
         pubkey_prefix: str,
         n_of: str,
         deadline: float,
+        audit_id: int | None = None,
     ) -> object:
         token = object()
         self._binary_inflight = {
@@ -312,6 +317,7 @@ class FleetSession:
             "n_of": n_of,
             "deadline": deadline,
             "expects": [],
+            "audit_id": audit_id,
         }
         return token
 
@@ -338,6 +344,7 @@ class FleetSession:
             n_of=inf["n_of"],
             binary_tag=str(tag).lower(),
         )
+        exp.audit_id = inf.get("audit_id")
         inf["expects"].append(exp)
 
     def track_expect(
@@ -423,6 +430,9 @@ class FleetSession:
                 f"orphan: {exp.unit} late {exp.label} {exp.n_of} "
                 f"+{late:.1f}s after timeout{extra}"
             )
+            if self.conn is not None and exp.audit_id is not None:
+                snippet = extra.strip() if extra else None
+                mark_mesh_audit_late(self.conn, exp.audit_id, reply=snippet)
             exp.resolved = True
             self._raise_dest_wait(exp.unit, late, log)
             return
@@ -434,6 +444,8 @@ class FleetSession:
             f"+{late:.1f}s after {newest.n_of}; expired: {waits}"
         )
         for exp in stale:
+            if self.conn is not None and exp.audit_id is not None:
+                mark_mesh_audit_late(self.conn, exp.audit_id, reply="login")
             exp.resolved = True
         self._raise_dest_wait(newest.unit, late, log)
 
@@ -1263,16 +1275,12 @@ async def pull_repeater_status(
             target.pubkey_hex, timeout=dest_wait, min_timeout=8
         )
 
-    async def flood_on_retry(_attempt: int) -> None:
-        await reset_to_flood(client, target, log=log)
-
     raw = await retry_binary_req(
         "GET_STATUS",
         fetch,
         client=client,
         attempts=attempts,
         log=log,
-        on_retry=flood_on_retry,
         session=session,
         target=target,
         wait_s=wait_cap,
@@ -1385,9 +1393,8 @@ def log_contact_path(
 ) -> None:
     """Log the companion's cached route for this target before a mesh send.
 
-    ``out_path`` lives on the companion contact record. It is usually learned
-    when a flood login (or other flood exchange) succeeds and the repeater
-    returns a path; later sends ride that direct route until reset or timeout.
+    After ``reset_to_flood``, in-memory ``out_path`` is cleared so this should
+    read ``path: flood`` unless firmware leaked a stale route.
     """
     log = log or PollLog()
     contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])
@@ -1396,6 +1403,74 @@ def log_contact_path(
         log.step(f"path: {label}")
     else:
         log.step("path: flood")
+
+
+def _audit_redact(text: str | None, *, max_len: int = 500) -> str | None:
+    if text is None:
+        return None
+    from envybot.commands.cmd import redact_snippet
+
+    return redact_snippet(text, max_len=max_len)
+
+
+def audit_path_at_send(client: MeshCore, target: RouterTarget) -> str:
+    contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])
+    label = contact_out_path_label(contact)
+    return label or "flood"
+
+
+def _audit_binary_reply(val: Any) -> str | None:
+    if val is None:
+        return None
+    if isinstance(val, (dict, list)):
+        text = json.dumps(val, default=str)
+    else:
+        text = str(val)
+    return _audit_redact(text, max_len=500)
+
+
+def _audit_begin(
+    session: FleetSession | None,
+    *,
+    unit: str,
+    kind: str,
+    label: str,
+    attempt: int,
+    path: str,
+    wait_s: float | None,
+) -> int | None:
+    if session is None or session.conn is None:
+        return None
+    return begin_mesh_audit(
+        session.conn,
+        unit=unit,
+        kind=kind,
+        label=label,
+        attempt=attempt,
+        path=path,
+        wait_s=wait_s,
+    )
+
+
+def _audit_finish(
+    session: FleetSession | None,
+    audit_id: int | None,
+    *,
+    ok: bool,
+    outcome: str,
+    reply: str | None = None,
+    error: str | None = None,
+) -> None:
+    if session is None or session.conn is None or audit_id is None:
+        return
+    finish_mesh_audit(
+        session.conn,
+        audit_id,
+        ok=ok,
+        outcome=outcome,
+        reply=_audit_redact(reply) if reply else None,
+        error=str(error) if error is not None else None,
+    )
 
 
 def flood_contact_stub(target: RouterTarget) -> dict[str, Any]:
@@ -1674,14 +1749,15 @@ async def reset_to_flood(
     client: MeshCore, target: RouterTarget, *, log: PollLog | None = None
 ) -> None:
     log = log or PollLog()
-    """Clear the companion's saved out_path so the next send floods.
-
-    Fallback only, after a direct-path timeout — a flood login makes the repeater
-    send a path return, re-establishing the direct path on success.
-    """
+    """Clear the companion's saved out_path before every mesh send."""
     res = await client.commands.reset_path(target.pubkey_hex)
     if res.type == EventType.ERROR:
         log.detail(f"reset_path warning: {res.payload}")
+    contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])
+    if isinstance(contact, dict):
+        contact["out_path_len"] = -1
+        contact["out_path"] = ""
+        contact["out_path_hash_mode"] = -1
 
 
 async def wait_login_response(
@@ -1731,16 +1807,31 @@ async def admin_login(
 
     while attempts == 0 or attempt < attempts:
         attempt += 1
+        audit_id: int | None = None
         async with client.commands._mesh_request_lock:
             await ensure_contact_on_device(client, target, log=log)
-            if attempt == 2:
-                # Saved direct path didn't answer — fall back to flood. The flood
-                # login triggers a path return, restoring the direct path on success.
-                await reset_to_flood(client, target, log=log)
+            await reset_to_flood(client, target, log=log)
             log_contact_path(client, target, log=log)
+            path = audit_path_at_send(client, target)
             sent = await send_login_frame(client, dst, target.admin_password)
             if sent is None or sent.type == EventType.ERROR:
                 err = sent.payload if sent else "no response"
+                audit_id = _audit_begin(
+                    session,
+                    unit=target.unit_id,
+                    kind="login",
+                    label="login",
+                    attempt=attempt,
+                    path=path,
+                    wait_s=0.0,
+                )
+                _audit_finish(
+                    session,
+                    audit_id,
+                    ok=False,
+                    outcome="send_error",
+                    error=err,
+                )
                 log.step(f"login {attempt_label(attempt, attempts)}: send error ({err}), retrying …")
                 continue
             suggested_ms = sent.payload.get("suggested_timeout", 60000)
@@ -1749,6 +1840,15 @@ async def admin_login(
         if session is not None:
             wait_s = session.stretch_wait(wait_s, target.unit_id, cap=login_timeout)
         n_of = attempt_label(attempt, attempts)
+        audit_id = _audit_begin(
+            session,
+            unit=target.unit_id,
+            kind="login",
+            label="login",
+            attempt=attempt,
+            path=path,
+            wait_s=wait_s,
+        )
         log.step(f"send login 0x1a {n_of} (≤{wait_s:.0f}s, no echo id) …")
         log.detail(
             f"login {n_of}: dst={prefix}…, "
@@ -1765,6 +1865,7 @@ async def admin_login(
                 deadline=time.monotonic() + wait_s,
                 n_of=n_of,
             )
+            exp.audit_id = audit_id
         status, event = await wait_login_response(client, prefix, timeout=wait_s)
         if exp is not None and status != "timeout":
             session.resolve_expect(exp)
@@ -1774,6 +1875,8 @@ async def admin_login(
                 ts = event.payload.get("server_timestamp")
                 if ts is not None:
                     node_clock = int(ts)
+            reply = f"clock={node_clock}" if node_clock is not None else "ok"
+            _audit_finish(session, audit_id, ok=True, outcome="ok", reply=reply)
             if node_clock is not None:
                 log.step(f"login OK (clock={node_clock})")
             else:
@@ -1783,11 +1886,13 @@ async def admin_login(
                 session.mark_authed(target.key)
             return True, None, node_clock
         if status == "failed":
+            _audit_finish(session, audit_id, ok=False, outcome="rejected", reply="rejected")
             log.step("login rejected")
             log.detail(f"LOGIN_FAILED {event.payload if event else ''}")
             if session is not None:
                 session.clear_auth(target.key)
             return False, "login rejected (bad password?)", None
+        _audit_finish(session, audit_id, ok=False, outcome="timeout")
         if attempts and attempt >= attempts:
             log.step(f"login {n_of}: timeout after {wait_s:.0f}s")
             break
@@ -1806,20 +1911,37 @@ async def admin_login_attempt(
     attempt_num: int = 1,
     attempt_cap: int | None = None,
 ) -> tuple[bool, str | None, int | None]:
-    """Single login send+wait. ``attempt_num >= 2`` triggers flood fallback."""
+    """Single login send+wait."""
     log = log or PollLog()
     dst = target.pubkey_hex
     prefix = dst[:12]
+    audit_id: int | None = None
     async with client.commands._mesh_request_lock:
         await ensure_contact_on_device(client, target, log=log)
-        if attempt_num >= 2:
-            await reset_to_flood(client, target, log=log)
+        await reset_to_flood(client, target, log=log)
         log_contact_path(client, target, log=log)
+        path = audit_path_at_send(client, target)
         sent = await send_login_frame(client, dst, target.admin_password)
         if sent is None or sent.type == EventType.ERROR:
             err = sent.payload if sent else "no response"
+            audit_id = _audit_begin(
+                session,
+                unit=target.unit_id,
+                kind="login",
+                label="login",
+                attempt=attempt_num,
+                path=path,
+                wait_s=0.0,
+            )
+            _audit_finish(
+                session,
+                audit_id,
+                ok=False,
+                outcome="send_error",
+                error=err,
+            )
             log.step(f"login {attempt_num}: send error ({err})")
-            return False, err, None
+            return False, str(err), None
         suggested_ms = sent.payload.get("suggested_timeout", 60000)
 
     wait_s = mesh_wait_seconds(suggested_ms, cap=login_timeout)
@@ -1827,6 +1949,15 @@ async def admin_login_attempt(
         wait_s = session.stretch_wait(wait_s, target.unit_id, cap=login_timeout)
     cap = attempt_cap if attempt_cap else 0
     n_of = attempt_label(attempt_num, cap)
+    audit_id = _audit_begin(
+        session,
+        unit=target.unit_id,
+        kind="login",
+        label="login",
+        attempt=attempt_num,
+        path=path,
+        wait_s=wait_s,
+    )
     log.step(f"send login 0x1a {n_of} (≤{wait_s:.0f}s, no echo id) …")
 
     exp = None
@@ -1839,6 +1970,7 @@ async def admin_login_attempt(
             deadline=time.monotonic() + wait_s,
             n_of=n_of,
         )
+        exp.audit_id = audit_id
     status, event = await wait_login_response(client, prefix, timeout=wait_s)
     if exp is not None and status != "timeout":
         session.resolve_expect(exp)
@@ -1848,6 +1980,8 @@ async def admin_login_attempt(
             ts = event.payload.get("server_timestamp")
             if ts is not None:
                 node_clock = int(ts)
+        reply = f"clock={node_clock}" if node_clock is not None else "ok"
+        _audit_finish(session, audit_id, ok=True, outcome="ok", reply=reply)
         if node_clock is not None:
             log.step(f"login OK (clock={node_clock})")
         else:
@@ -1856,10 +1990,12 @@ async def admin_login_attempt(
             session.mark_authed(target.key)
         return True, None, node_clock
     if status == "failed":
+        _audit_finish(session, audit_id, ok=False, outcome="rejected", reply="rejected")
         log.step("login rejected")
         if session is not None:
             session.clear_auth(target.key)
         return False, "login rejected (bad password?)", None
+    _audit_finish(session, audit_id, ok=False, outcome="timeout")
     log.step(f"login {n_of}: timeout after {wait_s:.0f}s")
     return False, f"login timeout after {wait_s:.0f}s", None
 
@@ -1951,7 +2087,7 @@ async def send_cmd_sync(
     attempt_cap: int | None = None,
 ) -> str | None:
     log = log or PollLog()
-    """Send CLI command; rides the direct path learned at login, floods as fallback."""
+    """Send CLI command; always floods (companion out_path reset before each send)."""
     dst_hex = target.pubkey_hex
     pubkey_prefix = dst_hex[:12]
     attempt = 0
@@ -1961,19 +2097,35 @@ async def send_cmd_sync(
 
     while max_attempts == 0 or attempt < max_attempts:
         attempt = attempt_num if single else attempt + 1
+        audit_id: int | None = None
         if session is not None and not await session.ensure_companion_connected(log=log):
             log.step("send aborted: companion not connected")
             return None
         prefix_token = next_cli_prefix()
         framed = f"{prefix_token}{cmd}"
         async with client.commands._mesh_request_lock:
-            if attempt >= 2:
-                # Saved direct path didn't answer — fall back to flood (same as login).
-                await reset_to_flood(client, target, log=log)
+            await reset_to_flood(client, target, log=log)
             log_contact_path(client, target, log=log)
+            path = audit_path_at_send(client, target)
             sent = await send_cli_frame(client, dst_hex, framed, attempt=attempt - 1)
             if sent is None or sent.type == EventType.ERROR:
                 err = sent.payload if sent else "no response"
+                audit_id = _audit_begin(
+                    session,
+                    unit=target.unit_id,
+                    kind="cli",
+                    label=cmd,
+                    attempt=attempt,
+                    path=path,
+                    wait_s=0.0,
+                )
+                _audit_finish(
+                    session,
+                    audit_id,
+                    ok=False,
+                    outcome="send_error",
+                    error=err,
+                )
                 if session is not None and not client.is_connected:
                     if await session.ensure_companion_connected(log=log):
                         continue
@@ -1992,6 +2144,15 @@ async def send_cmd_sync(
             slack0 = session.dest_slack(target.unit_id)
             wait_s = session.stretch_wait(wait_s, target.unit_id, cap=timeout)
         n_of = attempt_label(attempt, label_cap)
+        audit_id = _audit_begin(
+            session,
+            unit=target.unit_id,
+            kind="cli",
+            label=cmd,
+            attempt=attempt,
+            path=path,
+            wait_s=wait_s,
+        )
         log.step(f"send {framed!r} {n_of} (≤{wait_s:.0f}s) …")
         log.detail(f"cli {framed!r} {n_of}: wait {wait_s:.0f}s")
 
@@ -2006,6 +2167,7 @@ async def send_cmd_sync(
                 n_of=n_of,
                 cli_token=prefix_token,
             )
+            exp.audit_id = audit_id
         text = await wait_cli_response(
             client,
             pubkey_prefix=pubkey_prefix,
@@ -2019,8 +2181,10 @@ async def send_cmd_sync(
         if exp is not None and text:
             session.resolve_expect(exp)
         if text:
+            _audit_finish(session, audit_id, ok=True, outcome="ok", reply=text)
             log.detail(f"cli reply {prefix_token}{text[:120]}")
             return text
+        _audit_finish(session, audit_id, ok=False, outcome="timeout")
         if single or (attempts and attempt >= attempts):
             log.step(f"send {framed!r} {n_of}: timeout after {wait_s:.0f}s")
             break
@@ -2040,7 +2204,7 @@ async def send_cmd_once(
     attempt_num: int = 1,
     attempt_cap: int | None = None,
 ) -> str | None:
-    """Single CLI send+wait. ``attempt_num >= 2`` triggers flood fallback."""
+    """Single CLI send+wait."""
     return await send_cmd_sync(
         client,
         target,
@@ -2071,10 +2235,6 @@ async def binary_req_once(
 ) -> Any:
     """Single binary mesh request attempt."""
 
-    async def on_retry_num(_: int) -> None:
-        if on_retry is not None:
-            await on_retry()
-
     return await retry_binary_req(
         label,
         fetch,
@@ -2082,7 +2242,6 @@ async def binary_req_once(
         attempts=1,
         log=log,
         success=success,
-        on_retry=on_retry_num if attempt_num >= 2 and on_retry else None,
         session=session,
         target=target,
         wait_s=wait_s,
@@ -2121,18 +2280,29 @@ async def retry_binary_req(
 
     while max_attempts == 0 or attempt < max_attempts:
         attempt = attempt_num if single else attempt + 1
+        audit_id: int | None = None
         if session is not None and not await session.ensure_companion_connected(log=log):
             log.step(f"{label}: aborted — companion not connected")
             break
-        if target is not None and attempt >= 2 and on_retry is not None:
-            await on_retry(attempt)
         if target is not None:
+            await reset_to_flood(client, target, log=log)
             log_contact_path(client, target, log=log)
         n_of = attempt_label(attempt, label_cap)
         dest_wait = wait_s
+        path = "flood"
         if session is not None and target is not None:
             dest_wait = session.stretch_wait(wait_s, target.unit_id, cap=cap or 0.0)
+            path = audit_path_at_send(client, target)
         log.step(f"send binary {label} {n_of} (≤{dest_wait:.0f}s) …")
+        audit_id = _audit_begin(
+            session,
+            unit=target.unit_id if target else "",
+            kind="binary",
+            label=label,
+            attempt=attempt,
+            path=path,
+            wait_s=dest_wait,
+        ) if target is not None else None
         inflight = None
         if session is not None and target is not None:
             inflight = session.begin_binary(
@@ -2141,6 +2311,7 @@ async def retry_binary_req(
                 pubkey_prefix=target.pubkey_hex,
                 n_of=n_of,
                 deadline=time.monotonic() + max(dest_wait, 8.0) + 1.0,
+                audit_id=audit_id,
             )
         result = None
         try:
@@ -2149,9 +2320,17 @@ async def retry_binary_req(
             if session is not None and inflight is not None:
                 session.end_binary(inflight, resolved=ok(result))
         if ok(result):
+            _audit_finish(
+                session,
+                audit_id,
+                ok=True,
+                outcome="ok",
+                reply=_audit_binary_reply(result),
+            )
             if attempt > 1:
                 log.detail(f"{label} succeeded on {n_of}")
             return result
+        _audit_finish(session, audit_id, ok=False, outcome="timeout")
         if single or (attempts and attempt >= attempts):
             log.step(f"{label} {n_of}: no response")
             break
@@ -2362,9 +2541,6 @@ async def poll_one(
 
         wait_cap = mesh_wait_seconds(6000, cap=cmd_timeout)
 
-        async def flood_on_retry(_attempt: int) -> None:
-            await reset_to_flood(client, target, log=log)
-
         if "status" in polled:
             status = await pull_repeater_status(
                 client,
@@ -2409,7 +2585,6 @@ async def poll_one(
                 client=client,
                 attempts=attempts,
                 log=log,
-                on_retry=flood_on_retry,
                 session=session,
                 target=target,
                 wait_s=wait_cap,
@@ -2431,7 +2606,6 @@ async def poll_one(
                 client=client,
                 attempts=attempts,
                 log=log,
-                on_retry=flood_on_retry,
                 session=session,
                 target=target,
                 wait_s=wait_cap,
@@ -2468,7 +2642,6 @@ async def poll_one(
                 client=client,
                 attempts=attempts,
                 log=log,
-                on_retry=flood_on_retry,
                 session=session,
                 target=target,
                 wait_s=wait_cap,

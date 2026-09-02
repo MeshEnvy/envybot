@@ -41,7 +41,6 @@ from envybot.radio import (
     maybe_sync_repeater_clock,
     mesh_wait_seconds,
     normalize_acl_payload,
-    reset_to_flood,
     retry_binary_req,
     send_cmd_sync,
     set_book_coord,
@@ -638,9 +637,6 @@ async def apply_one(
         if heard_acl is None:
             wait_cap = mesh_wait_seconds(6000, cap=cmd_timeout)
 
-            async def flood_on_retry(_attempt: int) -> None:
-                await reset_to_flood(client, target, log=log)
-
             acl_raw = await retry_binary_req(
                 "GET_ACL",
                 lambda dest_wait: client.commands.req_acl_sync(
@@ -649,7 +645,6 @@ async def apply_one(
                 client=client,
                 attempts=attempts,
                 log=log,
-                on_retry=flood_on_retry,
                 session=session,
                 target=target,
                 wait_s=wait_cap,

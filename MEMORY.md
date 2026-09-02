@@ -21,7 +21,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/keys_doc.py` | `keys.yaml` people + `trust` role resolve |
 | `src/envybot/channels_doc.py` | `channels.yaml` catalog + companion slot planner |
 | `src/envybot/nodes_doc.py` | Desired `nodes.yaml` load/write/migrate |
-| `src/envybot/history.py` | `data/fleet/history.sqlite` |
+| `src/envybot/history.py` | `data/fleet/history.sqlite` (+ `mesh_audit` per send) |
 | `src/envybot/health.py` | Per-node health checks (snapshot + UI grade) |
 | `src/envybot/position.py` | Book GPS from `sites.yaml` (`node:` bind + `loc`) |
 | `src/envybot/sun.py` | Clear-sky elev: ☀️/🌙 + 72h elevation sparkline |
@@ -89,7 +89,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   unit per turn, then rotates to the least-recently-served ready lane. Timeout
   parks that unit's head job; other lanes keep sending. `--attempts` is the
   per-command retry cap (scheduler-owned); logs show `N/max` not `N/1`.
-  Neighbor discover wait (default 12s) is a background timer, not radio hold.
+  Every mesh send resets companion out_path to flood first (`mesh_audit.path`
+  should read `flood`; hop strings indicate a firmware leak). Neighbor discover wait (default 12s) is a background timer, not radio hold.
   Manual Refresh/Pull/Push bump **one** command for that unit, then it rejoins
   rotation. Sqlite stamps incrementally per successful GET/SET. Apply GETs ACL when
   due to drop extras. Any due SET failure aborts the rest for that unit this

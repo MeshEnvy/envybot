@@ -69,9 +69,11 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
   least-recently-served among ready lanes. No inventory priority.
 - `--attempts` (default 10) caps retries **per command** at the scheduler.
   Logs show scheduler `N/max` (e.g. `8/10`), not inner one-shot `N/1`.
-  Attempt 2+ still resets to flood on that destination. `--retry-delay` /
+  Every mesh send resets companion out_path to flood first. `--retry-delay` /
   `--round-delay` control backoff between retries. On drop: `gave up after N,
   continuing`; on unit done with gaps: `partial OK`.
+- Per-attempt mesh audit rows land in sqlite `mesh_audit` (unit, kind, label,
+  path, wait, outcome, reply snippet). Query the book DB; no UI yet.
 - UI Refresh/Pull/Push enqueue onto the same dispatcher (one command bump).
 - Sqlite updates incrementally after each successful GET group or SET field.
 

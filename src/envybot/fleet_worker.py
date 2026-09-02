@@ -51,7 +51,6 @@ from envybot.radio import (
     parse_get_value,
     parse_int_get_value,
     pull_repeater_status,
-    reset_to_flood,
     send_cmd_once,
     set_book_coord,
     set_dutycycle_policy,
@@ -379,7 +378,7 @@ async def execute_job(
             acc.node_clock = clock
             uq.session_extra["login_clock"] = clock
             return JobOutcome.HEARD, clock
-        if err and "rejected" in (err or "").lower():
+        if err and "rejected" in str(err).lower():
             return JobOutcome.HARD_FAIL, err
         return JobOutcome.TIMEOUT, err
 
@@ -505,9 +504,6 @@ async def pull_repeater_status_once(
 ) -> dict[str, Any] | None:
     wait_cap = mesh_wait_seconds(6000, cap=ctx.cmd_timeout)
 
-    async def flood_on_retry() -> None:
-        await reset_to_flood(ctx.client, target, log=ctx.log)
-
     raw = await binary_req_once(
         "GET_STATUS",
         lambda dest_wait: ctx.client.commands.req_status_sync(
@@ -521,7 +517,6 @@ async def pull_repeater_status_once(
         cap=ctx.cmd_timeout,
         attempt_num=attempt_num,
         attempt_cap=attempt_cap,
-        on_retry=flood_on_retry if attempt_num >= 2 else None,
     )
     from envybot.radio import normalize_status_payload
 
