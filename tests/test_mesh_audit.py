@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -16,8 +17,11 @@ from envybot.history import (
     open_history,
 )
 from envybot.radio import (
+    FleetSession,
     PollLog,
     RouterTarget,
+    _audit_begin,
+    _audit_finish,
     audit_path_at_send,
     log_contact_path,
     reset_to_flood,
@@ -89,6 +93,82 @@ class MeshAuditTests(unittest.TestCase):
             self.assertEqual(row["ok"], 1)
             self.assertIsNotNone(row["ts_reply"])
             self.assertIn("UTC", row["reply"] or "")
+
+    def test_password_cli_label_and_reply_redacted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            session = FleetSession()
+            session.conn = conn
+            aid = _audit_begin(
+                session,
+                unit="ME0001",
+                kind="cli",
+                label="set guest.password hunter2",
+                attempt=1,
+                path="flood",
+                wait_s=8.0,
+            )
+            assert aid is not None
+            _audit_finish(
+                session,
+                aid,
+                ok=True,
+                outcome="ok",
+                reply="password now: hunter2",
+            )
+            row = _row(conn, aid)
+            self.assertEqual(row["label"], "[redacted]")
+            self.assertEqual(row["reply"], "[redacted]")
+            aid2 = _audit_begin(
+                session,
+                unit="ME0001",
+                kind="cli",
+                label="get name",
+                attempt=1,
+                path="flood",
+                wait_s=8.0,
+            )
+            assert aid2 is not None
+            self.assertEqual(_row(conn, aid2)["label"], "get name")
+
+    def test_late_orphan_cli_reply_redacted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            session = FleetSession()
+            session.conn = conn
+            session._orphan_log = PollLog()
+            aid = _audit_begin(
+                session,
+                unit="ME0001",
+                kind="cli",
+                label="password AdminOneStrong1",
+                attempt=1,
+                path="flood",
+                wait_s=8.0,
+            )
+            assert aid is not None
+            finish_mesh_audit(conn, aid, ok=False, outcome="timeout")
+            exp = session.track_expect(
+                kind="cli",
+                label="password",
+                unit="ME0001",
+                pubkey_prefix="aabbccddeeff",
+                deadline=time.monotonic() - 1,
+                n_of="1/1",
+            )
+            exp.audit_id = aid
+            event = MagicMock()
+            event.payload = {
+                "text": "password now: hunter2",
+                "pubkey_prefix": "aabbccddeeff",
+            }
+            event.attributes = {"pubkey_prefix": "aabbccddeeff"}
+            session._note_orphan("cli", event)
+            row = _row(conn, aid)
+            self.assertEqual(row["outcome"], "late")
+            self.assertEqual(row["reply"], "[redacted]")
+            self.assertNotIn("hunter2", row["reply"] or "")
+            self.assertEqual(row["label"], "[redacted]")
 
 
 class ResetToFloodTests(unittest.IsolatedAsyncioTestCase):

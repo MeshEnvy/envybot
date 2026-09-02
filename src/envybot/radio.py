@@ -421,18 +421,21 @@ class FleetSession:
             exp = stale[0]
             late = now - exp.deadline
             extra = ""
+            audit_reply = None
             if kind == "cli" and isinstance(event.payload, dict):
                 raw = str(event.payload.get("text") or "")
-                extra = f" {raw[:40]!r}" if raw else ""
+                if raw:
+                    audit_reply = _audit_redact(raw, max_len=40)
+                    extra = f" {audit_reply!r}"
             elif kind == "binary" and exp.binary_tag:
                 extra = f" tag={exp.binary_tag}"
+                audit_reply = extra.strip()
             log.step(
                 f"orphan: {exp.unit} late {exp.label} {exp.n_of} "
                 f"+{late:.1f}s after timeout{extra}"
             )
             if self.conn is not None and exp.audit_id is not None:
-                snippet = extra.strip() if extra else None
-                mark_mesh_audit_late(self.conn, exp.audit_id, reply=snippet)
+                mark_mesh_audit_late(self.conn, exp.audit_id, reply=audit_reply)
             exp.resolved = True
             self._raise_dest_wait(exp.unit, late, log)
             return
@@ -1445,7 +1448,7 @@ def _audit_begin(
         session.conn,
         unit=unit,
         kind=kind,
-        label=label,
+        label=_audit_redact(label) if label else label,
         attempt=attempt,
         path=path,
         wait_s=wait_s,
