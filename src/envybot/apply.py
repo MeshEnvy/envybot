@@ -6,7 +6,7 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from envybot.history import clear_apply_stamps, get_last_seen, insert_apply, last_ok_apply
 from envybot.keys_doc import (
@@ -305,6 +305,9 @@ def stamp_profile_after_trust(
     return True
 
 
+SetSend = Literal["ok", "timeout", "error"]
+
+
 async def _set_cli(
     client: MeshCore,
     target: RouterTarget,
@@ -316,7 +319,9 @@ async def _set_cli(
     session: FleetSession | None,
     field: str,
     expected: str | None = None,
-) -> bool:
+    attempt_num: int | None = None,
+    attempt_cap: int | None = None,
+) -> SetSend:
     raw = await send_cmd_sync(
         client,
         target,
@@ -325,19 +330,21 @@ async def _set_cli(
         attempts=attempts,
         log=log,
         session=session,
+        attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
     )
     if raw is None:
         log.step(f"{field}: no response")
-        return False
+        return "timeout"
     if field == "admin":
         ok_reply = cli_admin_password_ok(raw, expected)
     else:
         ok_reply = cli_set_ok(raw)
     if cli_error_reply(raw) or not ok_reply:
         log.step(f"{field}: set failed ({raw.strip()[:40]})")
-        return False
+        return "error"
     log.step(f"{field} set OK")
-    return True
+    return "ok"
 
 
 def _ensure_guest_password(node: dict[str, Any], doc: dict[str, Any], key: str) -> str:
@@ -354,10 +361,11 @@ async def _apply_acl(
     attempts: int,
     log: PollLog,
     session: FleetSession | None,
-) -> bool:
-    ok = True
+    attempt_num: int | None = None,
+    attempt_cap: int | None = None,
+) -> SetSend:
     for op in plan_acl_ops(want, heard):
-        if not await _set_cli(
+        result = await _set_cli(
             client,
             target,
             f"setperm {op.key} {op.perm}",
@@ -366,9 +374,12 @@ async def _apply_acl(
             log=log,
             session=session,
             field=op.label,
-        ):
-            ok = False
-    return ok
+            attempt_num=attempt_num,
+            attempt_cap=attempt_cap,
+        )
+        if result != "ok":
+            return result
+    return "ok"
 
 
 async def apply_one(
@@ -431,7 +442,7 @@ async def apply_one(
             log=log,
             session=session,
             field="name",
-        ):
+        ) == "ok":
             stamp("name")
         else:
             return abort("name")
@@ -472,7 +483,7 @@ async def apply_one(
                     cmd_timeout=cmd_timeout,
                     attempts=attempts,
                     log=log, session=session, field="advert",
-                ):
+                ) == "ok":
                     stamp("advert")
                 else:
                     return abort("advert")
@@ -485,7 +496,7 @@ async def apply_one(
                     cmd_timeout=cmd_timeout,
                     attempts=attempts,
                     log=log, session=session, field="flood_advert",
-                ):
+                ) == "ok":
                     stamp("flood")
                 else:
                     return abort("flood")
@@ -500,7 +511,7 @@ async def apply_one(
                     cmd_timeout=cmd_timeout,
                     attempts=attempts,
                     log=log, session=session, field="guest",
-                ):
+                ) == "ok":
                     stamp("guest")
                 else:
                     return abort("guest")
@@ -537,7 +548,7 @@ async def apply_one(
                 cmd_timeout=cmd_timeout,
                 attempts=attempts,
                 log=log, session=session, field="advert",
-            ):
+            ) == "ok":
                 stamp("advert")
             else:
                 return abort("advert")
@@ -549,7 +560,7 @@ async def apply_one(
                 cmd_timeout=cmd_timeout,
                 attempts=attempts,
                 log=log, session=session, field="flood_advert",
-            ):
+            ) == "ok":
                 stamp("flood")
             else:
                 return abort("flood")
@@ -562,7 +573,7 @@ async def apply_one(
                 cmd_timeout=cmd_timeout,
                 attempts=attempts,
                 log=log, session=session, field="guest",
-            ):
+            ) == "ok":
                 stamp("guest")
             else:
                 return abort("guest")
@@ -579,7 +590,7 @@ async def apply_one(
                 attempts=attempts,
                 log=log, session=session, field="admin",
                 expected=admin_pw,
-            ):
+            ) == "ok":
                 stamp("admin")
             else:
                 return abort("admin")
@@ -656,7 +667,7 @@ async def apply_one(
             cmd_timeout=cmd_timeout,
             attempts=attempts,
             log=log, session=session,
-        ):
+        ) == "ok":
             stamp("acl")
         else:
             return abort("acl")

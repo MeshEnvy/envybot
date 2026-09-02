@@ -424,10 +424,15 @@ async def run(args: argparse.Namespace) -> int:
 
         prev = session_states.get(target.key) or {}
         due = list(getattr(target, "due_groups", []))
+        apply_job = str(job.kind).startswith("apply:")
         if prev.get("state") == "paused":
             pass
-        elif outcome == JobOutcome.HARD_FAIL or (
-            outcome == JobOutcome.TIMEOUT and not uq.jobs
+        elif (
+            not apply_job
+            and (
+                outcome == JobOutcome.HARD_FAIL
+                or (outcome == JobOutcome.TIMEOUT and not uq.jobs)
+            )
         ):
             session_states[target.key] = {
                 "state": "unreachable",
@@ -463,6 +468,12 @@ async def run(args: argparse.Namespace) -> int:
         else:
             session_states[target.key] = {"state": "ok", "due_groups": []}
             dropped = uq.session_extra.get("dropped_jobs") or []
+            if (
+                not args.quiet
+                and apply_job
+                and outcome in (JobOutcome.HARD_FAIL, JobOutcome.TIMEOUT)
+            ):
+                print(f"  apply aborted: {payload}")
             if not args.quiet and job.kind != "get:neighbors_wait":
                 acc = uq.session_extra.get("poll_acc")
                 if acc is not None:

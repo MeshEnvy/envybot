@@ -97,8 +97,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Manual Refresh/Pull/Push always replace that unit's remaining jobs and
   stay at the front of the radio until that click finishes. A click mid-GET
   supersedes the in-flight result (does not pop the new head). Sqlite stamps incrementally per successful GET/SET. Apply GETs ACL when
-  due to drop extras. Any due SET failure aborts the rest for that unit this
-  pass. Poll and apply password-login every MeshCore unit. Live RTC from login
+  due to drop extras. A SET timeout parks and retries. A SET CLI error or
+  exhausted `--attempts` abort remaining SET jobs this pass (GET stays).
+  Poll and apply password-login every MeshCore unit. Live RTC from login
   timestamp or ``clock`` CLI.
 - Duty-cycle default is 100% (`nodes.yaml` `dutycycle` overrides).
   `set dutycycle` needs MeshCore 1.15+; older 1.x uses `set af`.
@@ -141,10 +142,9 @@ Separate USB OTA repeater for `motatool serve`.
   Map pins color by last-heard age (green→red over 24h); labels include
   `(3h)` and tick from `last_heard` + store clock.
   In-flight cards show the current job stage (Logging in, Fetching ACL, …).
-  `unreachable` is only after the scheduler gives up
-  (`--attempts`) or a hard fail. A login timeout parks the unit and keeps
-  the stage.
+  `unreachable` is only after login/GET give up (`--attempts`) or a hard
+  fail. A login or SET timeout parks the unit and keeps the stage.
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-01
+Last updated: 2026-09-02

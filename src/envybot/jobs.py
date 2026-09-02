@@ -60,6 +60,21 @@ JobStartFn = Callable[[UnitQueue, RadioJob], Awaitable[None]] | None
 JobDoneFn = Callable[[UnitQueue, RadioJob, JobOutcome, Any | None], Awaitable[None]] | None
 
 
+def drop_remaining_apply(uq: UnitQueue) -> list[str]:
+    """Drop queued SET jobs after a hard apply fail or exhausted retries."""
+    dropped: list[str] = []
+    kept: list[RadioJob] = []
+    for job in uq.jobs:
+        if job.kind.startswith("apply:"):
+            dropped.append(job.kind)
+        else:
+            kept.append(job)
+    uq.jobs.clear()
+    uq.jobs.extend(kept)
+    uq.apply_aborted = True
+    return dropped
+
+
 @dataclass
 class FleetScheduler:
     """Swim-lane scheduler: one radio command per unit per turn, then rotate."""
@@ -213,10 +228,14 @@ class FleetScheduler:
                     uq.manual = False
                     uq.manual_job = None
         elif outcome == JobOutcome.HARD_FAIL:
-            uq.jobs.clear()
             if job.future and not job.future.done():
                 job.future.set_exception(RuntimeError(str(payload or "hard fail")))
-            uq.apply_aborted = True
+            if job.kind.startswith("apply:"):
+                uq.jobs.popleft()
+                drop_remaining_apply(uq)
+            else:
+                uq.jobs.clear()
+                uq.apply_aborted = True
         else:
             job.attempt += 1
             if self.max_attempts and job.attempt >= self.max_attempts:
@@ -230,6 +249,10 @@ class FleetScheduler:
                     )
                 if job.kind == "login":
                     uq.jobs.clear()
+                elif job.kind.startswith("apply:"):
+                    extra = drop_remaining_apply(uq)
+                    if isinstance(dropped, list):
+                        dropped.extend(extra)
             else:
                 uq.backoff_until = time.monotonic() + self.retry_delay
 

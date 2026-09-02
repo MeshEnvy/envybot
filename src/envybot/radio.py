@@ -1134,6 +1134,8 @@ async def set_path_hash_policy(
     log: PollLog,
     session: FleetSession | None = None,
     mode: int | None = None,
+    attempt_num: int | None = None,
+    attempt_cap: int | None = None,
 ) -> int | None:
     """``set path.hash.mode`` (default 1 = 2-byte). Stamp on OK."""
     want = FLEET_PATH_HASH_MODE if mode is None else int(mode)
@@ -1145,6 +1147,8 @@ async def set_path_hash_policy(
         attempts=attempts,
         log=log,
         session=session,
+        attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
     )
     if raw is None:
         log.step("path.hash: no response")
@@ -1169,6 +1173,8 @@ async def set_dutycycle_policy(
     session: FleetSession | None = None,
     firmware_version: str | None = None,
     pct: float | None = None,
+    attempt_num: int | None = None,
+    attempt_cap: int | None = None,
 ) -> float | None:
     """``set dutycycle``, or ``set af`` on MeshCore <1.15. Stamp on OK."""
     want_pct = FLEET_DUTYCYCLE_PCT if pct is None else float(pct)
@@ -1184,6 +1190,8 @@ async def set_dutycycle_policy(
             attempts=attempts,
             log=log,
             session=session,
+            attempt_num=attempt_num,
+            attempt_cap=attempt_cap,
         )
         if raw is None:
             log.step("dutycycle: no response")
@@ -1209,6 +1217,8 @@ async def set_dutycycle_policy(
         attempts=attempts,
         log=log,
         session=session,
+        attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
     )
     if raw is None:
         log.step("dutycycle af: no response")
@@ -1237,6 +1247,8 @@ async def set_book_coord(
     attempts: int,
     log: PollLog,
     session: FleetSession | None = None,
+    attempt_num: int | None = None,
+    attempt_cap: int | None = None,
 ) -> float | None:
     """``set lat|lon <book>``. Stamp on OK. Never GET."""
     raw = await send_cmd_sync(
@@ -1247,6 +1259,8 @@ async def set_book_coord(
         attempts=attempts,
         log=log,
         session=session,
+        attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
     )
     if raw is None:
         log.step(f"{axis}: no response")

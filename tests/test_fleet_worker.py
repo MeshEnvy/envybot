@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from envybot.fleet_worker import PollAccumulator
+from envybot.fleet_worker import PollAccumulator, WorkerContext, _execute_apply
 from envybot.history import open_history, source_histories
+from envybot.jobs import JobOutcome, RadioJob, UnitQueue
+from envybot.radio import PollLog, RouterTarget
 
 
 class RecordGroupTests(unittest.TestCase):
@@ -42,6 +46,75 @@ class RecordGroupTests(unittest.TestCase):
             hist = source_histories(conn, "me0001", hours=72, limit=10)
             self.assertEqual(len(hist["status"]), 1)
             self.assertNotIn("delta_packets_recv", hist["status"][0])
+
+
+class ApplyTimeoutTests(unittest.IsolatedAsyncioTestCase):
+    def _ctx(self, tmp: str, node: dict) -> WorkerContext:
+        return WorkerContext(
+            client=MagicMock(),
+            conn=open_history(Path(tmp)),
+            nodes={"me0048": node},
+            sites={},
+            doc={"nodes": {"me0048": node}},
+            keys={},
+            session=MagicMock(),
+            log=PollLog(progress=False),
+            cmd_timeout=9.0,
+            login_timeout=11.0,
+            discover_wait=0.0,
+            skip_discover=True,
+            do_poll=False,
+            do_apply=True,
+        )
+
+    async def test_set_timeout_does_not_abort_queue(self) -> None:
+        target = RouterTarget(
+            key="me0048",
+            unit_id="ME0048",
+            name="ME0048",
+            site=None,
+            pubkey_hex="aa" * 32,
+            admin_password="AdminOneStrong1",
+        )
+        node = {
+            "guest_password": "GuestOneStrong1",
+            "admin_password": "AdminOneStrong1",
+        }
+        job = RadioJob(kind="apply:advert", unit_key="me0048")
+        flood = RadioJob(kind="apply:flood", unit_key="me0048")
+        uq = UnitQueue(target=target, jobs=deque([job, flood]))
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = self._ctx(tmp, node)
+            with patch("envybot.fleet_worker._set_cli", new=AsyncMock(return_value="timeout")):
+                outcome, payload = await _execute_apply(job, uq, ctx, node, 1)
+        self.assertEqual(outcome, JobOutcome.TIMEOUT)
+        self.assertEqual(payload, "advert")
+        self.assertFalse(uq.apply_aborted)
+        self.assertEqual([j.kind for j in uq.jobs], ["apply:advert", "apply:flood"])
+
+    async def test_set_cli_error_hard_fails_without_clearing(self) -> None:
+        target = RouterTarget(
+            key="me0048",
+            unit_id="ME0048",
+            name="ME0048",
+            site=None,
+            pubkey_hex="aa" * 32,
+            admin_password="AdminOneStrong1",
+        )
+        node = {
+            "guest_password": "GuestOneStrong1",
+            "admin_password": "AdminOneStrong1",
+        }
+        job = RadioJob(kind="apply:advert", unit_key="me0048")
+        flood = RadioJob(kind="apply:flood", unit_key="me0048")
+        uq = UnitQueue(target=target, jobs=deque([job, flood]))
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = self._ctx(tmp, node)
+            with patch("envybot.fleet_worker._set_cli", new=AsyncMock(return_value="error")):
+                outcome, payload = await _execute_apply(job, uq, ctx, node, 1)
+        self.assertEqual(outcome, JobOutcome.HARD_FAIL)
+        self.assertEqual(payload, "advert")
+        self.assertEqual([j.kind for j in uq.jobs], ["apply:advert", "apply:flood"])
 
 
 if __name__ == "__main__":

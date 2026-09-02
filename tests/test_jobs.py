@@ -176,6 +176,56 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
         await sched.run(execute, on_job_done=on_done, once=True)
         self.assertEqual(remaining, [1, 0])
 
+    async def test_apply_timeout_retries_then_drops_remaining_sets(self) -> None:
+        sched = FleetScheduler(max_attempts=2, retry_delay=0.0)
+        t = _target()
+        sched.enqueue_jobs(
+            t,
+            [
+                RadioJob(kind="apply:advert", unit_key="me0001"),
+                RadioJob(kind="apply:flood", unit_key="me0001"),
+                RadioJob(kind="get:status", unit_key="me0001"),
+            ],
+        )
+        kinds: list[str] = []
+
+        async def execute(job: RadioJob, uq: UnitQueue) -> tuple[JobOutcome, object | None]:
+            kinds.append(job.kind)
+            if job.kind == "apply:advert":
+                return JobOutcome.TIMEOUT, "advert"
+            return JobOutcome.HEARD, None
+
+        await sched.run(execute, once=True)
+        uq = sched.units["me0001"]
+        self.assertEqual(kinds, ["apply:advert", "apply:advert", "get:status"])
+        self.assertFalse(uq.jobs)
+        self.assertTrue(uq.apply_aborted)
+        self.assertIn("apply:advert", uq.session_extra.get("dropped_jobs") or [])
+        self.assertIn("apply:flood", uq.session_extra.get("dropped_jobs") or [])
+
+    async def test_apply_hard_fail_keeps_get_jobs(self) -> None:
+        sched = FleetScheduler(max_attempts=10, retry_delay=0.0)
+        t = _target()
+        sched.enqueue_jobs(
+            t,
+            [
+                RadioJob(kind="apply:advert", unit_key="me0001"),
+                RadioJob(kind="apply:flood", unit_key="me0001"),
+                RadioJob(kind="get:status", unit_key="me0001"),
+            ],
+        )
+        kinds: list[str] = []
+
+        async def execute(job: RadioJob, uq: UnitQueue) -> tuple[JobOutcome, object | None]:
+            kinds.append(job.kind)
+            if job.kind.startswith("apply:"):
+                return JobOutcome.HARD_FAIL, "advert"
+            return JobOutcome.HEARD, None
+
+        await sched.run(execute, once=True)
+        self.assertEqual(kinds, ["apply:advert", "get:status"])
+        self.assertTrue(sched.units["me0001"].apply_aborted)
+
     async def test_max_attempts_drops_job(self) -> None:
         sched = FleetScheduler(max_attempts=2, retry_delay=0.0)
         t = _target()

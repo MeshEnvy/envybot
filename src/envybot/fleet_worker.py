@@ -19,6 +19,7 @@ from envybot.apply import (
     radio_apply_due_fields,
 )
 from envybot.apply import (
+    SetSend,
     _apply_acl,
     _ensure_guest_password,
     _set_cli,
@@ -679,74 +680,84 @@ async def _execute_apply(
         return JobOutcome.HEARD, clock
 
     public = is_public(node)
-    ok = False
+    attempt_cap = _attempt_cap(ctx)
+    send: SetSend = "timeout"
 
     if field == "name":
         name = public_radio_name(target.key, node, ctx.sites) if public else MASK_NAME
-        ok = await _set_cli(
+        send = await _set_cli(
             ctx.client, target, f"set name {name}",
-            cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session, field="name",
+            cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
+            field="name", attempt_num=attempt_num, attempt_cap=attempt_cap,
         )
     elif field == "lat":
         val = float(resolve_book_position(node, ctx.sites, key=target.key)["lat"]) if public and resolve_book_position(node, ctx.sites, key=target.key) else 0.0
-        ok = await set_book_coord(
+        send = "ok" if await set_book_coord(
             ctx.client, target, "lat", val,
             cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
-        ) is not None
+            attempt_num=attempt_num, attempt_cap=attempt_cap,
+        ) is not None else "timeout"
     elif field == "lon":
         val = float(resolve_book_position(node, ctx.sites, key=target.key)["lon"]) if public and resolve_book_position(node, ctx.sites, key=target.key) else 0.0
-        ok = await set_book_coord(
+        send = "ok" if await set_book_coord(
             ctx.client, target, "lon", val,
             cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
-        ) is not None
+            attempt_num=attempt_num, attempt_cap=attempt_cap,
+        ) is not None else "timeout"
     elif field == "advert":
         if public and node.get("advert_interval_min") is not None:
             cmd = f"set advert.interval {int(node['advert_interval_min'])}"
         else:
             cmd = "set advert.interval 0"
-        ok = await _set_cli(
+        send = await _set_cli(
             ctx.client, target, cmd,
-            cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session, field="advert",
+            cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
+            field="advert", attempt_num=attempt_num, attempt_cap=attempt_cap,
         )
     elif field == "flood":
         if public and node.get("flood_advert_interval_h") is not None:
             cmd = f"set flood.advert.interval {int(node['flood_advert_interval_h'])}"
         else:
             cmd = "set flood.advert.interval 0"
-        ok = await _set_cli(
+        send = await _set_cli(
             ctx.client, target, cmd,
-            cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session, field="flood_advert",
+            cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
+            field="flood_advert", attempt_num=attempt_num, attempt_cap=attempt_cap,
         )
     elif field == "guest":
         guest = _ensure_guest_password(node, ctx.doc, target.key)
-        ok = await _set_cli(
+        send = await _set_cli(
             ctx.client, target, f"set guest.password {guest}",
-            cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session, field="guest",
+            cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
+            field="guest", attempt_num=attempt_num, attempt_cap=attempt_cap,
         )
     elif field == "admin":
         admin = node.get("admin_password")
         if password_is_strong(admin):
             admin_pw = normalize_password(admin)
-            ok = await _set_cli(
+            send = await _set_cli(
                 ctx.client, target, f"password {admin_pw}",
                 cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
                 field="admin", expected=admin_pw,
+                attempt_num=attempt_num, attempt_cap=attempt_cap,
             )
         else:
-            ok = True
+            send = "ok"
     elif field == "path_hash":
-        ok = await set_path_hash_policy(
+        send = "ok" if await set_path_hash_policy(
             ctx.client, target, cmd_timeout=ctx.cmd_timeout, attempts=1,
             log=ctx.log, session=ctx.session, mode=desired_path_hash_mode(node),
-        ) is not None
+            attempt_num=attempt_num, attempt_cap=attempt_cap,
+        ) is not None else "timeout"
     elif field == "dutycycle":
         acc = _poll_acc(uq)
         fw = acc.fw or node.get("firmware_version")
-        ok = await set_dutycycle_policy(
+        send = "ok" if await set_dutycycle_policy(
             ctx.client, target, cmd_timeout=ctx.cmd_timeout, attempts=1,
             log=ctx.log, session=ctx.session,
             firmware_version=fw, pct=float(desired_dutycycle(node)),
-        ) is not None
+            attempt_num=attempt_num, attempt_cap=attempt_cap,
+        ) is not None else "timeout"
     elif field == "acl":
         try:
             want = resolve_node_acl(ctx.doc, node, ctx.keys or {})
@@ -770,19 +781,21 @@ async def _execute_apply(
                 wait_s=wait_cap,
                 cap=ctx.cmd_timeout,
                 attempt_num=attempt_num,
+                attempt_cap=attempt_cap,
             )
             heard = normalize_acl_payload(acl_raw)
             if heard is None:
                 return JobOutcome.TIMEOUT, None
             uq.session_extra["heard_acl"] = heard
-        ok = await _apply_acl(
+        send = await _apply_acl(
             ctx.client, target, want, heard,
             cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
+            attempt_num=attempt_num, attempt_cap=attempt_cap,
         )
     else:
         return JobOutcome.HARD_FAIL, field
 
-    if ok:
+    if send == "ok":
         stamp_key = "flood" if field == "flood" else field
         if stamp_key in applicable:
             stamp(stamp_key)
@@ -792,9 +805,10 @@ async def _execute_apply(
                 stamp("identity")
         return JobOutcome.HEARD, True
 
-    uq.apply_aborted = True
-    ctx.log.step(f"apply aborted: {field} unreachable")
-    uq.jobs.clear()
+    if send == "timeout":
+        return JobOutcome.TIMEOUT, field
+
+    ctx.log.step(f"apply aborted: {field}")
     return JobOutcome.HARD_FAIL, field
 
 

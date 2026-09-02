@@ -68,7 +68,7 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
   (backoff, retry on its next turn) while other lanes keep sending. The UI
   badge stays on the current job stage (Logging in, Fetching ACL, …) while the
   unit is queued or retrying. `unreachable` only after `--attempts` is exhausted
-  (or a hard fail).
+  on login/GET (or a hard fail). A SET timeout is not unreachable.
 - Pick order: a manual Refresh/Pull/Push stays at the front until that
   click finishes, then least-recently-served among ready lanes. No inventory
   priority. Two manuals interleave with each other.
