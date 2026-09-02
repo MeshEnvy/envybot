@@ -1,4 +1,4 @@
-import { createApp, computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { createApp, computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { connectEvents, fetchFleet, fetchPolls, patchUnit, pullUnit, pushUnit, refreshUnit } from './api.js'
 import {
   clearHistories,
@@ -49,6 +49,38 @@ const App = {
     const aliasEditing = ref(false)
     const notesEditing = ref(false)
     const historyHours = 72
+    const LOG_PAGE = 10
+    const logShown = reactive({
+      status: LOG_PAGE,
+      telemetry: LOG_PAGE,
+      neighbors: LOG_PAGE,
+      acl: LOG_PAGE,
+    })
+
+    function resetLogShown() {
+      logShown.status = LOG_PAGE
+      logShown.telemetry = LOG_PAGE
+      logShown.neighbors = LOG_PAGE
+      logShown.acl = LOG_PAGE
+    }
+
+    /** @param {'status' | 'telemetry' | 'neighbors' | 'acl'} source */
+    function logSlice(source) {
+      const list = unitHistory.value?.[source]
+      if (!Array.isArray(list)) return []
+      return list.slice(0, logShown[source])
+    }
+
+    /** @param {'status' | 'telemetry' | 'neighbors' | 'acl'} source */
+    function logHasMore(source) {
+      const list = unitHistory.value?.[source]
+      return Array.isArray(list) && list.length > logShown[source]
+    }
+
+    /** @param {'status' | 'telemetry' | 'neighbors' | 'acl'} source */
+    function loadMoreLog(source) {
+      logShown[source] += LOG_PAGE
+    }
 
     const METRIC_ROWS = [
       { key: 'sun', label: 'Sun', stroke: '#f5c14a', wave: true },
@@ -302,6 +334,7 @@ const App = {
     watch(selectedKey, () => {
       aliasEditing.value = false
       notesEditing.value = false
+      resetLogShown()
       syncBookDrafts(selectedUnit.value)
     })
 
@@ -474,6 +507,9 @@ const App = {
       formatPollTemp,
       voltageStock,
       tempStock,
+      logSlice,
+      logHasMore,
+      loadMoreLog,
       sunEmoji,
       sunElev,
       sunTitle,
@@ -754,8 +790,8 @@ const App = {
             </div>
           </section>
           <section v-if="unitHistory?.status?.length" class="poll-log-section">
-            <details class="poll-log" open>
-              <summary>Status · {{ unitHistory.status.length }}</summary>
+            <div class="poll-log">
+              <h3>Status · {{ unitHistory.status.length }}</h3>
               <table class="poll-table">
                 <thead>
                   <tr>
@@ -768,7 +804,7 @@ const App = {
                 </thead>
                 <tbody>
                   <tr
-                    v-for="(row, pi) in unitHistory.status"
+                    v-for="(row, pi) in logSlice('status')"
                     :key="'st-' + pi"
                     :class="{ 'poll-reboot': row.reboot }"
                   >
@@ -805,11 +841,19 @@ const App = {
                   </tr>
                 </tbody>
               </table>
-            </details>
+              <button
+                v-if="logHasMore('status')"
+                type="button"
+                class="load-more"
+                @click="loadMoreLog('status')"
+              >
+                Load more
+              </button>
+            </div>
           </section>
           <section v-if="unitHistory?.telemetry?.length" class="poll-log-section">
-            <details class="poll-log">
-              <summary>Telemetry · {{ unitHistory.telemetry.length }}</summary>
+            <div class="poll-log">
+              <h3>Telemetry · {{ unitHistory.telemetry.length }}</h3>
               <table class="poll-table">
                 <thead>
                   <tr>
@@ -821,7 +865,7 @@ const App = {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(row, pi) in unitHistory.telemetry" :key="'te-' + pi">
+                  <tr v-for="(row, pi) in logSlice('telemetry')" :key="'te-' + pi">
                     <td>{{ formatRelative(row.ts, fleet.now) }}</td>
                     <td>
                       <span
@@ -861,11 +905,19 @@ const App = {
                   </tr>
                 </tbody>
               </table>
-            </details>
+              <button
+                v-if="logHasMore('telemetry')"
+                type="button"
+                class="load-more"
+                @click="loadMoreLog('telemetry')"
+              >
+                Load more
+              </button>
+            </div>
           </section>
           <section v-if="unitHistory?.neighbors?.length" class="poll-log-section">
-            <details class="poll-log">
-              <summary>Neighbors · {{ unitHistory.neighbors.length }}</summary>
+            <div class="poll-log">
+              <h3>Neighbors · {{ unitHistory.neighbors.length }}</h3>
               <table class="poll-table">
                 <thead>
                   <tr>
@@ -876,7 +928,7 @@ const App = {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(row, pi) in unitHistory.neighbors" :key="'nb-' + pi">
+                  <tr v-for="(row, pi) in logSlice('neighbors')" :key="'nb-' + pi">
                     <td>{{ formatRelative(row.ts, fleet.now) }}</td>
                     <td>{{ row.count ?? '—' }}</td>
                     <td>{{ row.delta_count != null ? (row.delta_count >= 0 ? '+' : '') + row.delta_count : '—' }}</td>
@@ -889,11 +941,19 @@ const App = {
                   </tr>
                 </tbody>
               </table>
-            </details>
+              <button
+                v-if="logHasMore('neighbors')"
+                type="button"
+                class="load-more"
+                @click="loadMoreLog('neighbors')"
+              >
+                Load more
+              </button>
+            </div>
           </section>
           <section v-if="unitHistory?.acl?.length" class="poll-log-section">
-            <details class="poll-log">
-              <summary>ACL · {{ unitHistory.acl.length }}</summary>
+            <div class="poll-log">
+              <h3>ACL · {{ unitHistory.acl.length }}</h3>
               <table class="poll-table">
                 <thead>
                   <tr>
@@ -904,7 +964,7 @@ const App = {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(row, pi) in unitHistory.acl" :key="'ac-' + pi">
+                  <tr v-for="(row, pi) in logSlice('acl')" :key="'ac-' + pi">
                     <td>{{ formatRelative(row.ts, fleet.now) }}</td>
                     <td>{{ row.count ?? '—' }}</td>
                     <td>{{ row.delta_count != null ? (row.delta_count >= 0 ? '+' : '') + row.delta_count : '—' }}</td>
@@ -917,7 +977,15 @@ const App = {
                   </tr>
                 </tbody>
               </table>
-            </details>
+              <button
+                v-if="logHasMore('acl')"
+                type="button"
+                class="load-more"
+                @click="loadMoreLog('acl')"
+              >
+                Load more
+              </button>
+            </div>
           </section>
           </div>
         </div>

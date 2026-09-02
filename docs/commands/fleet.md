@@ -86,7 +86,8 @@ Status and telemetry samples store bound-site GPS. A one-shot sqlite
 backfill copies the current site onto older rows that lack loc
 (bench/unmapped stay blank). Voltage/temp **When** shows ☀️ or 🌙:
 clear-sky sun above the horizon means charging expected. Hover for
-elevation. No weather or terrain. Detail sparklines share a 72h
+elevation. No weather or terrain. Detail tables stay open (no collapse):
+10 rows each, **Load more** reveals 10 more. Sparklines share a 72h
 wall-clock axis. Sun is clear-sky elevation vs the horizon. Default history limit is 80 (72h of hourly samples).
 Sparklines use native `/api/history/{unit}?metric=`. SSE `unit` events include
 `sample` so the open detail card updates live without refetch.

@@ -827,14 +827,21 @@ body {
   font-size: 0.72rem;
 }
 
-.poll-log summary {
-  cursor: pointer;
-  color: #8aa0b5;
-  user-select: none;
+.load-more {
+  margin-top: 8px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #4ea1ff;
   font-size: 0.68rem;
   font-weight: 600;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.load-more:hover {
+  color: #7ab8ff;
 }
 
 .poll-table {
