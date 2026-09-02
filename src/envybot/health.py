@@ -54,25 +54,17 @@ def _check(
     return row
 
 
-def _voltage_volts(
-    telemetry: dict[str, Any] | None,
-    status: dict[str, Any] | None,
-) -> float | None:
-    if telemetry:
-        v = telemetry.get("voltage")
-        if v is not None:
-            try:
-                return float(v)
-            except (TypeError, ValueError):
-                pass
-    if status:
-        mv = status.get("battery_mv")
-        if mv is not None:
-            try:
-                return float(mv) / 1000.0
-            except (TypeError, ValueError):
-                pass
-    return None
+def _voltage_volts(status: dict[str, Any] | None) -> float | None:
+    """Status ``battery_mv`` only. Telemetry voltage is stored, not used."""
+    if not status:
+        return None
+    mv = status.get("battery_mv")
+    if mv is None:
+        return None
+    try:
+        return float(mv) / 1000.0
+    except (TypeError, ValueError):
+        return None
 
 
 def _unreadable_pct(recv_errors: int | None, packets_recv: int | None) -> float | None:
@@ -162,7 +154,7 @@ def compute_health(
         checks.append(_check("Reachability", "ok"))
 
     # Power
-    volts = _voltage_volts(telemetry, status)
+    volts = _voltage_volts(status)
     volt_history = _voltages_from_rows(status_rows)
     if volts is None:
         checks.append(_check("Power", "unknown", "No voltage reading"))

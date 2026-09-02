@@ -23,6 +23,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Fleet voltage (sparkline, health, status table) is status ``battery_mv``
+  only. Telemetry voltage is still stored, not shown or graded.
+
 - Map pins color by last-heard age (green → amber → red over 24h). Labels
   include compact age (`PV Peak (3h)`) and tick live from `last_heard`.
 - Live GET default is **1h** for status/telemetry (`--min-interval`).

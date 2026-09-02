@@ -82,8 +82,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   while idle. fw/bl once; name/gps/advert/acl audit-only (Pull /
   `--group` / `--force`). Status/telemetry samples log bound-site GPS.
   One-shot `sample_loc_backfill` stamps current site loc onto older
-  rows that lack it. Bench/unmapped stay blank. Voltage/temp When cells
-  show ☀️/🌙 (sun above horizon = charging expected).
+  rows that lack it. Bench/unmapped stay blank. Voltage is status
+  `battery_mv` only (telemetry voltage stored, unused). Voltage/temp When
+  cells show ☀️/🌙 (sun above horizon = charging expected).
   **Fleet poll uses swim-lane round-robin:** each unit owns a FIFO deque
   (login, GET groups, SET fields). One dispatcher sends one radio command per
   unit per turn, then rotates to the least-recently-served ready lane. Timeout
@@ -129,8 +130,10 @@ Separate USB OTA repeater for `motatool serve`.
   `{ source, sample }` so the open card updates live via `state.js`.
   List meta line shows a headline mark: Paused, Healthy, Unreachable,
   Needs attention. Status/telemetry history times show ☀️ or 🌙
-  (clear-sky sun up = charging expected). Detail sparklines share a 72h
-  wall-clock axis; Sun is elevation vs horizon. Detail card edits book `alias` and `notes` (blur saves).
+  (clear-sky sun up = charging expected). Voltage sparkline and health
+  Power use status `battery_mv`; telemetry table is temp only. Detail
+  sparklines share a 72h wall-clock axis; Sun is elevation vs horizon.
+  Detail card edits book `alias` and `notes` (blur saves).
   Map pins color by last-heard age (green→red over 24h); labels include
   `(3h)` and tick from `last_heard` + store clock.
   In-flight cards show the current job stage (Logging in, Fetching ACL, …).

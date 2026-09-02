@@ -94,9 +94,8 @@ export function isSynthetic(poll, field) {
   return Array.isArray(syn) && syn.includes(field)
 }
 
-/** Voltage from a poll snapshot. */
+/** Voltage from status ``battery_mv``. Telemetry voltage is unused. */
 export function pollVoltage(poll) {
-  if (poll?.voltage != null && Number.isFinite(Number(poll.voltage))) return Number(poll.voltage)
   if (poll?.battery_mv != null && Number.isFinite(Number(poll.battery_mv))) {
     return Number(poll.battery_mv) / 1000
   }

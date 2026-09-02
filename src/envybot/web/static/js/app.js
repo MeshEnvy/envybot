@@ -36,7 +36,7 @@ import {
   unitTitle,
 } from './format.js?v=23'
 import { buildNeighborEdges, createMapController, unitStage, unitStatus } from './map.js?v=27'
-import { seriesFromHistories, sparklineWallTime, SPARK_MIN_SPAN } from './sparklines.js?v=8'
+import { seriesFromHistories, sparklineWallTime, SPARK_MIN_SPAN } from './sparklines.js?v=9'
 
 const App = {
   setup() {
@@ -234,8 +234,6 @@ const App = {
       if (metric === 'battery_mv') {
         const mv = unit?.status?.battery_mv
         if (mv != null) return formatBattery(mv)
-        const v = unit?.telemetry?.voltage
-        if (v != null) return `${Number(v).toFixed(2)} V`
       }
       if (metric === 'temperature') {
         const t = unit?.telemetry?.temperature
@@ -261,7 +259,6 @@ const App = {
     }
 
     function formatPollVoltage(poll) {
-      if (poll?.voltage != null) return `${Number(poll.voltage).toFixed(2)} V`
       if (poll?.battery_mv != null) return formatBattery(poll.battery_mv)
       return '—'
     }
@@ -859,7 +856,6 @@ const App = {
                   <tr>
                     <th>When</th>
                     <th>Sun</th>
-                    <th>V</th>
                     <th>Temp</th>
                     <th>Gap</th>
                   </tr>
@@ -879,14 +875,6 @@ const App = {
                         }}</span>
                       </span>
                       <template v-else>—</template>
-                    </td>
-                    <td class="poll-metric">
-                      {{ row.voltage != null ? Number(row.voltage).toFixed(2) + ' V' : '—' }}
-                      <span
-                        v-if="voltageStock(row)"
-                        class="stock-delta"
-                        :class="'stock-' + voltageStock(row).dir"
-                      >{{ voltageStock(row).text }}</span>
                     </td>
                     <td class="poll-metric">
                       {{ formatPollTemp(row) }}

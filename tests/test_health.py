@@ -140,6 +140,25 @@ class HealthTests(unittest.TestCase):
         power = next(c for c in health["checks"] if c["name"] == "Power")
         self.assertEqual(power["status"], "bad")
 
+    def test_power_ignores_telemetry_voltage(self) -> None:
+        health = compute_health(
+            freshness="fresh",
+            session=None,
+            drift=None,
+            status={"battery_mv": 4200},
+            telemetry={"voltage": 3.4},
+            traffic_interval={"packets_recv": 10, "packets_sent": 5, "duration_secs": 3600},
+            traffic_window=_traffic_window(recv=10, sent=5),
+            status_rows=[
+                {"ts": 1, "battery_mv": 4200, "uptime_secs": 1000},
+                {"ts": 2, "battery_mv": 4190, "uptime_secs": 2000},
+            ],
+            reboot_count=0,
+        )
+        power = next(c for c in health["checks"] if c["name"] == "Power")
+        self.assertEqual(power["status"], "ok")
+        self.assertIn("4.20 V", power.get("reason") or "")
+
     def test_stability_reboots(self) -> None:
         health = compute_health(
             freshness="fresh",
