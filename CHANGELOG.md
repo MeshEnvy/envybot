@@ -8,6 +8,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- Book field `ota_autofetch` (`off`|`any`|`signed`, default `off`). Fleet Push
+  and USB onboard SET `ota config autofetch off` when the apply stamp is due.
 - Fleet open card is `?unit=me0032` in the address bar. Reload and
   shared links restore that unit.
 - Fleet detail merges firmware + OTA identity (one body hash, one

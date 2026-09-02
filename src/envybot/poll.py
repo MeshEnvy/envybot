@@ -83,6 +83,7 @@ _STAGE_LABELS = {
     "apply:admin": "Setting admin",
     "apply:path_hash": "Setting path hash",
     "apply:dutycycle": "Setting duty cycle",
+    "apply:ota_autofetch": "Setting OTA autofetch",
     "apply:acl": "Setting ACL",
     "apply:clock": "Syncing clock",
 }

@@ -14,6 +14,7 @@ from envybot.apply import (
     apply_is_due,
     clear_apply_stamps,
     desired_dutycycle,
+    desired_ota_autofetch,
     desired_path_hash_mode,
     profile_id,
     radio_apply_due_fields,
@@ -66,6 +67,8 @@ from envybot.radio import (
     send_cmd_once,
     set_book_coord,
     set_dutycycle_policy,
+    OtaAutofetchUnsupported,
+    set_ota_autofetch_policy,
     set_path_hash_policy,
     trigger_neighbor_discover_once,
 )
@@ -86,6 +89,7 @@ APPLY_FIELD_ORDER = (
     "admin",
     "path_hash",
     "dutycycle",
+    "ota_autofetch",
     "acl",
 )
 
@@ -983,6 +987,17 @@ async def _execute_apply(
             firmware_version=fw, pct=float(desired_dutycycle(node)),
             attempt_num=attempt_num, attempt_cap=attempt_cap,
         ) is not None else "timeout"
+    elif field == "ota_autofetch":
+        try:
+            applied = await set_ota_autofetch_policy(
+                ctx.client, target, cmd_timeout=ctx.cmd_timeout, attempts=1,
+                log=ctx.log, session=ctx.session,
+                mode=desired_ota_autofetch(node),
+                attempt_num=attempt_num, attempt_cap=attempt_cap,
+            )
+        except OtaAutofetchUnsupported:
+            return JobOutcome.HEARD, "skip"
+        send = "ok" if applied is not None else "timeout"
     elif field == "acl":
         try:
             want = resolve_node_acl(ctx.doc, node, ctx.keys or {})

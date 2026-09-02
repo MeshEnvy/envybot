@@ -31,8 +31,10 @@ from envybot.passwords import (
 from envybot.position import public_radio_name, resolve_book_position
 from envybot.radio import (
     FLEET_DUTYCYCLE_PCT,
+    FLEET_OTA_AUTOFETCH,
     FLEET_PATH_HASH_MODE,
     FleetSession,
+    OtaAutofetchUnsupported,
     PollLog,
     RouterTarget,
     cli_error_reply,
@@ -41,10 +43,12 @@ from envybot.radio import (
     maybe_sync_repeater_clock,
     mesh_wait_seconds,
     normalize_acl_payload,
+    normalize_ota_autofetch,
     retry_binary_req,
     send_cmd_sync,
     set_book_coord,
     set_dutycycle_policy,
+    set_ota_autofetch_policy,
     set_path_hash_policy,
 )
 
@@ -65,6 +69,7 @@ APPLY_FIELDS = (
     "admin",
     "path_hash",
     "dutycycle",
+    "ota_autofetch",
     "acl",
     "identity",
 )
@@ -87,6 +92,10 @@ def desired_dutycycle(node: dict[str, Any]) -> int:
         return int(round(float(val)))
     except (TypeError, ValueError):
         return int(FLEET_DUTYCYCLE_PCT)
+
+
+def desired_ota_autofetch(node: dict[str, Any]) -> str:
+    return normalize_ota_autofetch(node.get("ota_autofetch"))
 
 
 def _opt_int(value: Any) -> int | None:
@@ -135,6 +144,7 @@ def profile_parts(
         "lat": lat,
         "lon": lon,
         "name": name,
+        "ota_autofetch": desired_ota_autofetch(node),
         "path_hash": desired_path_hash_mode(node),
         "public": public,
     }
@@ -645,6 +655,27 @@ async def apply_one(
             return abort("dutycycle")
     else:
         log.step("dutycycle: skip (synced)")
+
+    if "ota_autofetch" in due:
+        unsupported = False
+        try:
+            applied = await set_ota_autofetch_policy(
+                client, target, cmd_timeout=cmd_timeout,
+                attempts=attempts,
+                log=log, session=session,
+                mode=desired_ota_autofetch(node),
+            )
+        except OtaAutofetchUnsupported:
+            unsupported = True
+            applied = None
+        if applied is not None:
+            stamp("ota_autofetch")
+        elif unsupported:
+            log.step("ota autofetch: skip (unsupported)")
+        else:
+            return abort("ota_autofetch")
+    else:
+        log.step("ota autofetch: skip (synced)")
 
     stored_clock = None
     seen = get_last_seen(conn, target.key)

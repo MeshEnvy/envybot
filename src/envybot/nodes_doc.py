@@ -59,6 +59,7 @@ NODES_YAML_HEADER = (
     "# alias is UI/selector only (not pushed to the radio). Default apply SETs\n"
     "# Repeater + 0,0 + adverts off unless public: true (then site name + GPS).\n"
     "# path_hash_mode / dutycycle: radio prefs (apply/onboard default 1 / 100).\n"
+    "# ota_autofetch: off|any|signed (apply/onboard default off).\n"
     "# trust.admin / trust.guest: people from keys.yaml (MeshCore ACL).\n"
     "# admin1_pubkey / admin1_secret: Meshtastic remote-admin. Not MC ACL.\n"
     "# firmware_platform: meshcore | meshtastic. Meshtastic rows stay in the\n"

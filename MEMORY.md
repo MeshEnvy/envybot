@@ -72,7 +72,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   (`m35h3nvy`, placeholders, short), or colliding guests. Admin is never
   invented by apply. Apply SETs book admin (`password`) after ACL/login.
 - Apply due = `profile_id` vs last ok sqlite stamp, or weak guest assign.
-  Per-field stamps in sqlite `applies` (name, lat, lon, …). Onboard
+  Per-field stamps in sqlite `applies` (name, lat, lon, …, ota_autofetch). Onboard
   stamps those after USB SET + ACL (private only). Legacy
   `profile` ok row still counts as fully synced. `--force` is Pull plus Push.
   UI leak / mismatch is the inverse of that stamp (private due / public

@@ -30,7 +30,7 @@ except ImportError as exc:  # pragma: no cover
         "  ./envybot onboard"
     ) from exc
 
-from envybot.apply import stamp_profile_after_onboard
+from envybot.apply import desired_ota_autofetch, stamp_profile_after_onboard
 from envybot.history import open_history, record_onboard_heard
 from envybot.keys_doc import (
     UnknownPerson,
@@ -63,6 +63,7 @@ from envybot.radio import (
     parse_firmware,
     parse_get_value,
     parse_int_get_value,
+    parse_ota_autofetch,
     parse_ota_self,
     serial_port_candidates,
 )
@@ -684,6 +685,36 @@ def apply_dutycycle_policy(cli: RepeaterSerial, fw: str | None, *, force: bool) 
     )
 
 
+def apply_ota_autofetch_policy(
+    cli: RepeaterSerial,
+    node: dict[str, Any] | None,
+    *,
+    force: bool,
+) -> bool:
+    """``ota config autofetch off`` (or book value). Skip if firmware has no OTA CLI."""
+    want = desired_ota_autofetch(node or {})
+    raw = cli.cmd("ota config")
+    if reply_failed(raw):
+        lower = raw.strip().lower()
+        if lower.startswith("unknown"):
+            print(f"   skipped ({raw.strip()[:40]})")
+            return False
+        raise CliError(f"ota config: {raw.strip()[:60]}")
+    got = parse_ota_autofetch(raw)
+    if got is None:
+        print(f"   skipped (unparsed: {raw.strip()[:40]})")
+        return False
+    return apply_if_needed(
+        cli,
+        step="ota config autofetch",
+        already=got == want,
+        setter=f"ota config autofetch {want}",
+        verify=lambda: parse_ota_autofetch(cli.cmd("ota config")) == want,
+        ok_label=want,
+        force=force,
+    )
+
+
 def onboard(
     cli: RepeaterSerial,
     *,
@@ -693,6 +724,7 @@ def onboard(
     guest_src: str,
     force: bool,
     pubkey: str | None = None,
+    node: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ver_raw = cli.cmd("ver")
     if reply_failed(ver_raw):
@@ -740,7 +772,10 @@ def onboard(
     print("3. path.hash 2-byte …")
     apply_path_hash_policy(cli, force=force)
 
-    print("4. adverts 0/0 …")
+    print("4. ota autofetch off …")
+    apply_ota_autofetch_policy(cli, node, force=force)
+
+    print("5. adverts 0/0 …")
     adv = parse_int_get_value(cli.cmd("get advert.interval"))
     flood = parse_int_get_value(cli.cmd("get flood.advert.interval"))
     adverts_ok = adv == ADVERT_MIN and flood == FLOOD_ADVERT_H
@@ -755,7 +790,7 @@ def onboard(
             raise CliError(f"advert verify failed: local={adv} flood={flood}")
         print("   local 0m / flood 0h")
 
-    print("5. admin password …")
+    print("6. admin password …")
     admin_changed = False
     if admin_src == "yaml" and not force:
         print("   kept (yaml)")
@@ -764,7 +799,7 @@ def onboard(
         admin_changed = admin_src != "yaml"
         print("   set" if admin_changed else "   confirmed")
 
-    print("6. guest password …")
+    print("7. guest password …")
     device_guest = parse_get_value(cli.cmd("get guest.password"))
     if device_guest is None:
         device_guest = ""
@@ -779,7 +814,7 @@ def onboard(
         guest_changed = device_guest != guest_pw
         print("   set" if guest_changed else "   confirmed")
 
-    print(f"7. position {ONBOARD_LAT}, {ONBOARD_LON} …")
+    print(f"8. position {ONBOARD_LAT}, {ONBOARD_LON} …")
     lat = parse_coord(cli.cmd("get lat"))
     lon = parse_coord(cli.cmd("get lon"))
     pos_ok = coords_match(lat, ONBOARD_LAT) and coords_match(lon, ONBOARD_LON)
@@ -794,7 +829,7 @@ def onboard(
             raise CliError(f"position verify failed: {lat}, {lon}")
         print("   set")
 
-    print(f"8. name {ONBOARD_NAME} …")
+    print(f"9. name {ONBOARD_NAME} …")
     name = parse_get_value(cli.cmd("get name")) or ""
     apply_if_needed(
         cli,
@@ -806,11 +841,11 @@ def onboard(
         force=force,
     )
 
-    print("9. secret key …")
+    print("10. secret key …")
     prv = normalize_hex(parse_get_value(cli.cmd("get prv.key")) or "", PRV_HEX_LEN, "prv.key")
     print(f"   {prv}")
 
-    print("10. clock …")
+    print("11. clock …")
     now = int(time.time())
     clock_reply = cli.cmd(f"time {now}")
     if "cannot go backwards" in clock_reply.lower():
@@ -979,6 +1014,7 @@ def main(argv: list[str] | None = None) -> int:
             guest_src=guest_src,
             force=args.force,
             pubkey=pub,
+            node=existing,
         )
         if not args.no_write:
             unit_key, created = register(args.nodes, result, unit=unit_key or args.unit)

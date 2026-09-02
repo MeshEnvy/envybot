@@ -127,14 +127,15 @@ rolled and written back to the book. `public: true` pushes site name (or
 `unit_id` when bag/bench) plus resolved GPS.
 
 Always also SETs `path.hash.mode` (default 1 = 2-byte), `dutycycle`
-(default 100), a strong book admin via `password`, and clock if unset
+(default 100), `ota config autofetch` (default `off`), a strong book admin
+via `password`, and clock if unset
 or behind. Password-login every unit before GET or SET (login establishes
 the repeater session and refreshes mesh paths). Live clock comes from
 the login timestamp or `clock` CLI afterward.
 
 Apply is due when any SET field stamp misses the book desired value
 (stored in sqlite `applies` per field: name, lat, lon, advert, flood,
-guest, admin, path_hash, dutycycle, acl, identity). A successful
+guest, admin, path_hash, dutycycle, ota_autofetch, acl, identity). A successful
 [`onboard`](onboard.md) stamps those fields so a new private unit is not
 due for a first mesh apply. A legacy ok `applies.profile` row still
 means fully synced. `--force` clears field stamps and re-SETs everything. Each attempt (including retries) prints
@@ -147,7 +148,7 @@ Each SET is one queued command. Login is the reachability check. If a SET
 gets no response, apply aborts for that unit (no lat/lon/guest/…).
 
 Hashed: public/name/gps/adverts, guest + admin (tokens), identity pubkey,
-path.hash, dutycycle, resolved ACL (pubkey + perm). Not hashed / not pushed here:
+path.hash, dutycycle, ota_autofetch, resolved ACL (pubkey + perm). Not hashed / not pushed here:
 identity secret (`roll`), radio preset (onboard), clock.
 
 `trust ben` (admin) updates the book and radio ACL, then stamps the new hash

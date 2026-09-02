@@ -55,6 +55,9 @@ COMPANION_RECONNECT_ATTEMPTS = 5
 CLOCK_SKEW_MAX = 300  # seconds; sync when *live login* RTC vs host exceeds this
 FLEET_PATH_HASH_MODE = 1  # 2-byte advert path hashes
 FLEET_DUTYCYCLE_PCT = 100.0
+FLEET_OTA_AUTOFETCH = "off"
+OTA_AUTOFETCH_VALUES = frozenset({"off", "any", "signed"})
+OTA_AUTOFETCH_RE = re.compile(r"autofetch=(off|any|signed)", re.I)
 DUTYCYCLE_MATCH_EPS = 0.5
 DUTYCYCLE_PCT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 FIRMWARE_CORE_RE = re.compile(r"v?(\d+(?:\.\d+)*)", re.I)
@@ -1014,6 +1017,23 @@ def dutycycle_matches_policy(value: Any) -> bool:
         return False
 
 
+def parse_ota_autofetch(text: str | None) -> str | None:
+    """Parse ``autofetch=off|any|signed`` from ``ota config`` GET or status."""
+    if not text:
+        return None
+    m = OTA_AUTOFETCH_RE.search(text)
+    if not m:
+        return None
+    return m.group(1).lower()
+
+
+def normalize_ota_autofetch(value: Any) -> str:
+    val = str(value or "").strip().lower()
+    if val in OTA_AUTOFETCH_VALUES:
+        return val
+    return FLEET_OTA_AUTOFETCH
+
+
 def cli_set_ok(text: str | None) -> bool:
     if not text or cli_error_reply(text):
         return False
@@ -1282,6 +1302,51 @@ async def set_path_hash_policy(
         log.step(f"path.hash: set failed ({raw.strip()[:40]})")
         return None
     log.step(f"path.hash set OK ({want} = {want + 1}-byte)")
+    return want
+
+
+class OtaAutofetchUnsupported(Exception):
+    """Firmware has no ``ota config autofetch`` CLI."""
+
+
+async def set_ota_autofetch_policy(
+    client: MeshCore,
+    target: RouterTarget,
+    *,
+    cmd_timeout: float,
+    attempts: int,
+    log: PollLog,
+    session: FleetSession | None = None,
+    mode: str | None = None,
+    attempt_num: int | None = None,
+    attempt_cap: int | None = None,
+) -> str | None:
+    """``ota config autofetch off|any|signed``. Stamp on OK.
+
+    Raises OtaAutofetchUnsupported when the CLI is missing.
+    """
+    want = normalize_ota_autofetch(mode)
+    raw = await send_cmd_sync(
+        client,
+        target,
+        f"ota config autofetch {want}",
+        timeout=cmd_timeout,
+        attempts=attempts,
+        log=log,
+        session=session,
+        attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
+    )
+    if raw is None:
+        log.step("ota autofetch: no response")
+        return None
+    if cli_unknown_reply(raw):
+        log.step("ota autofetch: unsupported")
+        raise OtaAutofetchUnsupported()
+    if cli_error_reply(raw) or not cli_set_ok(raw):
+        log.step(f"ota autofetch: set failed ({raw.strip()[:40]})")
+        return None
+    log.step(f"ota autofetch set OK ({want})")
     return want
 
 

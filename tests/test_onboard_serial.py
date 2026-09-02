@@ -10,11 +10,13 @@ from envybot.apply import apply_is_due
 from envybot.commands.onboard import (
     RepeaterSerial,
     antenna_ready,
+    apply_ota_autofetch_policy,
     apply_path_hash_policy,
     resolve_unit,
     stamp_fleet_ready,
     wait_usb_gone,
 )
+from envybot.radio import parse_ota_autofetch
 from envybot.history import open_history
 from envybot.keys_doc import parse_serial_acl
 from envybot.nodes_doc import write_nodes_doc
@@ -87,6 +89,38 @@ class PathHashPolicyTests(unittest.TestCase):
         cli = FakeCli({"get path.hash.mode": "UNKNOWN"})
         self.assertFalse(apply_path_hash_policy(cli, force=False))
         self.assertEqual(cli.sent, ["get path.hash.mode"])
+
+
+class OtaAutofetchPolicyTests(unittest.TestCase):
+    def test_parse_ota_config(self) -> None:
+        raw = "ota config: autofetch=any autoinstall=off checkpoint=0 advert=0min hops=0 keys=0"
+        self.assertEqual(parse_ota_autofetch(raw), "any")
+
+    def test_already_off(self) -> None:
+        cli = FakeCli({"ota config": "ota config: autofetch=off autoinstall=off"})
+        self.assertFalse(apply_ota_autofetch_policy(cli, {}, force=False))
+        self.assertEqual(cli.sent, ["ota config"])
+
+    def test_sets_any_to_off(self) -> None:
+        cli = FakeCli(
+            {
+                "ota config": [
+                    "ota config: autofetch=any autoinstall=off",
+                    "ota config: autofetch=off autoinstall=off",
+                ],
+                "ota config autofetch off": "OK autofetch updated (saved)",
+            }
+        )
+        self.assertTrue(apply_ota_autofetch_policy(cli, {}, force=False))
+        self.assertEqual(
+            cli.sent,
+            ["ota config", "ota config autofetch off", "ota config"],
+        )
+
+    def test_skips_unknown(self) -> None:
+        cli = FakeCli({"ota config": "UNKNOWN COMMAND"})
+        self.assertFalse(apply_ota_autofetch_policy(cli, {}, force=False))
+        self.assertEqual(cli.sent, ["ota config"])
 
 
 class UsbDropTests(unittest.TestCase):

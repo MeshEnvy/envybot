@@ -10,13 +10,14 @@ from envybot.apply import (
     apply_due_fields,
     apply_is_due,
     applicable_field_desireds,
+    desired_ota_autofetch,
     format_apply_plan,
     profile_id,
     profile_parts,
     radio_apply_due_fields,
     stamp_profile_after_onboard,
 )
-from envybot.history import insert_apply, open_history, record_poll
+from envybot.history import insert_apply, last_ok_apply, open_history, record_poll
 from envybot.radio import format_book_coord
 
 
@@ -75,6 +76,16 @@ class ProfileTests(unittest.TestCase):
         self.assertNotEqual(_id(a), _id({**_STRONG, "dutycycle": 50}))
         self.assertNotEqual(_id(a), _id({**_STRONG, "path_hash_mode": 0}))
 
+    def test_ota_autofetch_change_hash(self) -> None:
+        a = {**_STRONG}
+        self.assertNotEqual(_id(a), _id({**_STRONG, "ota_autofetch": "any"}))
+
+    def test_desired_ota_autofetch_defaults_off(self) -> None:
+        self.assertEqual(desired_ota_autofetch({}), "off")
+        self.assertEqual(desired_ota_autofetch(_STRONG), "off")
+        self.assertEqual(desired_ota_autofetch({**_STRONG, "ota_autofetch": "signed"}), "signed")
+        self.assertEqual(desired_ota_autofetch({**_STRONG, "ota_autofetch": "bogus"}), "off")
+
     def test_acl_change_changes_hash(self) -> None:
         node = {**_STRONG}
         empty = _id(node, doc={"nodes": {"me0001": node}}, keys={})
@@ -109,6 +120,11 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(parts["advert"], 0)
         self.assertEqual(parts["path_hash"], 1)
         self.assertEqual(parts["dutycycle"], 100)
+        self.assertEqual(parts["ota_autofetch"], "off")
+
+    def test_ota_autofetch_in_parts(self) -> None:
+        parts = profile_parts({**_STRONG, "ota_autofetch": "any"}, None)
+        self.assertEqual(parts["ota_autofetch"], "any")
 
 
 class DueTests(unittest.TestCase):
@@ -160,6 +176,32 @@ class DueTests(unittest.TestCase):
                 apply_due_fields(conn, "me0001", _STRONG, None, doc=doc, keys=keys),
                 [],
             )
+
+    def test_onboard_stamp_includes_ota_autofetch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            doc = {"nodes": {"me0001": _STRONG}, "trust": {"admin": ["ben"]}}
+            keys = {"ben": ["dd" * 32]}
+            stamp_profile_after_onboard(
+                conn, "me0001", _STRONG, None, doc=doc, keys=keys
+            )
+            applicable = applicable_field_desireds(_STRONG, None, doc=doc, keys=keys, key="me0001")
+            self.assertEqual(
+                last_ok_apply(conn, "me0001", "ota_autofetch"),
+                applicable["ota_autofetch"],
+            )
+            self.assertEqual(applicable["ota_autofetch"], "off")
+
+    def test_ota_autofetch_due_when_other_fields_synced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            applicable = applicable_field_desireds(_STRONG, None)
+            for field, des in applicable.items():
+                if field == "ota_autofetch":
+                    continue
+                insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
+            due = apply_due_fields(conn, "me0001", _STRONG, None)
+            self.assertEqual(due, ["ota_autofetch"])
 
     def test_onboard_stamp_skips_public(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
