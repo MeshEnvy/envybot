@@ -39,6 +39,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- `trust` no longer adds or updates the stock MeshCore Public channel.
+  A `public` row in `channels.yaml` is ignored.
+
 - Fleet progress logs a one-line result as soon as GET_STATUS,
   GET_TELEMETRY, or a CLI command succeeds (uptime/battery, temp, reply
   snippet). Same beat as ``login OK``.

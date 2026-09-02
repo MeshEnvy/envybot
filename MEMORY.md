@@ -63,8 +63,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   `admin1_*` is Meshtastic, not MC ACL.
 - `channels.yaml` (channel-first) lists group name + 16-byte PSK + who
   gets it (`everyone` or person slugs). `trust` add/updates granted
-  channels on the companion; extras on the tag are left alone. Missing
-  file skips channel work.
+  channels on the companion; extras on the tag are left alone. The stock
+  Public slot is never applied (`public` yaml is ignored). Missing file
+  skips channel work.
 - Mask name is `Repeater`. Display name is site `name` when bound, else book
   `alias`, else `unit_id`. Alias is UI/selector only (not pushed to radio).
 - `public: true` SETs site name (or `unit_id` when bag/bench) + site GPS.
@@ -160,4 +161,4 @@ Separate USB OTA repeater for `motatool serve`.
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-02 (fleet OTA detail shows full `ota status`)
+Last updated: 2026-09-02 (trust does not apply Public channel)

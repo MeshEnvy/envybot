@@ -16,7 +16,7 @@ CHANNELS_NAME = "channels.yaml"
 CHANNELS_YAML_HEADER = (
     "# MeshEnvy group channels (private).\n"
     "# name: {key?: 32-hex PSK, people: everyone | [person, …]}\n"
-    "# public is the stock MeshCore Public slot. No key required.\n"
+    "# public is ignored (stock MeshCore Public is never applied).\n"
     "# people: everyone grants every companion. Named people match keys.yaml.\n"
 )
 
@@ -138,6 +138,8 @@ def resolve_person_channels(
     """Channels granted to person (or everyone-only when person is None)."""
     want: list[ChannelDef] = []
     for _people, ch in catalog.values():
+        if ch.is_public:
+            continue
         if _people == EVERYONE:
             want.append(ch)
             continue
@@ -190,12 +192,14 @@ def plan_channel_ops(
     want: list[ChannelDef],
     heard: list[ChannelSlot],
 ) -> tuple[list[ChannelOp], list[str]]:
-    """Add/update only. Extras on the tag are left alone."""
+    """Add/update only. Extras on the tag are left alone. Public is never SET."""
     ops: list[ChannelOp] = []
     failures: list[str] = []
     used: set[int] = set()
 
     for ch in want:
+        if ch.is_public:
+            continue
         existing: ChannelSlot | None = None
         for slot in heard:
             if names_match(slot.name, ch.firmware_name, is_public=ch.is_public):

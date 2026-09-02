@@ -29,8 +29,8 @@ Does not copy admin/guest passwords or field-node secret keys.
 
 `channels.yaml` lives next to `keys.yaml` in the private book. Each channel
 is defined once (name + 32-hex PSK) with a `people:` grant (`everyone` or
-a list of person slugs). `public` is reserved for the stock MeshCore Public
-slot (no key required).
+a list of person slugs). A `public` row is ignored. Trust never adds or
+updates the stock MeshCore Public slot.
 
 On every companion connect, `trust` GETs channel slots and SETs any granted
 channel that is missing or has the wrong key. Add/update only: personal

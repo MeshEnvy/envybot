@@ -72,17 +72,17 @@ class ResolvePersonTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls._tmp.cleanup()
 
-    def test_everyone_gets_public_only(self) -> None:
+    def test_everyone_skips_public(self) -> None:
         names = {c.yaml_name for c in resolve_person_channels(self.catalog, None)}
-        self.assertEqual(names, {"public"})
+        self.assertEqual(names, set())
 
     def test_ben_gets_private_set(self) -> None:
         names = {c.yaml_name for c in resolve_person_channels(self.catalog, "ben")}
-        self.assertEqual(names, {"public", "SLPT", "MeshEnvy", "911"})
+        self.assertEqual(names, {"SLPT", "MeshEnvy", "911"})
 
     def test_bill_gets_911_not_slpt(self) -> None:
         names = {c.yaml_name for c in resolve_person_channels(self.catalog, "bill")}
-        self.assertEqual(names, {"public", "911"})
+        self.assertEqual(names, {"911"})
 
 
 class PlanChannelOpsTests(unittest.TestCase):
@@ -115,12 +115,20 @@ class PlanChannelOpsTests(unittest.TestCase):
         self.assertEqual(ops[0].idx, 1)
         self.assertEqual(failures, [])
 
-    def test_public_skip_stock_slot_zero(self) -> None:
+    def test_public_never_added_or_updated(self) -> None:
         want = [
             ChannelDef("public", PUBLIC_FIRMWARE_NAME, PUBLIC_GROUP_PSK, True),
         ]
-        heard = [ChannelSlot(0, PUBLIC_FIRMWARE_NAME, PUBLIC_GROUP_PSK)]
+        heard = [
+            ChannelSlot(0, "", b"\x00" * 16),
+            ChannelSlot(1, "", b"\x00" * 16),
+        ]
         ops, failures = plan_channel_ops(want, heard)
+        self.assertEqual(ops, [])
+        self.assertEqual(failures, [])
+
+        heard_stock = [ChannelSlot(0, PUBLIC_FIRMWARE_NAME, PUBLIC_GROUP_PSK)]
+        ops, failures = plan_channel_ops(want, heard_stock)
         self.assertEqual(ops, [])
         self.assertEqual(failures, [])
 
