@@ -93,6 +93,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   unit per turn, then rotates to the least-recently-served ready lane. Timeout
   parks that unit's head job; other lanes keep sending. `--attempts` is the
   per-command retry cap (scheduler-owned); logs show `N/max` not `N/1`.
+  Successful GET_STATUS / GET_TELEMETRY / CLI log a one-line result as soon
+  as they land (same beat as `login OK`).
   Every mesh send resets companion out_path to flood first (`mesh_audit.path`
   should read `flood`; hop strings indicate a firmware leak). Neighbor discover wait (default 12s) is a background timer, not radio hold.
   Manual Refresh/Pull/Push always replace that unit's remaining jobs and

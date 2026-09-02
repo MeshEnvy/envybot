@@ -87,6 +87,8 @@ ADMIN_PASSWORD_NOW_RE = re.compile(r"^password now:\s*(.*)\s*$", re.I)
 #   the book. SET only; stamp on OK. Never GET lat/lon into nodes.yaml.
 #   MeshCore <1.15 has no set dutycycle; use set af 0 (100% = af 0) and stamp.
 # - --unit filters targets only; it does not imply --force.
+# - Log a one-line result as soon as GET_STATUS, GET_TELEMETRY, or a CLI
+#   command succeeds (same beat as login OK). Failures stay on the send line.
 
 
 @dataclass(frozen=True)
@@ -1033,6 +1035,93 @@ def normalize_status_payload(raw: dict[str, Any] | None) -> dict[str, Any] | Non
         "rx_airtime_secs": raw.get("rx_airtime"),
         "recv_errors": raw.get("recv_errors"),
     }
+
+
+def _fmt_uptime(secs: Any) -> str:
+    try:
+        s = int(secs)
+    except (TypeError, ValueError):
+        return str(secs)
+    if s >= 86400:
+        return f"{s / 86400:.1f}d"
+    if s >= 3600:
+        return f"{s / 3600:.1f}h"
+    if s >= 60:
+        return f"{s // 60}m"
+    return f"{s}s"
+
+
+def _telem_ok_detail(items: Any) -> str:
+    temp = None
+    volt = None
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            kind = item.get("type")
+            val = item.get("value")
+            if val is None:
+                continue
+            try:
+                num = float(val)
+            except (TypeError, ValueError):
+                continue
+            if kind == "temperature":
+                temp = num
+            elif kind == "voltage":
+                volt = num
+        n = len(items)
+    else:
+        n = 1
+    parts: list[str] = []
+    if temp is not None:
+        parts.append(f"{temp:.1f}°C")
+    if volt is not None:
+        parts.append(f"{volt:.2f}V")
+    if parts:
+        return ", ".join(parts)
+    return f"{n} reading(s)"
+
+
+def format_binary_ok(label: str, result: Any) -> str:
+    """One-line progress after a successful binary GET."""
+    extra = ""
+    if label == "GET_STATUS":
+        raw = result if isinstance(result, dict) else None
+        st = normalize_status_payload(raw)
+        if st is None and raw and raw.get("uptime_secs") is not None:
+            st = raw
+        if st:
+            bat = st.get("battery_mv")
+            bat_s = f"{bat / 1000:.2f}V" if bat is not None else "—"
+            extra = (
+                f"up={_fmt_uptime(st.get('uptime_secs'))} bat={bat_s} "
+                f"rx={st.get('packets_recv')} tx={st.get('packets_sent')}"
+            )
+    elif label == "GET_TELEMETRY":
+        extra = _telem_ok_detail(result)
+    elif label == "GET_ACL":
+        acl = normalize_acl_payload(result)
+        if acl is not None:
+            extra = f"{len(acl)} entries"
+    elif label == "GET_NEIGHBOURS":
+        neighbors = normalize_neighbors_payload(result if isinstance(result, dict) else None)
+        if neighbors is None and isinstance(result, list):
+            neighbors = result
+        if neighbors is not None:
+            extra = f"{len(neighbors)} nodes"
+    if extra:
+        return f"{label} OK ({extra})"
+    return f"{label} OK"
+
+
+def format_cli_ok(cmd: str, text: str) -> str:
+    """One-line progress after a successful CLI reply (passwords redacted)."""
+    shown_cmd = _audit_redact(cmd, max_len=60) or cmd
+    snippet = _audit_redact(" ".join(text.split()), max_len=80)
+    if snippet:
+        return f"{shown_cmd} OK ({snippet})"
+    return f"{shown_cmd} OK"
 
 
 def node_clock_is_unset(node_clock: int | None) -> bool:
@@ -2200,6 +2289,8 @@ async def send_cmd_sync(
         if text:
             _audit_finish(session, audit_id, ok=True, outcome="ok", reply=text)
             log.detail(f"cli reply {prefix_token}{text[:120]}")
+            if not (cli_error_reply(text) or cli_suggests_auth_failure(text)):
+                log.step(format_cli_ok(cmd, text))
             return text
         _audit_finish(session, audit_id, ok=False, outcome="timeout")
         if single or (attempts and attempt >= attempts):
@@ -2344,8 +2435,7 @@ async def retry_binary_req(
                 outcome="ok",
                 reply=_audit_binary_reply(result),
             )
-            if attempt > 1:
-                log.detail(f"{label} succeeded on {n_of}")
+            log.step(format_binary_ok(label, result))
             return result
         _audit_finish(session, audit_id, ok=False, outcome="timeout")
         if single or (attempts and attempt >= attempts):
@@ -2387,7 +2477,6 @@ async def trigger_neighbor_discover_once(
             log.step("auth cleared (CLI denied)")
         log.step("discover.neighbors: error")
         return False
-    log.step("discover.neighbors OK")
     return True
 
 
@@ -2478,7 +2567,6 @@ async def trigger_neighbor_discover(
             log.step("auth cleared (CLI denied)")
         log.step("discover.neighbors: error")
         return False
-    log.step("discover.neighbors OK")
     if wait_s > 0:
         log.step(f"discover wait {wait_s:g}s")
         await asyncio.sleep(wait_s)
@@ -2567,12 +2655,7 @@ async def poll_one(
                 log=log,
                 session=session,
             )
-            if status:
-                uptime = status.get("uptime_secs")
-                bat = status.get("battery_mv")
-                bat_v = f"{bat / 1000:.2f} V" if bat is not None else "—"
-                log.step(f"status OK (uptime={uptime}s bat={bat_v})")
-            else:
+            if not status:
                 stat_errors.append("status: no response")
                 log.step("status: no response")
 
@@ -2591,7 +2674,6 @@ async def poll_one(
                 log.step("name: error")
             else:
                 live_name = parse_get_value(raw_name) or ""
-                log.step(f"name OK ({live_name or 'empty'})")
 
         if "telemetry" in polled:
             telemetry = await retry_binary_req(
@@ -2607,10 +2689,7 @@ async def poll_one(
                 wait_s=wait_cap,
                 cap=cmd_timeout,
             )
-            if telemetry is not None:
-                channels = len(telemetry) if isinstance(telemetry, list) else 1
-                log.step(f"telemetry OK ({channels} reading(s))")
-            else:
+            if telemetry is None:
                 stat_errors.append("telemetry: no response")
                 log.step("telemetry: no response")
 
@@ -2629,9 +2708,7 @@ async def poll_one(
                 cap=cmd_timeout,
             )
             acl = normalize_acl_payload(acl_raw)
-            if acl is not None:
-                log.step(f"acl OK ({len(acl)} entry/entries)")
-            else:
+            if acl is None:
                 stat_errors.append("acl: no response")
                 log.step("acl: no response")
                 if session is not None and session.is_authed(target.key):
@@ -2665,9 +2742,7 @@ async def poll_one(
                 cap=cmd_timeout,
             )
             neighbors = normalize_neighbors_payload(neigh_raw)
-            if neighbors is not None:
-                log.step(f"neighbors OK ({len(neighbors)} node(s))")
-            else:
+            if neighbors is None:
                 stat_errors.append("neighbors: no response")
                 log.step("neighbors: no response")
 
@@ -2689,8 +2764,6 @@ async def poll_one(
                 if not fw:
                     stat_errors.append("firmware: unparsed ver")
                     log.step("ver: unparsed")
-                else:
-                    log.step(f"ver OK ({fw})")
 
         if "bootloader" in polled:
             raw_bl = await send_cmd_sync(
@@ -2713,9 +2786,7 @@ async def poll_one(
                 log.step("bootloader: error")
             else:
                 bl = parse_bootloader(raw_bl) or ""
-                if bl:
-                    log.step(f"bootloader OK ({bl})")
-                else:
+                if not bl:
                     log.step(f"bootloader unknown ({raw_bl.strip()[:60]})")
 
         if "lat" in polled or "gps" in polled:
@@ -2732,7 +2803,6 @@ async def poll_one(
                 lat = parse_coord(raw_lat)
                 if lat is None:
                     lat = 0.0
-                log.step(f"lat heard ({lat:.5f})")
 
         if "lon" in polled or "gps" in polled:
             raw_lon = await send_cmd_sync(
@@ -2748,7 +2818,6 @@ async def poll_one(
                 lon = parse_coord(raw_lon)
                 if lon is None:
                     lon = 0.0
-                log.step(f"lon heard ({lon:.5f})")
 
         if "advert" in polled:
             raw_advert = await send_cmd_sync(
@@ -2770,7 +2839,6 @@ async def poll_one(
                 advert_min = parse_int_get_value(raw_advert)
                 if advert_min is None:
                     advert_min = 0
-                log.step(f"advert OK ({advert_min}m)")
 
         if "flood_advert" in polled:
             raw_flood_advert = await send_cmd_sync(
@@ -2792,7 +2860,6 @@ async def poll_one(
                 flood_h = parse_int_get_value(raw_flood_advert)
                 if flood_h is None:
                     flood_h = 0
-                log.step(f"flood advert OK ({flood_h}h)")
 
         position = None
         if lat is not None or lon is not None:
