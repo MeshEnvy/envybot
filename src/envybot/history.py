@@ -79,6 +79,13 @@ CREATE TABLE IF NOT EXISTS neighbors (
 );
 CREATE INDEX IF NOT EXISTS neighbors_unit_ts ON neighbors (unit, ts);
 
+CREATE TABLE IF NOT EXISTS ota_snapshots (
+  ts INTEGER NOT NULL,
+  unit TEXT NOT NULL,
+  payload TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ota_unit_ts ON ota_snapshots (unit, ts);
+
 CREATE TABLE IF NOT EXISTS applies (
   ts INTEGER NOT NULL,
   unit TEXT NOT NULL,
@@ -261,6 +268,12 @@ def _ensure_last_seen_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE last_seen ADD COLUMN ota_at INTEGER")
     if "base_hash" not in cols:
         conn.execute("ALTER TABLE last_seen ADD COLUMN base_hash TEXT")
+    if "ota_status_at" not in cols:
+        conn.execute("ALTER TABLE last_seen ADD COLUMN ota_status_at INTEGER")
+    if "ota_ls_at" not in cols:
+        conn.execute("ALTER TABLE last_seen ADD COLUMN ota_ls_at INTEGER")
+    if "ota_state" not in cols:
+        conn.execute("ALTER TABLE last_seen ADD COLUMN ota_state TEXT")
     _backfill_last_seen_promoted_fields(conn)
 
 
@@ -326,6 +339,53 @@ def latest_neighbors(conn: sqlite3.Connection, unit: str) -> list[Any] | None:
     except json.JSONDecodeError:
         return None
     return data if isinstance(data, list) else None
+
+
+def latest_ota(conn: sqlite3.Connection, unit: str) -> dict[str, Any] | None:
+    """Latest merged OTA snapshot for a unit (status + heard catalog)."""
+    row = conn.execute("SELECT ota_state FROM last_seen WHERE unit = ?", (unit,)).fetchone()
+    if row and row["ota_state"]:
+        try:
+            data = json.loads(row["ota_state"])
+        except json.JSONDecodeError:
+            data = None
+        else:
+            if isinstance(data, dict):
+                return data
+    snap = conn.execute(
+        "SELECT payload FROM ota_snapshots WHERE unit = ? ORDER BY ts DESC LIMIT 1",
+        (unit,),
+    ).fetchone()
+    if not snap:
+        return None
+    try:
+        data = json.loads(snap["payload"])
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def record_ota_snapshot(
+    conn: sqlite3.Connection,
+    *,
+    unit: str,
+    snapshot: dict[str, Any],
+    ts: int | None = None,
+    status_at: bool = False,
+    ls_at: bool = False,
+) -> None:
+    now = ts or int(time.time())
+    payload = json.dumps(snapshot, default=str)
+    conn.execute(
+        "INSERT INTO ota_snapshots (ts, unit, payload) VALUES (?, ?, ?)",
+        (now, unit, payload),
+    )
+    fields: dict[str, Any] = {"updated_at": now, "ota_state": payload}
+    if status_at:
+        fields["ota_status_at"] = now
+    if ls_at:
+        fields["ota_ls_at"] = now
+    _upsert_last_seen(conn, unit, fields)
 
 
 def latest_status(conn: sqlite3.Connection, unit: str) -> dict[str, Any] | None:
@@ -1368,6 +1428,34 @@ def record_poll(
         conn.execute(
             "INSERT INTO neighbors (ts, unit, payload) VALUES (?, ?, ?)",
             (now, unit, json.dumps(res.neighbors, default=str)),
+        )
+    ota_groups = {"ota_status", "ota_ls"} & set(groups)
+    if ota_groups and getattr(res, "ota", None) is not None:
+        from envybot.ota_parse import merge_ota_snapshot
+
+        prev = latest_ota(conn, unit)
+        ota = res.ota
+        status_part = None
+        if "ota_status" in ota_groups:
+            status_part = {
+                "running": ota.get("running") or {},
+                "local": ota.get("local") or {"state": "none"},
+            }
+        heard = ota.get("heard") if "ota_ls" in ota_groups else None
+        snapshot = merge_ota_snapshot(
+            prev,
+            status=status_part,
+            heard=heard,
+            raw_status=ota.get("raw_status") if "ota_status" in ota_groups else None,
+            raw_ls=ota.get("raw_ls") if "ota_ls" in ota_groups else None,
+        )
+        record_ota_snapshot(
+            conn,
+            unit=unit,
+            snapshot=snapshot,
+            ts=now,
+            status_at="ota_status" in ota_groups,
+            ls_at="ota_ls" in ota_groups,
         )
     _upsert_last_seen(conn, unit, fields)
     conn.commit()

@@ -12,6 +12,7 @@ from envybot.nodes_doc import is_paused
 from envybot.radio import (
     DEFAULT_MIN_POLL_INTERVAL,
     NEIGHBOR_POLL_INTERVAL,
+    OTA_POLL_INTERVAL,
     PULL_GROUP_ORDER,
     PULL_GROUPS,
     PullGroupSpec,
@@ -35,6 +36,8 @@ GET_GROUPS: dict[str, PullGroupSpec] = {
     "advert": PullGroupSpec("audit", "advert_at"),
     "flood_advert": PullGroupSpec("audit", "flood_advert_at"),
     "acl": PullGroupSpec("audit", "acl_at"),
+    "ota_status": PullGroupSpec("periodic", "ota_status_at", interval=OTA_POLL_INTERVAL),
+    "ota_ls": PullGroupSpec("periodic", "ota_ls_at", interval=OTA_POLL_INTERVAL),
     "status": PullGroupSpec("periodic", "status_at"),
     "telemetry": PullGroupSpec("periodic", "telemetry_at"),
     "neighbors": PullGroupSpec("periodic", "neighbors_at", interval=NEIGHBOR_POLL_INTERVAL),
@@ -42,14 +45,23 @@ GET_GROUPS: dict[str, PullGroupSpec] = {
 
 GET_GROUP_ORDER = tuple(GET_GROUPS.keys())
 PERIODIC_GROUPS = tuple(g for g in GET_GROUP_ORDER if GET_GROUPS[g].mode == "periodic")
-MANUAL_JOBS = frozenset({"refresh", "pull", "push"})
-IN_FLIGHT_STATES = frozenset({"queued", "refreshing", "pulling", "pushing", "polling"})
+MANUAL_JOBS = frozenset({"refresh", "pull", "push", "stage", "install"})
+IN_FLIGHT_STATES = frozenset(
+    {"queued", "refreshing", "pulling", "pushing", "staging", "installing", "polling"}
+)
 
 _STAGE_LABELS = {
     "login": "Logging in",
     "get:firmware": "Fetching firmware",
     "get:bootloader": "Fetching bootloader",
     "get:ota": "Fetching OTA",
+    "get:ota_status": "Fetching OTA status",
+    "get:ota_ls_probe": "Querying OTA catalog",
+    "get:ota_ls_wait": "OTA catalog wait",
+    "get:ota_ls": "Fetching OTA catalog",
+    "cmd:ota_pull": "Staging OTA pull",
+    "cmd:ota_install": "Installing OTA",
+    "get:post_install_wait": "Post-install wait",
     "get:name": "Fetching name",
     "get:lat": "Fetching GPS",
     "get:lon": "Fetching GPS",
@@ -88,7 +100,13 @@ def pull_due_groups() -> list[str]:
 
 def manual_job_session_state(job: str) -> str:
     """UI/worker session state for a pending manual job."""
-    return {"refresh": "refreshing", "pull": "pulling", "push": "pushing"}[job]
+    return {
+        "refresh": "refreshing",
+        "pull": "pulling",
+        "push": "pushing",
+        "stage": "staging",
+        "install": "installing",
+    }[job]
 
 
 def job_stage_label(kind: str | None) -> str:
@@ -328,6 +346,10 @@ def gaps_from_poll(res: PollResult) -> list[str]:
         gaps.append("acl")
     if "neighbors" in res.polled_groups and res.neighbors is None:
         gaps.append("neighbors")
+    if "ota_status" in res.polled_groups and res.ota is None:
+        gaps.append("ota_status")
+    if "ota_ls" in res.polled_groups and res.ota is None:
+        gaps.append("ota_ls")
     return gaps
 
 

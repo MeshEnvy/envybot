@@ -46,7 +46,10 @@ CLOCK_CLI_RE = re.compile(
 
 DEFAULT_MIN_POLL_INTERVAL = 3600.0  # status + telemetry
 NEIGHBOR_POLL_INTERVAL = 86400.0  # discover is airtime-heavy
+OTA_POLL_INTERVAL = 86400.0  # ota status + ls; also on manual Refresh
 NEIGHBOR_DISCOVER_WAIT_S = 12.0  # after remote discover.neighbors, before GET
+OTA_LS_WAIT_S = 5.0  # after first `ota ls` (queryAll), before second catalog read
+POST_INSTALL_WAIT_S = 20.0  # after `ota install`, before liveness GET
 DEFAULT_MESH_ATTEMPTS = 10
 COMPANION_RECONNECT_ATTEMPTS = 5
 CLOCK_SKEW_MAX = 300  # seconds; sync when *live login* RTC vs host exceeds this
@@ -787,6 +790,7 @@ class PollResult:
     dutycycle: float | None = None
     acl: list[dict[str, Any]] | None = None
     neighbors: list[dict[str, Any]] | None = None
+    ota: dict[str, Any] | None = None
     polled_groups: frozenset[str] = frozenset()
     stat_errors: list[str] = field(default_factory=list)
 

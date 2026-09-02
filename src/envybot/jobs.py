@@ -24,7 +24,9 @@ INVENTORY_GROUPS = frozenset(
     g for g, spec in GET_GROUPS.items() if spec.mode == "inventory"
 )
 
-TIMER_JOB_KINDS = frozenset({"get:neighbors_wait"})
+TIMER_JOB_KINDS = frozenset(
+    {"get:neighbors_wait", "get:ota_ls_wait", "get:post_install_wait"}
+)
 
 
 @dataclass

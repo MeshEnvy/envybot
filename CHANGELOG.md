@@ -8,6 +8,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- Fleet open card is `?unit=me0032` in the address bar. Reload and
+  shared links restore that unit.
+- Fleet detail merges firmware + OTA identity (one body hash, one
+  bootloader row). Drops the raw `ota status` dump.
+
+- Fleet detail **OTA** shows every `ota status` field: hw id, target,
+  this-fw prefix + image size, serving, signer keys, bootloader apply/rc,
+  seeder, local fetch line, and the raw radio reply. Parser now keeps
+  those fields in `ota_state`.
+
 - Status/telemetry poll samples log bound-site GPS. A one-shot sqlite
   backfill stamps the current site onto older rows that lack loc
   (bench/unmapped stay blank). Voltage/temp **When** shows ☀️ or 🌙

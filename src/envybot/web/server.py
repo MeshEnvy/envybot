@@ -116,8 +116,15 @@ class MonitorWeb:
         if companion is not None:
             self._companion = companion
 
-    async def enqueue_job(self, key: str, job: str) -> tuple[int, str | None]:
-        """Enqueue a manual Refresh, Pull, or Push. Returns (http_status, error)."""
+    async def enqueue_job(
+        self,
+        key: str,
+        job: str,
+        *,
+        stage_selector: str | None = None,
+    ) -> tuple[int, str | None]:
+        """Enqueue a manual fleet job. Returns (http_status, error)."""
+        from envybot.history import latest_ota
         from envybot.poll import MANUAL_JOBS, in_flight_session
 
         key = key.lower()
@@ -134,6 +141,13 @@ class MonitorWeb:
         if self._binding is None:
             return 409, "fleet worker not accepting manual jobs"
         binding = self._binding
+        if job == "install":
+            ota = latest_ota(binding.conn, key)
+            local = (ota or {}).get("local") or {}
+            if local.get("state") != "ready":
+                return 400, "OTA not ready to install (stage a pull first)"
+        if job == "stage" and not (stage_selector or "").strip():
+            return 400, "missing catalog index or mid for stage"
         targets = load_targets(
             self.nodes_path, deployed_only=False, include={key}, skip=None
         )
@@ -157,7 +171,10 @@ class MonitorWeb:
             apply_due=apply_due,
             skip_discover=binding.skip_discover,
             discover_wait=binding.discover_wait,
+            stage_mid=stage_selector,
         )
+        if job == "stage" and not jobs:
+            return 400, "missing catalog index or mid for stage"
         status, err = binding.scheduler.enqueue_manual(target, job, jobs)
         binding.manual_keys.add(key)
         self._session_states[key] = in_flight_session(
@@ -386,6 +403,67 @@ async def _handle_polls(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+async def _handle_stage_job(request: web.Request) -> web.Response:
+    key = request.match_info["key"].lower()
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        return web.json_response({"error": "object required"}, status=400)
+    selector = body.get("mid") or body.get("index")
+    if selector is None:
+        return web.json_response({"error": "mid or index required"}, status=400)
+    status, err = await web_ctx.enqueue_job(key, "stage", stage_selector=str(selector))
+    if status == 404:
+        return web.json_response({"error": err}, status=404)
+    if status == 409:
+        return web.json_response({"error": err}, status=409)
+    if status == 400:
+        return web.json_response({"error": err}, status=400)
+    session = dict(web_ctx._session_states.get(key) or {})
+    prev = ((web_ctx.hub.snapshot or {}).get("units") or {}).get(key) or {"key": key}
+    unit = dict(prev)
+    unit["session"] = session
+    asyncio.create_task(
+        web_ctx.publish_unit(
+            key,
+            session=session,
+            session_states=web_ctx._session_states,
+            companion=web_ctx._companion,
+            poll=web_ctx._poll_state,
+        )
+    )
+    return web.json_response(unit)
+
+
+async def _handle_install_job(request: web.Request) -> web.Response:
+    key = request.match_info["key"].lower()
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    status, err = await web_ctx.enqueue_job(key, "install")
+    if status == 404:
+        return web.json_response({"error": err}, status=404)
+    if status == 409:
+        return web.json_response({"error": err}, status=409)
+    if status == 400:
+        return web.json_response({"error": err}, status=400)
+    session = dict(web_ctx._session_states.get(key) or {})
+    prev = ((web_ctx.hub.snapshot or {}).get("units") or {}).get(key) or {"key": key}
+    unit = dict(prev)
+    unit["session"] = session
+    asyncio.create_task(
+        web_ctx.publish_unit(
+            key,
+            session=session,
+            session_states=web_ctx._session_states,
+            companion=web_ctx._companion,
+            poll=web_ctx._poll_state,
+        )
+    )
+    return web.json_response(unit)
+
+
 async def _handle_manual_job(request: web.Request, job: str) -> web.Response:
     key = request.match_info["key"].lower()
     web_ctx: MonitorWeb = request.app["web_ctx"]
@@ -491,6 +569,8 @@ def make_app(web_ctx: MonitorWeb) -> web.Application:
     app.router.add_post("/api/refresh/{key}", lambda r: _handle_manual_job(r, "refresh"))
     app.router.add_post("/api/pull/{key}", lambda r: _handle_manual_job(r, "pull"))
     app.router.add_post("/api/push/{key}", lambda r: _handle_manual_job(r, "push"))
+    app.router.add_post("/api/stage/{key}", _handle_stage_job)
+    app.router.add_post("/api/install/{key}", _handle_install_job)
     app.router.add_get("/api/history/{unit}", _handle_history)
     app.router.add_get("/api/polls/{unit}", _handle_polls)
     app.router.add_get("/events", _handle_events)

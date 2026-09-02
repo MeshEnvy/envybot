@@ -122,6 +122,7 @@ BLE companion for `fleet` / `trust` / `cmd`. USB DUT for `onboard`.
 Separate USB OTA repeater for `motatool serve`.
 
 - **Fleet UI:** `./envybot fleet` serves `127.0.0.1:8787` by default.
+  Open card is `?unit=<key>` (`replaceState`; reload restores).
   `--web-only` browses the book without a radio. Never expose secrets.
   **Refresh**, **Pull**, and **Push** always enqueue (even while that unit
   is polling) and run ahead of auto work until the click is done. Overrides
@@ -147,9 +148,16 @@ Separate USB OTA repeater for `motatool serve`.
   Map pins color by last-heard age (green→red over 24h); labels include
   `(3h)` and tick from `last_heard` + store clock.
   In-flight cards show the current job stage (Logging in, Fetching ACL, …).
+  **OTA (stage-then-roll):** Refresh polls `ota status` + delayed `ota ls`
+  into sqlite `ota_state`. Detail **Firmware** is identity (version, hw,
+  target, full body hash + image K, bootloader). **OTA** is session
+  (serving, keys, local, heard `[yours]`). List badges: `staged`,
+  `sees update`, `downloading`. **Stage** per heard row (`ota pull <#> flash`);
+  **Install** when local is ready (confirm; reboot). Ops:
+  `initiatives/envybot-monitor-ota.md`.
   `unreachable` is only after login/GET give up (`--attempts`) or a hard
   fail. A login or SET timeout parks the unit and keeps the stage.
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-02 (fleet inventories OTA `base_hash` via `ota self`)
+Last updated: 2026-09-02 (fleet OTA detail shows full `ota status`)

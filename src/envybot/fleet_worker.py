@@ -32,9 +32,18 @@ from envybot.passwords import normalize_password, password_is_strong
 from envybot.poll import GET_GROUP_ORDER, PollPolicy, pull_due_groups, refresh_due_groups
 from envybot.position import public_radio_name, resolve_book_position, site_loc_for_unit
 from envybot.sun import stamp_sun
+from envybot.ota_parse import (
+    merge_ota_snapshot,
+    ota_ls_heard_empty,
+    ota_status_heard_empty,
+    parse_ota_ls,
+    parse_ota_status,
+)
 from envybot.radio import (
     FleetSession,
     NEIGHBOR_DISCOVER_WAIT_S,
+    OTA_LS_WAIT_S,
+    POST_INSTALL_WAIT_S,
     PollLog,
     PollResult,
     RouterTarget,
@@ -121,6 +130,8 @@ class PollAccumulator:
     acl: list[dict[str, Any]] | None = None
     neighbors: list[dict[str, Any]] | None = None
     heard_acl: list[dict[str, Any]] | None = None
+    ota: dict[str, Any] | None = None
+    ota_partial: dict[str, Any] = field(default_factory=dict)
 
     def to_result(self, key: str, *, ok: bool = True, error: str | None = None) -> PollResult:
         position = None
@@ -150,6 +161,7 @@ class PollAccumulator:
             flood_advert_interval_h=self.flood_h,
             acl=self.acl,
             neighbors=self.neighbors,
+            ota=self.ota,
             polled_groups=frozenset(self.polled_groups),
             stat_errors=list(self.stat_errors),
         )
@@ -280,6 +292,16 @@ def build_poll_jobs(
                 )
             )
             jobs.append(RadioJob(kind="get:neighbors", unit_key=target.key))
+        elif group == "ota_ls":
+            jobs.append(RadioJob(kind="get:ota_ls_probe", unit_key=target.key))
+            jobs.append(
+                RadioJob(
+                    kind="get:ota_ls_wait",
+                    unit_key=target.key,
+                    extra={"wait_s": OTA_LS_WAIT_S},
+                )
+            )
+            jobs.append(RadioJob(kind="get:ota_ls", unit_key=target.key))
         else:
             jobs.append(RadioJob(kind=f"get:{group}", unit_key=target.key))
     return jobs
@@ -322,7 +344,14 @@ def build_manual_jobs(
     apply_due: bool,
     skip_discover: bool,
     discover_wait: float = NEIGHBOR_DISCOVER_WAIT_S,
+    stage_mid: str | None = None,
 ) -> list[RadioJob]:
+    if manual_job == "stage":
+        if not stage_mid:
+            return []
+        return build_stage_jobs(target, stage_mid)
+    if manual_job == "install":
+        return build_install_jobs(target)
     if manual_job == "push":
         return build_poll_jobs(
             target,
@@ -377,6 +406,37 @@ def seed_auto_unit(
     )
 
 
+def build_stage_jobs(target: RouterTarget, mid: str) -> list[RadioJob]:
+    """Manual stage: `ota pull <mid> flash`, wait, refresh status."""
+    mid = mid.strip().lower()
+    jobs: list[RadioJob] = [
+        RadioJob(kind="login", unit_key=target.key),
+        RadioJob(kind="cmd:ota_pull", unit_key=target.key, extra={"mid": mid}),
+        RadioJob(
+            kind="get:ota_ls_wait",
+            unit_key=target.key,
+            extra={"wait_s": OTA_LS_WAIT_S},
+        ),
+        RadioJob(kind="get:ota_status", unit_key=target.key),
+    ]
+    return jobs
+
+
+def build_install_jobs(target: RouterTarget) -> list[RadioJob]:
+    """Manual install: `ota install`, wait for reboot, liveness GET."""
+    return [
+        RadioJob(kind="login", unit_key=target.key),
+        RadioJob(kind="cmd:ota_install", unit_key=target.key),
+        RadioJob(
+            kind="get:post_install_wait",
+            unit_key=target.key,
+            extra={"wait_s": POST_INSTALL_WAIT_S},
+        ),
+        RadioJob(kind="get:firmware", unit_key=target.key),
+        RadioJob(kind="get:ota_status", unit_key=target.key),
+    ]
+
+
 async def execute_job(
     job: RadioJob,
     uq: UnitQueue,
@@ -409,6 +469,18 @@ async def execute_job(
     if job.kind == "get:neighbors_wait":
         wait_s = float(job.extra.get("wait_s", ctx.discover_wait))
         ctx.log.step(f"discover wait {wait_s:g}s")
+        await asyncio.sleep(wait_s)
+        return JobOutcome.TIMER_DONE, None
+
+    if job.kind == "get:ota_ls_wait":
+        wait_s = float(job.extra.get("wait_s", OTA_LS_WAIT_S))
+        ctx.log.step(f"ota ls wait {wait_s:g}s")
+        await asyncio.sleep(wait_s)
+        return JobOutcome.TIMER_DONE, None
+
+    if job.kind == "get:post_install_wait":
+        wait_s = float(job.extra.get("wait_s", POST_INSTALL_WAIT_S))
+        ctx.log.step(f"post-install wait {wait_s:g}s")
         await asyncio.sleep(wait_s)
         return JobOutcome.TIMER_DONE, None
 
@@ -509,8 +581,63 @@ async def execute_job(
             return JobOutcome.HEARD, neighbors
         return JobOutcome.TIMEOUT, None
 
+    if job.kind == "get:ota_status":
+        return await _execute_ota_status(job, uq, ctx, attempt_num, attempt_cap)
+
+    if job.kind in ("get:ota_ls_probe", "get:ota_ls"):
+        return await _execute_ota_ls(job, uq, ctx, attempt_num, attempt_cap)
+
+    if job.kind == "cmd:ota_pull":
+        selector = str(job.extra.get("mid") or job.extra.get("selector") or "").strip()
+        if not selector:
+            return JobOutcome.HARD_FAIL, "missing stage selector"
+        raw = await send_cmd_once(
+            ctx.client,
+            target,
+            f"ota pull {selector} flash",
+            timeout=ctx.cmd_timeout,
+            session=ctx.session,
+            log=ctx.log,
+            attempt_num=attempt_num,
+            attempt_cap=attempt_cap,
+        )
+        if raw is None:
+            return JobOutcome.TIMEOUT, None
+        if cli_suggests_auth_failure(raw):
+            ctx.session.clear_auth(target.key)
+            return JobOutcome.HARD_FAIL, raw
+        upper = raw.strip().upper()
+        if upper.startswith("ERR") or cli_error_reply(raw):
+            return JobOutcome.HARD_FAIL, raw
+        ctx.log.step(f"ota pull {selector} flash: {raw.strip()[:80]}")
+        return JobOutcome.HEARD, raw
+
+    if job.kind == "cmd:ota_install":
+        raw = await send_cmd_once(
+            ctx.client,
+            target,
+            "ota install",
+            timeout=ctx.cmd_timeout,
+            session=ctx.session,
+            log=ctx.log,
+            attempt_num=attempt_num,
+            attempt_cap=attempt_cap,
+        )
+        if raw is None:
+            return JobOutcome.TIMEOUT, None
+        if cli_suggests_auth_failure(raw):
+            ctx.session.clear_auth(target.key)
+            return JobOutcome.HARD_FAIL, raw
+        upper = raw.strip().upper()
+        if upper.startswith("ERR") or cli_error_reply(raw):
+            return JobOutcome.HARD_FAIL, raw
+        ctx.log.step(f"ota install: {raw.strip()[:80]}")
+        return JobOutcome.HEARD, raw
+
     if job.kind.startswith("get:"):
         group = job.kind.split(":", 1)[1]
+        if group in ("ota_ls_probe", "ota_ls_wait", "post_install_wait"):
+            return JobOutcome.HARD_FAIL, f"unhandled timer job {job.kind}"
         return await _execute_get_cli(job, uq, ctx, group, attempt_num, attempt_cap)
 
     if job.kind.startswith("apply:"):
@@ -545,6 +672,83 @@ async def pull_repeater_status_once(
     from envybot.radio import normalize_status_payload
 
     return normalize_status_payload(raw)
+
+
+async def _execute_ota_status(
+    job: RadioJob,
+    uq: UnitQueue,
+    ctx: WorkerContext,
+    attempt_num: int,
+    attempt_cap: int | None = None,
+) -> tuple[JobOutcome, Any | None]:
+    target = uq.target
+    acc = _poll_acc(uq)
+    raw = await send_cmd_once(
+        ctx.client,
+        target,
+        "ota status",
+        timeout=ctx.cmd_timeout,
+        session=ctx.session,
+        log=ctx.log,
+        attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
+    )
+    if raw is None:
+        return JobOutcome.TIMEOUT, None
+    if cli_suggests_auth_failure(raw):
+        ctx.session.clear_auth(target.key)
+        return JobOutcome.HARD_FAIL, raw
+    if not ota_status_heard_empty(raw) and cli_error_reply(raw):
+        return JobOutcome.HARD_FAIL, raw
+    parsed = parse_ota_status(raw)
+    if parsed is None:
+        return JobOutcome.TIMEOUT, None
+    acc.ota_partial = merge_ota_snapshot(
+        acc.ota_partial, status=parsed, raw_status=raw.strip()
+    )
+    acc.ota = acc.ota_partial
+    acc.record_group(ctx, target.key, "ota_status")
+    return JobOutcome.HEARD, parsed
+
+
+async def _execute_ota_ls(
+    job: RadioJob,
+    uq: UnitQueue,
+    ctx: WorkerContext,
+    attempt_num: int,
+    attempt_cap: int | None = None,
+) -> tuple[JobOutcome, Any | None]:
+    target = uq.target
+    acc = _poll_acc(uq)
+    raw = await send_cmd_once(
+        ctx.client,
+        target,
+        "ota ls",
+        timeout=ctx.cmd_timeout,
+        session=ctx.session,
+        log=ctx.log,
+        attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
+    )
+    if raw is None:
+        return JobOutcome.TIMEOUT, None
+    if cli_suggests_auth_failure(raw):
+        ctx.session.clear_auth(target.key)
+        return JobOutcome.HARD_FAIL, raw
+    if job.kind == "get:ota_ls_probe":
+        ctx.log.step("ota ls probe (catalog query started)")
+        return JobOutcome.HEARD, raw
+    if not ota_ls_heard_empty(raw) and cli_error_reply(raw):
+        return JobOutcome.HARD_FAIL, raw
+    heard = parse_ota_ls(raw)
+    if heard is None:
+        return JobOutcome.TIMEOUT, None
+    acc.ota_partial = merge_ota_snapshot(
+        acc.ota_partial, heard=heard, raw_ls=raw.strip()
+    )
+    acc.ota = acc.ota_partial
+    acc.record_group(ctx, target.key, "ota_ls")
+    return JobOutcome.HEARD, heard
 
 
 async def _execute_get_cli(

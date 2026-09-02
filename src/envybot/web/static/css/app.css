@@ -415,9 +415,108 @@ body {
 .badge-queued,
 .badge-refreshing,
 .badge-pulling,
-.badge-pushing {
+.badge-pushing,
+.badge-staging,
+.badge-installing {
   background: #2a283d;
   color: #a896ff;
+}
+
+.ota-section h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #b8c5d6;
+}
+
+.ota-section h3:not(:first-child) {
+  margin-top: 12px;
+}
+
+.ota-heard-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ota-heard-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.ota-stage-btn {
+  font-size: 0.72rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  border: 1px solid #3d4a5c;
+  background: #1e2630;
+  color: #c8d6e5;
+  cursor: pointer;
+}
+
+.ota-stage-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.ota-actions {
+  margin-top: 0.5rem;
+}
+
+.manual-btn-install {
+  border-color: #5a3d1a;
+  color: #ffcc80;
+}
+
+.ota-tag {
+  margin-left: 0.4rem;
+  font-size: 0.68rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+}
+
+.ota-tag-ok {
+  background: #1a3d28;
+  color: #6ee7a0;
+}
+
+.ota-tag-warn {
+  background: #3d2a1a;
+  color: #ffb86c;
+}
+
+.ota-list-badge {
+  font-size: 0.65rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  margin-left: 0.25rem;
+  text-transform: lowercase;
+}
+
+.ota-badge-staged {
+  background: #1a3d28;
+  color: #6ee7a0;
+}
+
+.ota-badge-sees-update {
+  background: #2a3440;
+  color: #8ec8ff;
+}
+
+.ota-badge-downloading {
+  background: #3d321a;
+  color: #ffd166;
+}
+
+.ota-raw {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  word-break: break-word;
+  color: #9aa8b8;
 }
 
 .badge-paused {
@@ -697,13 +796,14 @@ body {
 .detail dl {
   margin: 0;
   display: grid;
-  grid-template-columns: 72px 1fr;
+  grid-template-columns: max-content 1fr;
   gap: 3px 10px;
   font-size: 0.78rem;
 }
 
 .detail dt {
   color: #8aa0b5;
+  white-space: nowrap;
 }
 
 .detail dd {

@@ -58,6 +58,30 @@ export function pushUnit(key) {
   return postManualJob(key, 'push')
 }
 
+/** @param {string} key @param {string | number} selector catalog index or hex mid */
+export async function stageUnit(key, selector) {
+  const res = await fetch(`/api/stage/${encodeURIComponent(key)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ index: selector }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `stage ${res.status}`)
+  }
+  return res.json()
+}
+
+/** @param {string} key */
+export async function installUnit(key) {
+  const res = await fetch(`/api/install/${encodeURIComponent(key)}`, { method: 'POST' })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `install ${res.status}`)
+  }
+  return res.json()
+}
+
 /** @param {string} unit @param {string} metric @param {number} [hours] */
 export async function fetchHistory(unit, metric, hours = 72) {
   const q = new URLSearchParams({ metric, hours: String(hours) })

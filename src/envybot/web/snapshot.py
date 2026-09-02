@@ -13,11 +13,13 @@ from envybot.history import (
     all_last_seen,
     interval_traffic,
     latest_neighbors,
+    latest_ota,
     latest_status,
     open_history,
     rolling_traffic,
     status_series,
 )
+from envybot.ota_parse import ota_badge
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
     is_decommissioned,
@@ -267,6 +269,7 @@ def sanitize_unit(
     traffic_interval: dict[str, Any] | None = None,
     traffic_window_6h: dict[str, Any] | None = None,
     profile_ok: bool = False,
+    ota_raw: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalize_fleet_node(node)
     heard = last_heard(node, seen)
@@ -300,6 +303,8 @@ def sanitize_unit(
         "firmware_platform": node.get("firmware_platform"),
         "bootloader_version": (seen or {}).get("bootloader_version"),
         "base_hash": (seen or {}).get("base_hash") or None,
+        "ota": ota_raw,
+        "ota_badge": ota_badge(ota_raw),
         "identity_pubkey": str(node.get("identity_pubkey") or "").lower() or None,
         "position": position,
         "mapped": position is not None,
@@ -352,6 +357,7 @@ def build_fleet_snapshot(
     states = session_states or {}
     seen_map = last_seen
     neighbors_map: dict[str, Any] = {}
+    ota_map: dict[str, Any] = {}
     status_map: dict[str, dict[str, Any]] = {}
     interval_map: dict[str, dict[str, Any]] = {}
     window_map: dict[str, dict[str, Any]] = {}
@@ -365,6 +371,9 @@ def build_fleet_snapshot(
             nbs = latest_neighbors(conn, key)
             if nbs is not None:
                 neighbors_map[key] = nbs
+            ota = latest_ota(conn, key)
+            if ota is not None:
+                ota_map[key] = ota
             status = latest_status(conn, key)
             if status is not None:
                 status_map[key] = status
@@ -406,6 +415,7 @@ def build_fleet_snapshot(
                 traffic_interval=interval_map.get(key),
                 traffic_window_6h=window_map.get(key),
                 profile_ok=profile_ok,
+                ota_raw=ota_map.get(key),
             )
             units[key]["health"] = compute_health(
                 freshness=units[key]["freshness"],

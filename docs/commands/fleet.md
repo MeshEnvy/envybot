@@ -7,8 +7,11 @@ Localhost fleet manager. Serves the map UI, GETs telemetry into
 ./envybot [--book DIR] fleet [flags]
 ```
 
-Default: UI at `http://127.0.0.1:8787/` plus live GET (status/telemetry/neighbors),
-inventory gaps (fw/bl/ota base hash), and apply when the profile hash misses. Neighbor GET
+Default: UI at `http://127.0.0.1:8787/` (`?unit=me0032` restores the open card)
+plus live GET (status/telemetry/neighbors),
+inventory gaps (fw/bl/ota base hash), and apply when the profile hash misses.
+Refresh stores `ota status` (hw, target, this-fw, serving, keys, bl, seeder)
+plus `ota ls` for the detail OTA panel. Neighbor GET
 sends remote `discover.neighbors`, waits 12s, then reads the table. Polls every
 pollable MeshCore unit in the book, including bag/bench (no site `node:` bind).
 `firmware_platform: meshtastic` is omitted from the UI and never polled or applied.

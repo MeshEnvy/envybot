@@ -1,5 +1,5 @@
 import { createApp, computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { connectEvents, fetchFleet, fetchPolls, patchUnit, pullUnit, pushUnit, refreshUnit } from './api.js'
+import { connectEvents, fetchFleet, fetchPolls, installUnit, patchUnit, pullUnit, pushUnit, refreshUnit, stageUnit } from './api.js'
 import {
   clearHistories,
   fleetStore,
@@ -109,7 +109,15 @@ const App = {
 
     const manualAccepting = computed(() => !!fleet.poll?.accepting)
 
-    const MANUAL_BUSY = new Set(['queued', 'refreshing', 'pulling', 'pushing', 'polling'])
+    const MANUAL_BUSY = new Set([
+      'queued',
+      'refreshing',
+      'pulling',
+      'pushing',
+      'staging',
+      'installing',
+      'polling',
+    ])
 
     /** @param {Record<string, unknown> | undefined} unit */
     function isInFlight(unit) {
@@ -124,11 +132,105 @@ const App = {
       return true
     }
 
-    /** @param {Record<string, unknown>} unit @param {'refresh' | 'pull' | 'push'} job */
+    /** @param {Record<string, unknown> | null | undefined} ota */
+    function otaLocalLabel(ota) {
+      if (!ota || typeof ota !== 'object') return '—'
+      const local =
+        /** @type {{ state?: string, mid?: string, pct?: number, have?: number, total?: number, age_s?: number, status_word?: string }} */ (
+          ota
+        ).local
+      if (!local || !local.state || local.state === 'none') return 'no download'
+      const bits = []
+      if (local.status_word) bits.push(local.status_word)
+      else bits.push(local.state)
+      if (local.have != null && local.total != null) bits.push(`${local.have}/${local.total}`)
+      if (local.pct != null) bits.push(`${local.pct}%`)
+      if (local.mid) bits.push(`id=${local.mid}`)
+      if (local.age_s != null) bits.push(`${local.age_s}s`)
+      return bits.join(' ')
+    }
+
+    /** @param {Record<string, unknown> | null | undefined} running */
+    function otaHwLabel(running) {
+      if (!running || typeof running !== 'object') return '—'
+      const hw = /** @type {{ hw_id?: string | null }} */ (running).hw_id
+      if (hw == null || hw === '') return '—'
+      return hw
+    }
+
+    /** @param {Record<string, unknown> | null | undefined} running */
+    function otaTargetLabel(running) {
+      if (!running || typeof running !== 'object') return '—'
+      const r = /** @type {{ target_env?: string, target_id?: string }} */ (running)
+      const env = r.target_env && r.target_env !== '?' ? r.target_env : ''
+      if (env && r.target_id) return `${env} (${r.target_id})`
+      return env || r.target_id || '—'
+    }
+
+    /** @param {Record<string, unknown> | undefined} unit */
+    function otaBodyLabel(unit) {
+      if (!unit) return '—'
+      const running =
+        unit.ota && typeof unit.ota === 'object'
+          ? /** @type {{ running?: { body_hash?: string, image_kib?: number } }} */ (unit.ota).running
+          : null
+      const full = typeof unit.base_hash === 'string' ? unit.base_hash : ''
+      const prefix = running?.body_hash || ''
+      const hash = full || prefix || ''
+      if (!hash) return '—'
+      const kib = running?.image_kib
+      return kib != null ? `${hash} (${kib}K)` : hash
+    }
+
+    /** @param {Record<string, unknown> | null | undefined} running */
+    function otaServingLabel(running) {
+      if (!running || typeof running !== 'object' || !('serving' in running)) return '—'
+      const r = /** @type {{ serving?: boolean, serving_count?: number }} */ (running)
+      const on = r.serving ? 'on' : 'off'
+      return r.serving_count != null ? `${on} (${r.serving_count})` : on
+    }
+
+    /** @param {Record<string, unknown> | null | undefined} running */
+    function otaBlLabel(running) {
+      if (!running || typeof running !== 'object' || !('bl_apply' in running)) return '—'
+      const r = /** @type {{ bl_apply?: boolean, bl_rc?: string }} */ (running)
+      const apply = r.bl_apply ? 'apply' : 'NONE'
+      return r.bl_rc ? `${apply} rc=${r.bl_rc}` : apply
+    }
+
+    /** @param {Record<string, unknown> | undefined} unit */
+    function canInstallUnit(unit) {
+      if (!unit || isInFlight(unit) || !manualAccepting.value) return false
+      const ota = unit.ota
+      if (!ota || typeof ota !== 'object') return false
+      const local = /** @type {{ state?: string }} */ (ota).local
+      const running = /** @type {{ bl_apply?: boolean }} */ (ota).running
+      if (local?.state !== 'ready') return false
+      if (running && running.bl_apply === false) return false
+      return true
+    }
+
+    /** @param {Record<string, unknown> | undefined} unit @param {Record<string, unknown>} row */
+    function canStageRow(unit, row) {
+      if (!unit || isInFlight(unit) || !manualAccepting.value) return false
+      const ota = unit.ota
+      const local = ota && typeof ota === 'object' ? /** @type {{ state?: string }} */ (ota).local : null
+      if (local?.state === 'downloading' || local?.state === 'ready') return false
+      return typeof row.index === 'number' || typeof row.index === 'string'
+    }
+
+    /** @param {Record<string, unknown>} unit @param {'refresh' | 'pull' | 'push' | 'stage' | 'install'} job */
     function markOptimistic(unit, job) {
       const key = String(unit.key)
       const prev = fleet.units[key] || unit
-      const state = job === 'refresh' ? 'refreshing' : job === 'pull' ? 'pulling' : 'pushing'
+      const stateMap = {
+        refresh: 'refreshing',
+        pull: 'pulling',
+        push: 'pushing',
+        stage: 'staging',
+        install: 'installing',
+      }
+      const state = stateMap[job] || 'polling'
       fleet.units[key] = {
         ...prev,
         session: {
@@ -151,6 +253,45 @@ const App = {
       const fn = job === 'refresh' ? refreshUnit : job === 'pull' ? pullUnit : pushUnit
       try {
         const updated = await fn(String(unit.key))
+        applyUnit(updated)
+        pushMap()
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
+    /** @param {Record<string, unknown>} unit @param {Record<string, unknown>} row @param {Event} [ev] */
+    async function runStage(unit, row, ev) {
+      ev?.stopPropagation?.()
+      if (!canStageRow(unit, row)) return
+      markOptimistic(unit, 'stage')
+      pushMap()
+      try {
+        const updated = await stageUnit(String(unit.key), row.index)
+        applyUnit(updated)
+        pushMap()
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
+    /** @param {Record<string, unknown>} unit @param {Event} [ev] */
+    async function runInstall(unit, ev) {
+      ev?.stopPropagation?.()
+      if (!canInstallUnit(unit)) return
+      const local = unit.ota && typeof unit.ota === 'object' ? /** @type {{ mid?: string }} */ (unit.ota).local : null
+      const mid = local?.mid || 'staged update'
+      if (
+        !window.confirm(
+          `Install OTA on ${unit.label || unit.key}? Node will reboot (${mid}). Wrong image can brick until USB recovery.`
+        )
+      ) {
+        return
+      }
+      markOptimistic(unit, 'install')
+      pushMap()
+      try {
+        const updated = await installUnit(String(unit.key))
         applyUnit(updated)
         pushMap()
       } catch (err) {
@@ -277,15 +418,58 @@ const App = {
       return formatSignedDelta((Number(d) * 9) / 5, 0)
     }
 
+    function unitKeyFromLocation() {
+      const raw = new URLSearchParams(location.search).get('unit')
+      if (!raw) return null
+      const needle = raw.trim()
+      if (!needle) return null
+      if (fleet.units[needle]) return needle
+      const lower = needle.toLowerCase()
+      if (fleet.units[lower]) return lower
+      for (const [k, u] of Object.entries(fleet.units || {})) {
+        if (k.toLowerCase() === lower) return k
+        if (String(u.unit_id || '').toLowerCase() === lower) return k
+      }
+      return lower
+    }
+
+    function syncLocation(key) {
+      const url = new URL(location.href)
+      if (key) url.searchParams.set('unit', key)
+      else url.searchParams.delete('unit')
+      const next = `${url.pathname}${url.search}${url.hash}`
+      const cur = `${location.pathname}${location.search}${location.hash}`
+      if (next === cur) return
+      history.replaceState(null, '', next)
+    }
+
+    function openUnit(key, { fly = true } = {}) {
+      selectedKey.value = key
+      if (fly) mapCtrl?.flyTo(key, fleet)
+      mapCtrl?.sync(fleet, key, fleet.now)
+      loadHistoriesFor(key)
+    }
+
+    function applyLocationUnit() {
+      const key = unitKeyFromLocation()
+      if (!key) {
+        if (selectedKey.value) {
+          selectedKey.value = null
+          mapCtrl?.sync(fleet, null, fleet.now)
+        }
+        return
+      }
+      if (!fleet.units[key]) return
+      if (selectedKey.value === key) return
+      openUnit(key)
+    }
+
     function selectUnit(key) {
       if (selectedKey.value === key) {
         clearSelection()
         return
       }
-      selectedKey.value = key
-      mapCtrl?.flyTo(key, fleet)
-      mapCtrl?.sync(fleet, key, fleet.now)
-      loadHistoriesFor(key)
+      openUnit(key)
     }
 
     function clearSelection() {
@@ -328,11 +512,12 @@ const App = {
       notesDraft.value = typeof unit.notes === 'string' ? unit.notes : ''
     }
 
-    watch(selectedKey, () => {
+    watch(selectedKey, (key) => {
       aliasEditing.value = false
       notesEditing.value = false
       resetLogShown()
       syncBookDrafts(selectedUnit.value)
+      syncLocation(key)
     })
 
     watch(
@@ -413,10 +598,16 @@ const App = {
       const onKey = (e) => {
         if (e.key === 'Escape') clearSelection()
       }
+      const onPop = () => applyLocationUnit()
       window.addEventListener('keydown', onKey)
-      onUnmounted(() => window.removeEventListener('keydown', onKey))
+      window.addEventListener('popstate', onPop)
+      onUnmounted(() => {
+        window.removeEventListener('keydown', onKey)
+        window.removeEventListener('popstate', onPop)
+      })
       try {
         applyHello(await fetchFleet())
+        applyLocationUnit()
       } catch (err) {
         console.error(err)
       }
@@ -426,6 +617,7 @@ const App = {
       es = connectEvents({
         onHello: (snap) => {
           applyHello(snap)
+          applyLocationUnit()
           pushMap()
         },
         onUnit: (unit) => {
@@ -515,6 +707,16 @@ const App = {
       togglePublic,
       togglePaused,
       runManualJob,
+      otaLocalLabel,
+      otaHwLabel,
+      otaTargetLabel,
+      otaBodyLabel,
+      otaServingLabel,
+      otaBlLabel,
+      canInstallUnit,
+      canStageRow,
+      runStage,
+      runInstall,
     }
   },
   template: `
@@ -700,19 +902,92 @@ const App = {
               </div>
             </div>
           </section>
-          <section>
+          <section class="ota-section">
+            <h3>Firmware</h3>
             <dl>
-              <dt>Firmware</dt>
+              <dt>Version</dt>
               <dd>
                 {{ selectedUnit.firmware_version || '—' }}
                 <span v-if="selectedUnit.firmware_platform" class="dim">{{
                   selectedUnit.firmware_platform
                 }}</span>
               </dd>
-              <dt v-if="selectedUnit.bootloader_version">Bootloader</dt>
-              <dd v-if="selectedUnit.bootloader_version">{{ selectedUnit.bootloader_version }}</dd>
-              <dt v-if="selectedUnit.base_hash">Base hash</dt>
-              <dd v-if="selectedUnit.base_hash">{{ selectedUnit.base_hash }}</dd>
+              <dt v-if="selectedUnit.ota">HW</dt>
+              <dd v-if="selectedUnit.ota">{{ otaHwLabel(selectedUnit.ota.running) }}</dd>
+              <dt v-if="selectedUnit.ota">Target</dt>
+              <dd v-if="selectedUnit.ota">{{ otaTargetLabel(selectedUnit.ota.running) }}</dd>
+              <dt v-if="selectedUnit.base_hash || selectedUnit.ota?.running?.body_hash">Body</dt>
+              <dd v-if="selectedUnit.base_hash || selectedUnit.ota?.running?.body_hash">
+                {{ otaBodyLabel(selectedUnit) }}
+              </dd>
+              <dt v-if="selectedUnit.bootloader_version || selectedUnit.ota?.running?.bl_apply != null">
+                Bootloader
+              </dt>
+              <dd v-if="selectedUnit.bootloader_version || selectedUnit.ota?.running?.bl_apply != null">
+                {{ selectedUnit.bootloader_version || otaBlLabel(selectedUnit.ota?.running) }}
+                <span
+                  v-if="selectedUnit.ota?.running?.bl_apply === true"
+                  class="ota-tag ota-tag-ok"
+                  title="Bootloader can apply in-place"
+                >apply</span>
+                <span
+                  v-else-if="selectedUnit.ota?.running?.bl_apply === false"
+                  class="ota-tag ota-tag-warn"
+                  title="Bootloader cannot apply OTA"
+                >no apply</span>
+              </dd>
+            </dl>
+            <template v-if="selectedUnit.ota || manualAccepting">
+              <h3>OTA</h3>
+              <dl>
+                <dt>Serving</dt>
+                <dd>{{ otaServingLabel(selectedUnit.ota?.running) }}</dd>
+                <dt>Keys</dt>
+                <dd>
+                  {{ selectedUnit.ota?.running?.keys != null ? selectedUnit.ota.running.keys : '—' }}
+                </dd>
+                <template v-if="selectedUnit.ota?.running && 'seed' in selectedUnit.ota.running">
+                  <dt>Seeder</dt>
+                  <dd>{{ selectedUnit.ota.running.seed ? 'on' : 'off' }}</dd>
+                </template>
+                <dt>Local</dt>
+                <dd>{{ otaLocalLabel(selectedUnit.ota) }}</dd>
+                <dt>Heard (yours)</dt>
+                <dd>
+                  <ul v-if="selectedUnit.ota?.heard_yours?.length" class="ota-heard-list">
+                    <li v-for="row in selectedUnit.ota.heard_yours" :key="row.index">
+                      <span class="ota-heard-main"
+                        >#{{ row.index }} {{ row.version }} {{ row.codec }}
+                        <span class="dim">{{ row.n_seeders }}n {{ row.age_s }}s</span></span
+                      >
+                      <button
+                        v-if="manualAccepting"
+                        type="button"
+                        class="ota-stage-btn"
+                        :disabled="!canStageRow(selectedUnit, row)"
+                        @click="runStage(selectedUnit, row, $event)"
+                      >
+                        Stage
+                      </button>
+                    </li>
+                  </ul>
+                  <template v-else>none seen (Refresh to re-poll)</template>
+                </dd>
+              </dl>
+            </template>
+            <div v-if="manualAccepting" class="ota-actions">
+              <button
+                type="button"
+                class="manual-btn manual-btn-install"
+                :disabled="!canInstallUnit(selectedUnit)"
+                @click="runInstall(selectedUnit, $event)"
+              >
+                Install
+              </button>
+            </div>
+          </section>
+          <section>
+            <dl>
               <dt>GPS</dt>
               <dd>
                 <template v-if="selectedUnit.position">
@@ -1019,6 +1294,9 @@ const App = {
                 <span class="unit-name" :class="'unit-name-' + healthHeadline(unit)">{{ cardPrimary(unit) }}</span>
                 <span class="unit-meta">
                   <span v-if="cardShowNodeId(unit)" class="unit-id">{{ cardNodeId(unit) }}</span>
+                  <span v-if="unit.ota_badge" class="ota-list-badge" :class="'ota-badge-' + unit.ota_badge.replace(' ', '-')">{{
+                    unit.ota_badge
+                  }}</span>
                   <span class="unit-ago">{{ formatRelative(unit.last_heard, fleet.now) }}</span>
                 </span>
               </span>
