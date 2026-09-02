@@ -131,9 +131,10 @@ the login timestamp or `clock` CLI afterward.
 
 Apply is due when any SET field stamp misses the book desired value
 (stored in sqlite `applies` per field: name, lat, lon, advert, flood,
-guest, admin, path_hash, dutycycle, acl, identity). A legacy ok
-`applies.profile` row still means fully synced. `--force` clears field
-stamps and re-SETs everything. Each attempt (including retries) prints
+guest, admin, path_hash, dutycycle, acl, identity). A successful
+[`onboard`](onboard.md) stamps those fields so a new private unit is not
+due for a first mesh apply. A legacy ok `applies.profile` row still
+means fully synced. `--force` clears field stamps and re-SETs everything. Each attempt (including retries) prints
 `apply need` / `apply skip` from current stamps, and `poll need` /
 `poll skip` when GET groups remain. A private node still needs a guest password
 assign. Heard name/GPS/adverts do **not** trigger apply. Edit a hashed field in `nodes.yaml` (or run `trust`) and restart fleet.

@@ -14,6 +14,7 @@ from envybot.apply import (
     profile_id,
     profile_parts,
     radio_apply_due_fields,
+    stamp_profile_after_onboard,
 )
 from envybot.history import insert_apply, open_history, record_poll
 from envybot.radio import format_book_coord
@@ -142,6 +143,30 @@ class DueTests(unittest.TestCase):
             insert_apply(conn, unit="me0001", field="profile", desired=_id(_STRONG), ok=True)
             edited = {**_STRONG, "guest_password": "GuestTwoStrong2"}
             self.assertTrue(apply_is_due(conn, "me0001", edited, None))
+
+    def test_onboard_stamp_clears_private_due(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            doc = {"nodes": {"me0001": _STRONG}, "trust": {"admin": ["ben"]}}
+            keys = {"ben": ["dd" * 32]}
+            self.assertTrue(apply_is_due(conn, "me0001", _STRONG, None, doc=doc, keys=keys))
+            pid = stamp_profile_after_onboard(
+                conn, "me0001", _STRONG, None, doc=doc, keys=keys
+            )
+            self.assertIsNotNone(pid)
+            self.assertTrue(pid.startswith("v1:"))
+            self.assertFalse(apply_is_due(conn, "me0001", _STRONG, None, doc=doc, keys=keys))
+            self.assertEqual(
+                apply_due_fields(conn, "me0001", _STRONG, None, doc=doc, keys=keys),
+                [],
+            )
+
+    def test_onboard_stamp_skips_public(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            node = {**_STRONG, "public": True, "unit_id": "ME0001"}
+            self.assertIsNone(stamp_profile_after_onboard(conn, "me0001", node, None))
+            self.assertTrue(apply_is_due(conn, "me0001", node, None))
 
     def test_force(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

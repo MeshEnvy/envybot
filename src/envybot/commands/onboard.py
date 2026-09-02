@@ -8,7 +8,8 @@ Idempotent on identity/creds/radio/name/GPS/path.hash: match existing pubkey
 (or --unit), GET then SET, reuse stored passwords. Always reboot so ``set radio``
 applies (firmware writes prefs only; ``get radio`` cannot see the live radio).
 Always pulls firmware + bootloader.ver and re-runs neighbor discover/fetch.
-Writes nodes.yaml (next ME#### if new; site stays null).
+Writes nodes.yaml (next ME#### if new; site stays null) and stamps the
+private profile so fleet does not queue a first mesh apply.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ except ImportError as exc:  # pragma: no cover
         "  ./envybot onboard"
     ) from exc
 
+from envybot.apply import stamp_profile_after_onboard
 from envybot.history import open_history, record_onboard_heard
 from envybot.keys_doc import (
     UnknownPerson,
@@ -42,6 +44,7 @@ from envybot.nodes_doc import (
     allocate_unit_id,
     is_decommissioned,
     load_nodes_doc,
+    load_sites_for_book,
     remember_unit_id,
     write_nodes_doc,
 )
@@ -884,6 +887,26 @@ def register(nodes_path: Path, result: dict[str, Any], *, unit: str | None) -> t
     return key, created
 
 
+def stamp_fleet_ready(nodes_path: Path, unit: str) -> str | None:
+    """Mark the USB-applied private profile synced. None if public: true."""
+    doc, nodes = load_registry(nodes_path)
+    node = nodes.get(unit)
+    if not isinstance(node, dict):
+        raise CliError(f"{unit}: missing after register")
+    conn = open_history(nodes_path.parent)
+    try:
+        return stamp_profile_after_onboard(
+            conn,
+            unit,
+            node,
+            load_sites_for_book(nodes_path),
+            doc=doc,
+            keys=load_keys(keys_path(nodes_path)),
+        )
+    finally:
+        conn.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -943,17 +966,27 @@ def main(argv: list[str] | None = None) -> int:
             result["admin_changed"] = False
             result["guest_changed"] = False
             print(f"nodes.yaml {'created' if created else 'updated'} {unit_key.upper()}")
+            acl_doc, acl_nodes = load_registry(args.nodes)
+            acl_node = acl_nodes.get(unit_key) or {}
         else:
             print("nodes.yaml not written (--no-write)")
+            acl_doc, acl_node = _doc, existing or {}
 
         print("ACL …")
+        keys = load_keys(keys_path(args.nodes))
         apply_serial_acl(
             cli,
-            _doc,
-            existing or {},
-            load_keys(keys_path(args.nodes)),
+            acl_doc,
+            acl_node,
+            keys,
             force=args.force,
         )
+        if not args.no_write and unit_key:
+            pid = stamp_fleet_ready(args.nodes, unit_key)
+            if pid:
+                print(f"profile stamped ({pid})")
+            else:
+                print("profile not stamped (public: true)")
 
         do_discover = not args.no_discover and args.discover_rounds > 0
 

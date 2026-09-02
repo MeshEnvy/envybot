@@ -279,6 +279,28 @@ def apply_is_due(
     return False
 
 
+def stamp_profile_after_onboard(
+    conn: sqlite3.Connection,
+    unit: str,
+    node: dict[str, Any],
+    sites: dict[str, dict[str, Any]] | None,
+    *,
+    doc: dict[str, Any] | None = None,
+    keys: dict[str, list[str]] | None = None,
+) -> str | None:
+    """After USB onboard applied the private mask, stamp every SET field.
+
+    Fleet-ready: apply is not due and the UI must not show leak. USB always
+    writes the private mask, so a ``public: true`` row is left unstamped.
+    """
+    if is_public(node):
+        return None
+    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=unit)
+    for field, des in applicable.items():
+        insert_apply(conn, unit=unit, field=field, desired=des, ok=True)
+    return profile_id(node, sites, doc=doc, keys=keys, key=unit)
+
+
 def stamp_profile_after_trust(
     conn: sqlite3.Connection,
     unit: str,

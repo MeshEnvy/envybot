@@ -17,6 +17,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- Onboard stamps the private apply profile in sqlite after USB SET +
+  ACL. Fleet no longer treats a freshly onboarded unit as `leak` / first
+  mesh apply-due.
+
 - Status/telemetry history no longer re-inserts the previous group's
   payload when a later GET records. That was the fake `+0 / +0` In/out
   on a 2-minute gap.

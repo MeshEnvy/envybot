@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
+from envybot.apply import apply_is_due
 from envybot.commands.onboard import (
     RepeaterSerial,
     antenna_ready,
     apply_path_hash_policy,
     resolve_unit,
+    stamp_fleet_ready,
     wait_usb_gone,
 )
+from envybot.history import open_history
 from envybot.keys_doc import parse_serial_acl
+from envybot.nodes_doc import write_nodes_doc
 
 BEN = "aa" * 32
 
@@ -115,3 +121,23 @@ class ResolveUnitTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as err:
             resolve_unit(nodes, "a" * 64, unit=None)
         self.assertIn("decommissioned", str(err.exception))
+
+
+class StampFleetReadyTests(unittest.TestCase):
+    def test_written_private_row_is_not_apply_due(self) -> None:
+        node = {
+            "unit_id": "ME0051",
+            "firmware_platform": "meshcore",
+            "admin_password": "AdminOneStrong1",
+            "guest_password": "GuestOneStrong1",
+            "identity_pubkey": "aa" * 32,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            write_nodes_doc(nodes_path, {"next_unit": 52, "nodes": {"me0051": node}})
+            conn = open_history(book)
+            self.assertTrue(apply_is_due(conn, "me0051", node, None))
+            pid = stamp_fleet_ready(nodes_path, "me0051")
+            self.assertIsNotNone(pid)
+            self.assertFalse(apply_is_due(conn, "me0051", node, None))

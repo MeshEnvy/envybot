@@ -34,7 +34,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/commands/fleet.py` | Localhost manager |
 | `src/envybot/commands/trust.py` | Contacts + channels + keys.yaml / ACL login |
 | `src/envybot/commands/cmd.py` | Remote MeshCore CLI |
-| `src/envybot/commands/onboard.py` | USB repeater text CLI onboard (`path.hash.mode` 1, `get acl` is `ACL:` dump) |
+| `src/envybot/commands/onboard.py` | USB repeater text CLI onboard (`path.hash.mode` 1, `get acl` is `ACL:` dump). Stamps private `applies` so fleet is ready. |
 | `src/envybot/web/` | Fleet UI (`:8787`) |
 
 ## Contract
@@ -72,7 +72,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   (`m35h3nvy`, placeholders, short), or colliding guests. Admin is never
   invented by apply. Apply SETs book admin (`password`) after ACL/login.
 - Apply due = `profile_id` vs last ok sqlite stamp, or weak guest assign.
-  Per-field stamps in sqlite `applies` (name, lat, lon, …). Legacy
+  Per-field stamps in sqlite `applies` (name, lat, lon, …). Onboard
+  stamps those after USB SET + ACL (private only). Legacy
   `profile` ok row still counts as fully synced. `--force` is Pull plus Push.
   UI leak / mismatch is the inverse of that stamp (private due / public
   due), not heard last-seen identity. Poll default: status/telemetry every 1h
@@ -103,9 +104,11 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   timestamp or ``clock`` CLI.
 - Duty-cycle default is 100% (`nodes.yaml` `dutycycle` overrides).
   `set dutycycle` needs MeshCore 1.15+; older 1.x uses `set af`.
-  Onboard also SETs `path.hash.mode` 1 (2-byte), same as fleet apply.
-  Onboard always reboots (`set radio` is prefs-only until reboot) unless
-  `--no-reboot`. `get radio` matching is not evidence the radio is live.
+  Onboard also SETs `path.hash.mode` 1 (2-byte), same as fleet apply,
+  then stamps the private profile. A successful onboard is fleet-ready
+  (no first mesh apply). Onboard always reboots (`set radio` is
+  prefs-only until reboot) unless `--no-reboot`. `get radio` matching is
+  not evidence the radio is live.
 - Do not copy passwords or keypairs into this repo.
 - Not mesh-api. Not the sidecar mux (`mesh-sidecar-daemon`).
 - Daemon (`envybot serve`, N-radio mux) is later.

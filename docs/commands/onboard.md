@@ -26,7 +26,10 @@ Idempotent on identity, creds, radio, name, and GPS:
 6. Write the book row (identity, creds). Then stamp fleet ACL from
    `keys.yaml` + book/node `trust` (`get acl` + `setperm`). Skip ACL if
    there are no named people yet. MeshCore prints `ACL:` on serial and
-   does not send a `->` reply for `get acl`.
+   does not send a `->` reply for `get acl`. Then stamp sqlite `applies`
+   for the private profile so fleet is not apply-due (no `leak`, no first
+   mesh Push). `public: true` rows stay unstamped. `--no-write` skips the
+   stamp.
 7. Read public + secret keys. Set host clock.
 8. Neighbor discover/fetch (default 3 rounds). Prompts to attach an
    antenna first (Enter to continue, `s` to skip). `--no-discover` skips
@@ -82,7 +85,11 @@ Not the USB OTA seeder used by `motatool serve`.
 
 - New or updated `nodes.yaml` row (unless `--no-write`)
 - `next_unit` bump when a new `ME####` is allocated
+- Sqlite `applies` field stamps for the private profile (unless
+  `--no-write` or `public: true`)
 
-Does not poll the mesh. After the unit is deployed, run
-[`fleet`](fleet.md). A sealed unit that needs a new companion key uses
-[`trust ben --unit me0041`](trust.md), not this command.
+Does not poll the mesh. After a successful onboard the unit is fleet
+deployment ready: privacy mask on the radio, book row, ACL, and apply
+stamps. Run [`fleet`](fleet.md) to poll. A sealed unit that needs a new
+companion key uses [`trust ben --unit me0041`](trust.md), not this
+command.
