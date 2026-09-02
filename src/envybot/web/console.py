@@ -1,4 +1,4 @@
-"""Exclusive fleet console session (one unit, manual CLI over the companion)."""
+"""Fleet console session: priority CLI on one unit, no radio lock."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from envybot.jobs import FleetScheduler, RadioJob
-from envybot.radio import RouterTarget
+from envybot.radio import FleetSession, RouterTarget
 
 PublishConsoleFn = Callable[[dict[str, Any]], Awaitable[None]]
 
@@ -15,7 +15,7 @@ PublishConsoleFn = Callable[[dict[str, Any]], Awaitable[None]]
 @dataclass
 class ConsoleState:
     key: str
-    state: str = "acquiring"
+    state: str = "ready"
     attempt: int = 0
     max_attempts: int = 10
     cmd: str | None = None
@@ -40,7 +40,7 @@ class ConsoleState:
 
 
 class ConsoleManager:
-    """Coordinates exclusive scheduler hold and SSE console events."""
+    """UI session plus priority console jobs. Cadence keeps running while idle."""
 
     def __init__(self) -> None:
         self._session: ConsoleState | None = None
@@ -68,20 +68,12 @@ class ConsoleManager:
         self,
         *,
         key: str,
-        scheduler: FleetScheduler,
-        target: RouterTarget,
-        max_attempts: int,
-        manual_keys: set[str],
+        scheduler: FleetScheduler | None = None,
+        max_attempts: int = 10,
     ) -> ConsoleState:
         if self._session is not None and self._session.key != key:
-            await self.close(scheduler=scheduler, manual_keys=manual_keys)
-        scheduler.set_exclusive(key)
-        manual_keys.add(key)
-        self._session = ConsoleState(key=key, max_attempts=max_attempts)
-        scheduler.enqueue_console(
-            target,
-            [RadioJob(kind="console:login", unit_key=key, manual=True, manual_job="console")],
-        )
+            await self.close(scheduler=scheduler)
+        self._session = ConsoleState(key=key, state="ready", max_attempts=max_attempts)
         await self._emit()
         return self._session
 
@@ -91,6 +83,7 @@ class ConsoleManager:
         cmd: str,
         scheduler: FleetScheduler,
         target: RouterTarget,
+        session: FleetSession | None = None,
     ) -> asyncio.Future[dict[str, Any]]:
         sess = self._session
         if sess is None or sess.key != target.key:
@@ -106,26 +99,35 @@ class ConsoleManager:
         sess.error = None
         sess.attempt = 0
         cancel_gen = sess.cancel_gen
-        scheduler.enqueue_console(
-            target,
-            [
+        jobs: list[RadioJob] = []
+        if session is None or not session.is_authed(target.key):
+            jobs.append(
                 RadioJob(
-                    kind="console:cli",
+                    kind="console:login",
                     unit_key=target.key,
                     manual=True,
                     manual_job="console",
-                    extra={"cmd": cmd, "cancel_gen": cancel_gen},
-                    future=fut,
+                    extra={"cancel_gen": cancel_gen},
                 )
-            ],
+            )
+        jobs.append(
+            RadioJob(
+                kind="console:cli",
+                unit_key=target.key,
+                manual=True,
+                manual_job="console",
+                extra={"cmd": cmd, "cancel_gen": cancel_gen},
+                future=fut,
+            )
         )
+        scheduler.enqueue_console(target, jobs)
         await self._emit()
         return fut
 
     async def cancel(
         self,
         *,
-        scheduler: FleetScheduler,
+        scheduler: FleetScheduler | None,
         session: Any,
     ) -> None:
         sess = self._session
@@ -134,7 +136,8 @@ class ConsoleManager:
         sess.cancel_gen += 1
         if session is not None:
             session.console_cli_cancel_gen = sess.cancel_gen
-        scheduler.cancel_console_cli(sess.key)
+        if scheduler is not None:
+            scheduler.cancel_console_jobs(sess.key)
         if sess._send_waiter and not sess._send_waiter.done():
             sess._send_waiter.set_result({"cancelled": True})
             sess._send_waiter = None
@@ -146,8 +149,7 @@ class ConsoleManager:
     async def close(
         self,
         *,
-        scheduler: FleetScheduler,
-        manual_keys: set[str],
+        scheduler: FleetScheduler | None = None,
         session: Any | None = None,
     ) -> None:
         if self._session is None:
@@ -158,22 +160,17 @@ class ConsoleManager:
         self._session.state = "closed"
         await self._emit()
         self._session = None
-        scheduler.clear_exclusive()
-        manual_keys.discard(key)
         if session is not None:
-            session.audit_source = None
+            if session.audit_source == "console":
+                session.audit_source = None
             session.console_cli_cancel_gen = 0
-        uq = scheduler.units.get(key)
-        if uq is not None:
-            scheduler._cancel_timer(uq)
-            uq.jobs.clear()
-            uq.manual = False
-            uq.manual_job = None
+        if scheduler is not None:
+            scheduler.cancel_console_jobs(key)
 
     async def on_login_start(self, attempt: int, max_attempts: int) -> None:
         if self._session is None:
             return
-        self._session.state = "acquiring"
+        self._session.state = "sending"
         self._session.attempt = attempt
         self._session.max_attempts = max_attempts
         await self._emit()
@@ -181,10 +178,11 @@ class ConsoleManager:
     async def on_login_ready(self) -> None:
         if self._session is None:
             return
-        self._session.state = "ready"
-        self._session.attempt = 0
-        self._session.error = None
-        await self._emit()
+        if self._session.state != "sending":
+            self._session.state = "ready"
+            self._session.attempt = 0
+            self._session.error = None
+            await self._emit()
 
     async def on_cli_start(self, attempt: int, max_attempts: int, cmd: str) -> None:
         if self._session is None:

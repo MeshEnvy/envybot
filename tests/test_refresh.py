@@ -74,6 +74,23 @@ class MonitorWebManualJobTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         self.tmp.cleanup()
 
+    async def test_open_console_without_worker(self) -> None:
+        status, err, payload = await self.web_ctx.open_console("me0003")
+        self.assertEqual(status, 200)
+        self.assertIsNone(err)
+        assert payload is not None
+        self.assertEqual(payload.get("state"), "ready")
+        uq = self.scheduler.units.get("me0003")
+        self.assertTrue(uq is None or not uq.jobs)
+
+    async def test_refresh_while_console_open(self) -> None:
+        self.web_ctx.set_worker_active(True)
+        status, err, _payload = await self.web_ctx.open_console("me0003")
+        self.assertEqual(status, 200)
+        status, err = await self.web_ctx.enqueue_job("me0003", "refresh")
+        self.assertEqual(status, 200)
+        self.assertIsNone(err)
+
     async def test_enqueue_not_accepting(self) -> None:
         status, err = await self.web_ctx.enqueue_job("me0003", "refresh")
         self.assertEqual(status, 409)

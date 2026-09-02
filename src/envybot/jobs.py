@@ -63,6 +63,42 @@ JobStartFn = Callable[[UnitQueue, RadioJob], Awaitable[None]] | None
 JobDoneFn = Callable[[UnitQueue, RadioJob, JobOutcome, Any | None], Awaitable[None]] | None
 
 
+def is_console_job(job: RadioJob | str) -> bool:
+    kind = job.kind if isinstance(job, RadioJob) else job
+    return kind.startswith("console:")
+
+
+def _pick_tier(uq: UnitQueue, job: RadioJob) -> int:
+    """Console heads stay on the radio until heard, exhausted, or cancelled."""
+    if is_console_job(job):
+        return 0
+    if uq.manual:
+        return 1
+    return 2
+
+
+def keep_console_jobs(uq: UnitQueue) -> list[RadioJob]:
+    """Remove non-console jobs. Returns the console jobs that remain."""
+    kept = [job for job in uq.jobs if is_console_job(job)]
+    uq.jobs.clear()
+    uq.jobs.extend(kept)
+    return kept
+
+
+def drop_console_jobs(uq: UnitQueue) -> list[RadioJob]:
+    """Remove console jobs. Waiters are resolved by ConsoleManager."""
+    dropped: list[RadioJob] = []
+    kept: list[RadioJob] = []
+    for job in uq.jobs:
+        if is_console_job(job):
+            dropped.append(job)
+        else:
+            kept.append(job)
+    uq.jobs.clear()
+    uq.jobs.extend(kept)
+    return dropped
+
+
 def drop_remaining_apply(uq: UnitQueue) -> list[str]:
     """Drop queued SET jobs after a hard apply fail or exhausted retries."""
     dropped: list[str] = []
@@ -89,7 +125,6 @@ class FleetScheduler:
     _idle_waiters: list[asyncio.Future[None]] = field(default_factory=list, repr=False)
     _stop: bool = False
     _timer_tasks: set[asyncio.Task[None]] = field(default_factory=set, repr=False)
-    exclusive_key: str | None = None
 
     def get_or_create(self, target: RouterTarget) -> UnitQueue:
         key = target.key
@@ -135,7 +170,9 @@ class FleetScheduler:
             job.manual = True
             job.manual_job = manual_job
             job.unit_key = target.key
+        console_kept = [job for job in uq.jobs if is_console_job(job)]
         uq.jobs.clear()
+        uq.jobs.extend(console_kept)
         uq.jobs.extend(jobs)
         uq.backoff_until = 0.0
         uq.last_served = 0.0
@@ -146,62 +183,28 @@ class FleetScheduler:
         self._wake_idle()
         return 200, None
 
-    def set_exclusive(self, key: str) -> None:
-        """Hold the radio for one unit: cancel timers and drain all job queues."""
-        key = key.lower()
-        entering = self.exclusive_key != key
-        self.exclusive_key = key
-        for uq in self.units.values():
-            self._cancel_timer(uq)
-            uq.jobs.clear()
-            uq.backoff_until = 0.0
-        self._wake_idle()
-        if entering:
-            print(
-                f"Exclusive mode: entered for {key} (auto poll paused fleet-wide)",
-                flush=True,
-            )
-
-    def clear_exclusive(self) -> None:
-        if self.exclusive_key is None:
-            self._wake_idle()
-            return
-        key = self.exclusive_key
-        self.exclusive_key = None
-        self._wake_idle()
-        print(f"Exclusive mode: exited ({key}), resuming auto poll", flush=True)
-
-    def cancel_console_cli(self, key: str) -> bool:
-        """Pop in-queue console:cli on the exclusive unit. Returns True if popped."""
-        if self.exclusive_key != key.lower():
-            return False
+    def cancel_console_jobs(self, key: str) -> bool:
+        """Drop queued console:* on this unit. In-flight wait uses cancel_check."""
         uq = self.units.get(key.lower())
-        if uq is None or not uq.jobs:
+        if uq is None:
             return False
-        head = uq.jobs[0]
-        if head.kind != "console:cli":
-            return False
-        uq.jobs.popleft()
-        if head.future and not head.future.done():
-            head.future.set_result({"cancelled": True})
-        return True
+        return bool(drop_console_jobs(uq))
 
     def enqueue_console(
         self,
         target: RouterTarget,
         jobs: list[RadioJob],
     ) -> None:
+        """Splice console commands to the front of this unit. Other lanes stay."""
         uq = self.get_or_create(target)
-        uq.manual = True
-        uq.manual_job = "console"
-        uq.manual_bump = True
         uq.apply_aborted = False
         uq.succeeded = False
         for job in jobs:
             job.manual = True
             job.manual_job = "console"
             job.unit_key = target.key
-        uq.jobs.extend(jobs)
+        for job in reversed(jobs):
+            uq.jobs.appendleft(job)
         uq.backoff_until = 0.0
         self._wake_idle()
 
@@ -215,7 +218,8 @@ class FleetScheduler:
                 continue
             if uq.jobs:
                 self._cancel_timer(uq)
-                uq.jobs.clear()
+                if keep_console_jobs(uq):
+                    continue
                 dropped.append(key)
         return dropped
 
@@ -306,6 +310,8 @@ class FleetScheduler:
             if job.kind.startswith("apply:"):
                 uq.jobs.popleft()
                 drop_remaining_apply(uq)
+            elif is_console_job(job):
+                drop_console_jobs(uq)
             else:
                 uq.jobs.clear()
                 uq.apply_aborted = True
@@ -320,8 +326,10 @@ class FleetScheduler:
                     job.future.set_exception(
                         TimeoutError(f"{job.kind} gave up after {self.max_attempts} attempts")
                     )
-                if job.kind in ("login", "console:login"):
+                if job.kind == "login":
                     uq.jobs.clear()
+                elif job.kind == "console:login":
+                    drop_console_jobs(uq)
                 elif job.kind.startswith("apply:"):
                     extra = drop_remaining_apply(uq)
                     if isinstance(dropped, list):
@@ -351,8 +359,6 @@ class FleetScheduler:
         now = now or time.monotonic()
         candidates: list[tuple[int, float, str, UnitQueue, RadioJob]] = []
         for key, uq in self.units.items():
-            if self.exclusive_key is not None and key != self.exclusive_key:
-                continue
             if not uq.jobs:
                 continue
             if uq.backoff_until > now:
@@ -363,8 +369,7 @@ class FleetScheduler:
             job = uq.jobs[0]
             if job.kind in TIMER_JOB_KINDS:
                 continue
-            tier = 0 if uq.manual else 1
-            candidates.append((tier, uq.last_served, key, uq, job))
+            candidates.append((_pick_tier(uq, job), uq.last_served, key, uq, job))
         if not candidates:
             return None
         candidates.sort(key=lambda row: (row[0], row[1], row[2]))

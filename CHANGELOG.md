@@ -8,11 +8,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
-- Fleet detail **Console**: exclusive manual CLI on one unit while the
-  companion worker is live. Pauses auto poll/apply fleet-wide; flood +
-  `--attempts` retries; Cancel; audit rows tagged `source=console`.
-  Tracked poll CLI replies (`ota status`, `ver`, …) stamp last-seen.
-  `./envybot cmd` unchanged.
+- Fleet detail **Console**: priority manual CLI on one unit. Opening the
+  panel does not take the radio. Typed lines jump the queue and retry
+  without rotating to other units (flood + `--attempts`; Cancel). Cadence
+  keeps running while the prompt is idle. Audit rows tagged
+  `source=console`. Tracked poll CLI replies (`ota status`, `ver`, …)
+  stamp last-seen. `./envybot cmd` unchanged.
 
 - Book field `ota_autofetch` (`off`|`any`|`signed`, default `off`). Fleet Push
   and USB onboard SET `ota config autofetch off` when the apply stamp is due.
@@ -77,7 +78,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   turn, then rotate. Discover wait is a background timer (does not hold the
   radio). Manual Refresh/Pull/Push bump one command, then that unit rejoins
   rotation. Timeouts park the head job while other lanes interleave. Startup
-  line counts **units** queued (commands in parentheses).
+  line counts **units** queued (commands in parentheses). Progress logs a
+  unit heading on each lane change (`(console)` / `(refresh)` / …). Steps
+  stay indented under that heading.
+
 - Fleet attempt logs show scheduler **`N/max`** (e.g. `8/10`); drop empty
   `retrying: None`. On per-command cap: `gave up after N, continuing`; on unit
   done with dropped groups: `partial OK`.

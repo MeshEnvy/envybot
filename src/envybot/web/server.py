@@ -135,17 +135,6 @@ class MonitorWeb:
             return 400, f"unknown job {job}"
         if not self._accepting:
             return 409, "fleet worker not accepting manual jobs"
-        if (
-            self._binding is not None
-            and self._binding.scheduler.exclusive_key is not None
-            and self._binding.scheduler.exclusive_key != key
-        ):
-            return 409, "exclusive console active on another unit"
-        if (
-            self._binding is not None
-            and self._binding.scheduler.exclusive_key == key
-        ):
-            return 409, "exclusive console active on this unit"
         doc = load_nodes_doc(self.nodes_path)
         nodes = doc.get("nodes") or {}
         node = nodes.get(key)
@@ -197,14 +186,17 @@ class MonitorWeb:
         )
         return status, err
 
-    def _load_target(self, key: str) -> tuple[int, str | None, Any | None]:
+    def _load_target(
+        self, key: str, *, require_worker: bool = True
+    ) -> tuple[int, str | None, Any | None]:
         from envybot.nodes_doc import is_decommissioned, is_meshcore_platform
 
         key = key.lower()
-        if not self._accepting:
-            return 409, "fleet worker not accepting manual jobs", None
-        if self._binding is None:
-            return 409, "fleet worker not accepting manual jobs", None
+        if require_worker:
+            if not self._accepting:
+                return 409, "fleet worker not accepting manual jobs", None
+            if self._binding is None:
+                return 409, "fleet worker not accepting manual jobs", None
         doc = load_nodes_doc(self.nodes_path)
         nodes = doc.get("nodes") or {}
         node = nodes.get(key)
@@ -218,19 +210,19 @@ class MonitorWeb:
         return 200, None, targets[0]
 
     async def open_console(self, key: str) -> tuple[int, str | None, dict[str, Any] | None]:
-        status, err, target = self._load_target(key)
-        if status != 200 or target is None or self._binding is None:
+        status, err, target = self._load_target(key, require_worker=False)
+        if status != 200 or target is None:
             return status, err, None
         binding = self._binding
-        session = getattr(self, "_fleet_session", None)
-        if session is not None:
-            session.audit_source = "console"
+        max_attempts = 10
+        scheduler = None
+        if binding is not None:
+            scheduler = binding.scheduler
+            max_attempts = binding.scheduler.max_attempts or 10
         await self.console.open(
             key=key,
-            scheduler=binding.scheduler,
-            target=target,
-            max_attempts=binding.scheduler.max_attempts or 10,
-            manual_keys=binding.manual_keys,
+            scheduler=scheduler,
+            max_attempts=max_attempts,
         )
         poll = dict(self._poll_state)
         poll["console"] = self.console.active.poll_console() if self.console.active else None
@@ -257,6 +249,7 @@ class MonitorWeb:
             cmd=cmd,
             scheduler=self._binding.scheduler,
             target=target,
+            session=getattr(self, "_fleet_session", None),
         )
         try:
             result = await fut
@@ -276,27 +269,18 @@ class MonitorWeb:
         key = key.lower()
         if self.console.active is None or self.console.active.key != key:
             return 409, "console not open for this unit"
-        if self._binding is None:
-            return 409, "fleet worker not accepting manual jobs"
         session = getattr(self, "_fleet_session", None)
-        await self.console.cancel(
-            scheduler=self._binding.scheduler,
-            session=session,
-        )
+        scheduler = self._binding.scheduler if self._binding is not None else None
+        await self.console.cancel(scheduler=scheduler, session=session)
         return 200, None
 
     async def close_console(self, key: str) -> tuple[int, str | None]:
         key = key.lower()
         if self.console.active is None or self.console.active.key != key:
             return 409, "console not open for this unit"
-        if self._binding is None:
-            return 409, "fleet worker not accepting manual jobs"
         session = getattr(self, "_fleet_session", None)
-        await self.console.close(
-            scheduler=self._binding.scheduler,
-            manual_keys=self._binding.manual_keys,
-            session=session,
-        )
+        scheduler = self._binding.scheduler if self._binding is not None else None
+        await self.console.close(scheduler=scheduler, session=session)
         poll = dict(self._poll_state)
         poll.pop("console", None)
         await self.refresh_snapshot(

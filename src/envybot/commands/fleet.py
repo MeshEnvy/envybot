@@ -22,7 +22,13 @@ from envybot.fleet_worker import (
     job_sample,
 )
 from envybot.history import migrate_legacy
-from envybot.jobs import FleetScheduler, JobOutcome
+from envybot.jobs import (
+    TIMER_JOB_KINDS,
+    FleetScheduler,
+    JobOutcome,
+    is_console_job,
+    keep_console_jobs,
+)
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
     is_paused,
@@ -59,6 +65,27 @@ from envybot.radio import (
 from envybot.web.snapshot import DEFAULT_STALE_SECS
 
 CADENCE_CHECK_S = 60.0
+
+
+def _lane_tag(job: Any, uq: Any) -> str | None:
+    if is_console_job(job):
+        return "console"
+    if uq.manual and uq.manual_job:
+        return str(uq.manual_job)
+    return None
+
+
+def _print_lane_heading(target: Any, job: Any, uq: Any, current_lane: str | None) -> str:
+    """Unindented heading when the radio moves to a different unit."""
+    key = target.key
+    if key == current_lane:
+        return key
+    heading = target_label(target)
+    tag = _lane_tag(job, uq)
+    if tag:
+        heading = f"{heading}  ({tag})"
+    print(f"{heading} …", flush=True)
+    return key
 
 
 async def _serve_web_until_stop(web_ctx: Any, poll_exit: int) -> int:
@@ -362,11 +389,14 @@ async def run(args: argparse.Namespace) -> int:
     yaml_dirty = False
     round_num = 0
     total = max(initial_units, len(all_targets))
+    current_lane: str | None = None
+    planned_lanes: set[str] = set()
 
     async def on_job_start(uq: Any, job: Any) -> None:
+        nonlocal current_lane
         target = uq.target
         uq.session_extra["console_manager"] = web_ctx.console if web_ctx else None
-        if scheduler.exclusive_key == target.key:
+        if is_console_job(job):
             session.audit_source = "console"
         elif session.audit_source == "console":
             session.audit_source = None
@@ -389,21 +419,23 @@ async def run(args: argparse.Namespace) -> int:
         apply_due_now = job_name == "push" or apply_is_due(
             conn, target.key, node_record, sites, force=unit_force, doc=doc, keys=keys
         )
-        if not args.quiet and job.kind == "login":
-            prefix = f"[{job.attempt + 1}] " if job.attempt > 0 else ""
-            print(f"{prefix}{target_label(target)} …", flush=True)
-            if do_poll and target.due_groups:
-                need, skip_plan = format_get_plan(
-                    conn, target.key, target.due_groups, policy=policy, now=int(time.time())
-                )
-                print(f"  poll need: {need}")
-                print(f"  poll skip: {skip_plan}")
-            if do_apply and apply_due_now:
-                apply_need, apply_have = format_apply_plan(
-                    conn, target.key, node_record, sites, force=unit_force, doc=doc, keys=keys
-                )
-                print(f"  apply need: {apply_need}")
-                print(f"  apply skip: {apply_have}")
+        if not args.quiet and job.kind not in TIMER_JOB_KINDS:
+            entered = current_lane != target.key
+            current_lane = _print_lane_heading(target, job, uq, current_lane)
+            if entered and target.key not in planned_lanes and job.kind == "login":
+                planned_lanes.add(target.key)
+                if do_poll and target.due_groups:
+                    need, skip_plan = format_get_plan(
+                        conn, target.key, target.due_groups, policy=policy, now=int(time.time())
+                    )
+                    print(f"  poll need: {need}")
+                    print(f"  poll skip: {skip_plan}")
+                if do_apply and apply_due_now:
+                    apply_need, apply_have = format_apply_plan(
+                        conn, target.key, node_record, sites, force=unit_force, doc=doc, keys=keys
+                    )
+                    print(f"  apply need: {apply_need}")
+                    print(f"  apply skip: {apply_have}")
         session_states[target.key] = in_flight_session(
             manual_job=job_name if uq.manual else None,
             job_kind=job.kind,
@@ -412,7 +444,7 @@ async def run(args: argparse.Namespace) -> int:
             due_groups=list(getattr(target, "due_groups", [])),
             apply=apply_due_now,
         )
-        if uq.manual_job == "console":
+        if is_console_job(job):
             session_states[target.key] = {
                 "state": "console",
                 "kind": job.kind,
@@ -452,7 +484,8 @@ async def run(args: argparse.Namespace) -> int:
             elif job.kind == "console:login" and outcome in (
                 JobOutcome.TIMEOUT,
                 JobOutcome.HARD_FAIL,
-            ) and not uq.jobs:
+                JobOutcome.CANCELLED,
+            ) and not any(is_console_job(j) for j in uq.jobs):
                 await web_ctx.console.on_cli_done(
                     ok=False,
                     reply=None,
@@ -499,7 +532,7 @@ async def run(args: argparse.Namespace) -> int:
         if prev.get("state") == "paused":
             pass
         elif (
-            uq.manual_job != "console"
+            not is_console_job(job)
             and not apply_job
             and (
                 outcome == JobOutcome.HARD_FAIL
@@ -514,10 +547,10 @@ async def run(args: argparse.Namespace) -> int:
             if not args.quiet:
                 print(f"  unreachable: {payload}")
             manual_keys.discard(target.key)
-        elif uq.manual_job == "console" and scheduler.exclusive_key == target.key:
+        elif is_console_job(job) and uq.jobs and is_console_job(uq.jobs[0]):
             session_states[target.key] = {
                 "state": "console",
-                "kind": uq.jobs[0].kind if uq.jobs else "ready",
+                "kind": uq.jobs[0].kind,
             }
         elif uq.jobs:
             head = uq.jobs[0]
@@ -543,10 +576,7 @@ async def run(args: argparse.Namespace) -> int:
                 elif scheduler.max_attempts:
                     print(f"  {job.kind}: gave up after {scheduler.max_attempts}, continuing")
         else:
-            if uq.manual_job == "console" and scheduler.exclusive_key == target.key:
-                session_states[target.key] = {"state": "console", "kind": "ready"}
-            else:
-                session_states[target.key] = {"state": "ok", "due_groups": []}
+            session_states[target.key] = {"state": "ok", "due_groups": []}
             dropped = uq.session_extra.get("dropped_jobs") or []
             if (
                 not args.quiet
@@ -594,9 +624,14 @@ async def run(args: argparse.Namespace) -> int:
         if not await session.ensure_companion_connected(log=log):
             return JobOutcome.TIMEOUT, "companion disconnected"
         sync_paused(nodes_path, nodes)
-        if is_paused(nodes.get(uq.target.key)) and uq.target.key not in manual_keys:
-            uq.jobs.clear()
-            session_states[uq.target.key] = {"state": "paused"}
+        if (
+            is_paused(nodes.get(uq.target.key))
+            and uq.target.key not in manual_keys
+            and not is_console_job(job)
+        ):
+            keep_console_jobs(uq)
+            if not uq.jobs:
+                session_states[uq.target.key] = {"state": "paused"}
             return JobOutcome.HARD_FAIL, "paused"
         uq.session_extra["force_apply"] = args.force or uq.manual_job == "push"
         return await execute_job(job, uq, worker_ctx)
@@ -632,9 +667,6 @@ async def run(args: argparse.Namespace) -> int:
                 await scheduler.wait_for_work(timeout=CADENCE_CHECK_S)
                 if scheduler._stop:
                     break
-                if scheduler.exclusive_key is not None:
-                    await scheduler.wait_for_work(timeout=1.0)
-                    continue
                 cadence_policy = PollPolicy(
                     force=False,
                     live_only=args.live and not args.force,
@@ -685,8 +717,6 @@ async def run(args: argparse.Namespace) -> int:
             if args.once:
                 break
             if scheduler.pending_count() == 0:
-                continue
-            if scheduler.exclusive_key is not None:
                 continue
             cadence_policy = PollPolicy(
                 force=False,

@@ -131,7 +131,7 @@ const App = {
 
     const manualAccepting = computed(() => !!fleet.poll?.accepting)
 
-    const exclusiveConsoleKey = computed(() => {
+    const openConsoleKey = computed(() => {
       const c = fleet.poll?.console
       if (!c || typeof c !== 'object') return null
       const key = c.key
@@ -148,7 +148,7 @@ const App = {
     const consoleStatusLine = computed(() => {
       const ev = consoleLive.value
       if (!ev) return ''
-      if (ev.state === 'acquiring') return 'Acquiring exclusive console access…'
+      if (ev.state === 'acquiring') return 'Logging in…'
       if (ev.state === 'sending' && ev.attempt && ev.max_attempts) {
         return `(attempt ${ev.attempt}/${ev.max_attempts}…)`
       }
@@ -175,7 +175,6 @@ const App = {
     /** @param {Record<string, unknown> | undefined} unit @param {'refresh' | 'pull' | 'push'} [job] */
     function canManualUnit(unit, job) {
       if (!unit || !manualAccepting.value) return false
-      if (exclusiveConsoleKey.value) return false
       return true
     }
 
@@ -184,7 +183,7 @@ const App = {
     }
 
     function activeConsoleKey() {
-      const held = exclusiveConsoleKey.value
+      const held = openConsoleKey.value
       if (held) return held
       if (consoleMode.value && selectedKey.value) return selectedKey.value
       return null
@@ -244,7 +243,7 @@ const App = {
     async function startConsole(unit) {
       if (!unit?.key) return
       consoleMode.value = true
-      consoleLive.value = { state: 'acquiring', key: unit.key }
+      consoleLive.value = { state: 'ready', key: unit.key }
       syncLocation(String(unit.key), { console: true })
       try {
         const ev = await apiOpenConsole(String(unit.key))
@@ -311,7 +310,7 @@ const App = {
     async function maybeReopenConsole() {
       const key = unitKeyFromLocation()
       if (!key || !consoleFromLocation()) return
-      if (exclusiveConsoleKey.value === key) {
+      if (openConsoleKey.value === key) {
         consoleMode.value = true
         return
       }
@@ -946,7 +945,7 @@ const App = {
       consoleBusy,
       consoleStatusLine,
       consoleLive,
-      exclusiveConsoleKey,
+      openConsoleKey,
       startConsole,
       exitConsole,
       clearConsoleHistory,
@@ -1030,7 +1029,6 @@ const App = {
                 v-if="!consoleMode"
                 type="button"
                 class="manual-btn manual-btn-console"
-                :disabled="!!exclusiveConsoleKey && exclusiveConsoleKey !== selectedUnit.key"
                 @click="startConsole(selectedUnit)"
               >
                 Console
@@ -1046,7 +1044,7 @@ const App = {
               <button
                 type="button"
                 class="manual-btn"
-                :disabled="!canManualUnit(selectedUnit, 'refresh') || consoleMode"
+                :disabled="!canManualUnit(selectedUnit, 'refresh')"
                 @click="runManualJob(selectedUnit, 'refresh', $event)"
               >
                 Refresh
@@ -1054,7 +1052,7 @@ const App = {
               <button
                 type="button"
                 class="manual-btn"
-                :disabled="!canManualUnit(selectedUnit, 'pull') || consoleMode"
+                :disabled="!canManualUnit(selectedUnit, 'pull')"
                 @click="runManualJob(selectedUnit, 'pull', $event)"
               >
                 Pull
@@ -1062,7 +1060,7 @@ const App = {
               <button
                 type="button"
                 class="manual-btn manual-btn-push"
-                :disabled="!canManualUnit(selectedUnit, 'push') || consoleMode"
+                :disabled="!canManualUnit(selectedUnit, 'push')"
                 @click="runManualJob(selectedUnit, 'push', $event)"
               >
                 Push

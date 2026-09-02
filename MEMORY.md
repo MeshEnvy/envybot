@@ -35,7 +35,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/commands/trust.py` | Contacts + channels + keys.yaml / ACL login |
 | `src/envybot/commands/cmd.py` | Remote MeshCore CLI |
 | `src/envybot/commands/onboard.py` | USB repeater text CLI onboard (`path.hash.mode` 1, `get acl` is `ACL:` dump). Stamps private `applies` so fleet is ready. |
-| `src/envybot/web/` | Fleet UI (`:8787`); detail **Console** (exclusive CLI) |
+| `src/envybot/web/` | Fleet UI (`:8787`); detail **Console** (priority CLI) |
 
 ## Contract
 
@@ -94,15 +94,17 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   (login, SET if profile due, then GET groups). Apply is spliced onto a
   busy GET lane when the stamp is out of sync. One dispatcher sends one radio command per
   unit per turn, then rotates to the least-recently-served ready lane. Timeout
-  parks that unit's head job; other lanes keep sending. `--attempts` is the
+  parks that unit's head job; other lanes keep sending. A `console:*` head
+  stays on the radio until heard, exhausted, or Cancel (does not rotate).
+  `--attempts` is the
   per-command retry cap (scheduler-owned); logs show `N/max` not `N/1`.
   Successful GET_STATUS / GET_TELEMETRY / CLI log a one-line result as soon
   as they land (same beat as `login OK`).
   Every mesh send resets companion out_path to flood first (`mesh_audit.path`
   should read `flood`; hop strings indicate a firmware leak). Neighbor discover wait (default 12s) is a background timer, not radio hold.
-  Manual Refresh/Pull/Push always replace that unit's remaining jobs and
-  stay at the front of the radio until that click finishes. A click mid-GET
-  supersedes the in-flight result (does not pop the new head). Sqlite stamps incrementally per successful GET/SET. Apply GETs ACL when
+  Manual Refresh/Pull/Push replace that unit's remaining jobs except a
+  queued console send (stays in front). A click mid-GET supersedes the
+  in-flight result (does not pop the new head). Sqlite stamps incrementally per successful GET/SET. Apply GETs ACL when
   due to drop extras. A SET timeout parks and retries. A SET CLI error or
   exhausted `--attempts` abort remaining SET jobs this pass (GET stays).
   Poll and apply password-login every MeshCore unit. Live RTC from login
@@ -130,11 +132,12 @@ Separate USB OTA repeater for `motatool serve`.
   **Refresh**, **Pull**, and **Push** always enqueue (even while that unit
   is polling) and run ahead of auto work until the click is done. Overrides
   `--skip` and `paused`. Refresh is live GET only; Pull adds sticky GET;
-  Push is SET-only force. **Console** (detail) holds exclusive companion
-  access for one unit: pauses all other fleet radio work, manual CLI with
-  flood + scheduler retries, audit `source=console`. Tracked CLI poll
-  replies (`ota status`, `ver`, …) stamp last-seen like Refresh. Exit
-  resumes auto poll/apply for everyone.
+  Push is SET-only force. **Console** (detail) is a UI session: opening
+  does not touch the radio. Typed CLI splices to the front of that unit
+  (login on first send if not authed) and keeps the radio until heard,
+  exhausted, or Cancel. Other lanes stay queued. Cadence runs while the
+  prompt is idle. Audit `source=console`. Tracked CLI poll replies
+  (`ota status`, `ver`, …) stamp last-seen like Refresh.
   Push force-SETs profile (including passwords). CLI `--force` is Pull plus
   Push. Auto-apply queues when `apply_is_due` even if the fleet is mid-sync.
   **Pause** (detail checkbox) writes `paused: true` and drops the unit from
@@ -168,4 +171,4 @@ Separate USB OTA repeater for `motatool serve`.
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-02 (due vs leak; ota autofetch unsupported stamps)
+Last updated: 2026-09-02 (console is priority lane, not exclusive)

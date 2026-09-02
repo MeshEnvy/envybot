@@ -226,6 +226,28 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kinds, ["apply:advert", "get:status"])
         self.assertTrue(sched.units["me0001"].apply_aborted)
 
+    async def test_console_retries_do_not_rotate(self) -> None:
+        sched = FleetScheduler(max_attempts=3, retry_delay=0.0)
+        cons = _target("me0001")
+        other = _target("me0002")
+        sched.enqueue_console(
+            cons, [RadioJob(kind="console:cli", unit_key="me0001")]
+        )
+        sched.enqueue_manual(
+            other, "refresh", [RadioJob(kind="login", unit_key="me0002")]
+        )
+        order: list[str] = []
+
+        async def execute(job: RadioJob, uq: UnitQueue) -> tuple[JobOutcome, object | None]:
+            order.append(uq.target.key)
+            if job.kind == "console:cli" and job.attempt < 2:
+                return JobOutcome.TIMEOUT, "cli timeout"
+            return JobOutcome.HEARD, None
+
+        await sched.run(execute, once=True)
+        self.assertEqual(order[:3], ["me0001", "me0001", "me0001"])
+        self.assertIn("me0002", order)
+
     async def test_max_attempts_drops_job(self) -> None:
         sched = FleetScheduler(max_attempts=2, retry_delay=0.0)
         t = _target()
@@ -291,28 +313,78 @@ class PickNextTests(unittest.TestCase):
         self.assertEqual(uq.target.key, "me0002")
         self.assertTrue(sched.units["me0002"].manual)
 
-    def test_exclusive_pick_only_held_unit(self) -> None:
+    def test_console_outranks_manual_and_auto(self) -> None:
         sched = FleetScheduler()
-        a = _target("me0001")
-        b = _target("me0002")
-        sched.enqueue_jobs(a, [RadioJob(kind="login", unit_key="me0001")])
-        sched.enqueue_jobs(b, [RadioJob(kind="login", unit_key="me0002")])
-        sched.set_exclusive("me0002")
+        auto = _target("me0001")
+        manual = _target("me0002")
+        cons = _target("me0003")
+        sched.enqueue_jobs(auto, [RadioJob(kind="login", unit_key="me0001")])
+        sched.enqueue_manual(
+            manual, "refresh", [RadioJob(kind="login", unit_key="me0002")]
+        )
         sched.enqueue_console(
-            b,
-            [RadioJob(kind="console:login", unit_key="me0002", manual=True, manual_job="console")],
+            cons, [RadioJob(kind="console:cli", unit_key="me0003")]
         )
         picked = sched.pick_next(0.0)
         assert picked is not None
         uq, job = picked
-        self.assertEqual(uq.target.key, "me0002")
-        self.assertEqual(job.kind, "console:login")
+        self.assertEqual(uq.target.key, "me0003")
+        self.assertEqual(job.kind, "console:cli")
+        self.assertTrue(sched.units["me0001"].jobs)
+        self.assertTrue(sched.units["me0002"].jobs)
 
-    def test_clear_exclusive(self) -> None:
+    def test_enqueue_console_prepends_without_clearing(self) -> None:
         sched = FleetScheduler()
-        sched.set_exclusive("me0001")
-        sched.clear_exclusive()
-        self.assertIsNone(sched.exclusive_key)
+        t = _target("me0001")
+        other = _target("me0002")
+        sched.enqueue_jobs(
+            t,
+            [
+                RadioJob(kind="login", unit_key="me0001"),
+                RadioJob(kind="get:status", unit_key="me0001"),
+            ],
+        )
+        sched.enqueue_jobs(other, [RadioJob(kind="login", unit_key="me0002")])
+        sched.enqueue_console(t, [RadioJob(kind="console:cli", unit_key="me0001")])
+        kinds = [j.kind for j in sched.units["me0001"].jobs]
+        self.assertEqual(kinds, ["console:cli", "login", "get:status"])
+        self.assertEqual(len(sched.units["me0002"].jobs), 1)
+
+    def test_enqueue_manual_keeps_console_jobs(self) -> None:
+        sched = FleetScheduler()
+        t = _target("me0001")
+        sched.enqueue_console(t, [RadioJob(kind="console:cli", unit_key="me0001")])
+        sched.enqueue_manual(
+            t,
+            "refresh",
+            [
+                RadioJob(kind="login", unit_key="me0001"),
+                RadioJob(kind="get:status", unit_key="me0001"),
+            ],
+        )
+        kinds = [j.kind for j in sched.units["me0001"].jobs]
+        self.assertEqual(kinds[0], "console:cli")
+        self.assertIn("login", kinds)
+        self.assertIn("get:status", kinds)
+
+    def test_drop_auto_paused_keeps_console(self) -> None:
+        sched = FleetScheduler()
+        t = _target("me0001")
+        sched.enqueue_jobs(t, [RadioJob(kind="login", unit_key="me0001")])
+        sched.enqueue_console(t, [RadioJob(kind="console:cli", unit_key="me0001")])
+        dropped = sched.drop_auto_paused({"me0001"}, manual_keys=set())
+        self.assertEqual(dropped, [])
+        kinds = [j.kind for j in sched.units["me0001"].jobs]
+        self.assertEqual(kinds, ["console:cli"])
+
+    def test_cancel_console_jobs_leaves_auto(self) -> None:
+        sched = FleetScheduler()
+        t = _target("me0001")
+        sched.enqueue_jobs(t, [RadioJob(kind="get:status", unit_key="me0001")])
+        sched.enqueue_console(t, [RadioJob(kind="console:cli", unit_key="me0001")])
+        self.assertTrue(sched.cancel_console_jobs("me0001"))
+        kinds = [j.kind for j in sched.units["me0001"].jobs]
+        self.assertEqual(kinds, ["get:status"])
 
     def test_console_cli_future_deferred_to_manager(self) -> None:
         sched = FleetScheduler()
@@ -330,6 +402,41 @@ class PickNextTests(unittest.TestCase):
         sched._settle_job(uq, job, JobOutcome.HEARD, "OTA | fw v1", {})
         self.assertFalse(fut.done())
         loop.close()
+
+
+class LaneHeadingTests(unittest.TestCase):
+    def test_lane_tag(self) -> None:
+        from envybot.commands.fleet import _lane_tag
+
+        cons = RadioJob(kind="console:cli", unit_key="me0001")
+        uq = UnitQueue(target=_target())
+        self.assertEqual(_lane_tag(cons, uq), "console")
+        uq.manual = True
+        uq.manual_job = "refresh"
+        login = RadioJob(kind="login", unit_key="me0001")
+        self.assertEqual(_lane_tag(login, uq), "refresh")
+        uq.manual = False
+        uq.manual_job = None
+        self.assertIsNone(_lane_tag(login, uq))
+
+    def test_heading_only_on_lane_change(self) -> None:
+        from io import StringIO
+        from unittest.mock import patch
+
+        from envybot.commands.fleet import _print_lane_heading
+
+        t = _target("me0001")
+        uq = UnitQueue(target=t)
+        job = RadioJob(kind="login", unit_key="me0001")
+        with patch("sys.stdout", new=StringIO()) as buf:
+            lane = _print_lane_heading(t, job, uq, None)
+            self.assertEqual(lane, "me0001")
+            self.assertIn("ME0001", buf.getvalue())
+            buf.truncate(0)
+            buf.seek(0)
+            lane = _print_lane_heading(t, job, uq, "me0001")
+            self.assertEqual(lane, "me0001")
+            self.assertEqual(buf.getvalue(), "")
 
 
 if __name__ == "__main__":

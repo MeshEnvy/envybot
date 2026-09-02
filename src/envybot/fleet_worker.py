@@ -633,6 +633,7 @@ async def _execute_console_cli(
     cmd = str(job.extra.get("cmd") or "").strip()
     if not cmd:
         return JobOutcome.HARD_FAIL, "empty command"
+    cancel_gen = int(job.extra.get("cancel_gen") or 0)
     if not ctx.session.is_authed(target.key):
         if not uq.jobs or uq.jobs[0].kind != "console:login":
             uq.jobs.insert(
@@ -642,10 +643,10 @@ async def _execute_console_cli(
                     unit_key=target.key,
                     manual=True,
                     manual_job="console",
+                    extra={"cancel_gen": cancel_gen},
                 ),
             )
         return JobOutcome.TIMEOUT, "not authed"
-    cancel_gen = int(job.extra.get("cancel_gen") or 0)
     manager = uq.session_extra.get("console_manager")
 
     def cancel_check() -> bool:
@@ -683,6 +684,7 @@ async def _execute_console_cli(
                     unit_key=target.key,
                     manual=True,
                     manual_job="console",
+                    extra={"cancel_gen": cancel_gen},
                 ),
             )
         return JobOutcome.TIMEOUT, "auth"
@@ -727,6 +729,16 @@ async def execute_job(
         return JobOutcome.TIMEOUT, err
 
     if job.kind == "console:login":
+        cancel_gen = int(job.extra.get("cancel_gen") or 0)
+        manager = uq.session_extra.get("console_manager")
+
+        def cancel_check() -> bool:
+            if ctx.session.console_cli_cancel_gen > cancel_gen:
+                return True
+            if manager is not None and manager.cancel_check(cancel_gen):
+                return True
+            return False
+
         ok, err, clock = await admin_login_attempt(
             ctx.client,
             target,
@@ -735,11 +747,14 @@ async def execute_job(
             log=ctx.log,
             attempt_num=attempt_num,
             attempt_cap=attempt_cap,
+            cancel_check=cancel_check,
         )
         if ok:
             acc.node_clock = clock
             uq.session_extra["login_clock"] = clock
             return JobOutcome.HEARD, clock
+        if err and "cancelled" in str(err).lower():
+            return JobOutcome.CANCELLED, err
         if err and "rejected" in str(err).lower():
             return JobOutcome.HARD_FAIL, err
         return JobOutcome.TIMEOUT, err

@@ -119,17 +119,19 @@ is visually distinct; it rewrites passwords). CLI `--force` is Pull plus Push.
 
 ### Console (detail card)
 
-While the companion worker is live, **Console** on the detail card acquires
-exclusive radio access for that unit. Auto poll/apply pauses fleet-wide until
-**Exit console**, close, or Escape. One console session at a time.
+**Console** on the detail card is a UI session. Opening it does not pause
+poll/apply. One panel at a time (switching units closes the previous).
 
-- Opens with `console:login` (same `--attempts` retry cap as GET/SET).
 - Typed lines are MeshCore CLI (`ota stats`, `get name`, …) with flood before
-  each send.
-- Status line shows `(attempt N/10…)` with **Cancel** (user cancel, not a
-  timeout retry).
-- Refresh / Pull / Push / Stage / Install return HTTP 409 while exclusive.
-- `--web-only` cannot open console (409).
+  each send. Login runs on the first send if that unit is not already authed
+  (same `--attempts` cap as GET/SET).
+- That command jumps to the front of the radio and retries without rotating
+  to other units until heard, exhausted, or **Cancel**.
+- An in-flight poll/apply wait finishes, then the console head runs.
+- Refresh / Pull / Push stay available. They sit behind a queued console
+  send on the same unit.
+- `--web-only` can open the panel; send returns 409 until a companion
+  worker is live.
 - URL: `?unit=me0032&console=1` for reload.
 - Audit: `commands.source='console'` and `mesh_audit.source='console'` (same
   tables as `./envybot cmd`; redacted passwords).

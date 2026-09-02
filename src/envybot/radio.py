@@ -1975,9 +1975,14 @@ async def reset_to_flood(
 
 
 async def wait_login_response(
-    client: MeshCore, prefix: str, *, timeout: float
+    client: MeshCore,
+    prefix: str,
+    *,
+    timeout: float,
+    cancel_check: Any | None = None,
 ) -> tuple[str, Any | None]:
     filters = {"pubkey_prefix": prefix}
+    deadline = time.monotonic() + timeout
     success_task = asyncio.create_task(
         client.dispatcher.wait_for_event(
             EventType.LOGIN_SUCCESS, attribute_filters=filters, timeout=timeout
@@ -1988,19 +1993,32 @@ async def wait_login_response(
             EventType.LOGIN_FAILED, attribute_filters=filters, timeout=timeout
         )
     )
-    done, pending = await asyncio.wait(
-        {success_task, failed_task}, return_when=asyncio.FIRST_COMPLETED, timeout=timeout
-    )
-    for task in pending:
-        task.cancel()
-    for task in done:
-        event = task.result()
-        if event is None:
-            continue
-        if task is success_task:
-            return "success", event
-        return "failed", event
-    return "timeout", None
+    try:
+        while True:
+            if cancel_check is not None and cancel_check():
+                return "cancelled", None
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return "timeout", None
+            wait_t = min(left, 0.25) if cancel_check is not None else left
+            done, _ = await asyncio.wait(
+                {success_task, failed_task},
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=wait_t,
+            )
+            if not done:
+                continue
+            for task in done:
+                event = task.result()
+                if event is None:
+                    continue
+                if task is success_task:
+                    return "success", event
+                return "failed", event
+            return "timeout", None
+    finally:
+        success_task.cancel()
+        failed_task.cancel()
 
 
 async def admin_login(
@@ -2124,6 +2142,7 @@ async def admin_login_attempt(
     log: PollLog | None = None,
     attempt_num: int = 1,
     attempt_cap: int | None = None,
+    cancel_check: Any | None = None,
 ) -> tuple[bool, str | None, int | None]:
     """Single login send+wait."""
     log = log or PollLog()
@@ -2185,9 +2204,15 @@ async def admin_login_attempt(
             n_of=n_of,
         )
         exp.audit_id = audit_id
-    status, event = await wait_login_response(client, prefix, timeout=wait_s)
-    if exp is not None and status != "timeout":
+    status, event = await wait_login_response(
+        client, prefix, timeout=wait_s, cancel_check=cancel_check
+    )
+    if exp is not None and status not in ("timeout", "cancelled"):
         session.resolve_expect(exp)
+    if status == "cancelled":
+        _audit_finish(session, audit_id, ok=False, outcome="cancelled", error="cancelled")
+        log.step(f"login {n_of}: cancelled")
+        return False, "cancelled", None
     if status == "success":
         node_clock: int | None = None
         if event and event.payload:
