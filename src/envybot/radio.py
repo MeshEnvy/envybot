@@ -1060,7 +1060,11 @@ def cli_unknown_reply(text: str | None) -> bool:
     if not text:
         return False
     lower = text.lower()
-    return "unknown config" in lower or "unknown command" in lower
+    return (
+        "unknown config" in lower
+        or "unknown ota command" in lower
+        or "unknown command" in lower
+    )
 
 
 def normalize_status_payload(raw: dict[str, Any] | None) -> dict[str, Any] | None:

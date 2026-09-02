@@ -7,6 +7,7 @@ import unittest
 from envybot.radio import (
     cli_admin_password_ok,
     cli_set_ok,
+    cli_unknown_reply,
     ota_self_heard_empty,
     parse_ota_self,
 )
@@ -26,6 +27,17 @@ class CliAdminPasswordTests(unittest.TestCase):
 
     def test_set_ok_still_requires_ok(self) -> None:
         self.assertFalse(cli_set_ok("password now: secret"))
+
+
+class CliUnknownReplyTests(unittest.TestCase):
+    def test_unknown_command(self) -> None:
+        self.assertTrue(cli_unknown_reply("Unknown command"))
+
+    def test_unknown_ota_command(self) -> None:
+        self.assertTrue(cli_unknown_reply("Unknown OTA command. Type `ota help`."))
+
+    def test_ok_is_known(self) -> None:
+        self.assertFalse(cli_unknown_reply("OK autofetch updated (saved)"))
 
 
 class ParseOtaSelfTests(unittest.TestCase):

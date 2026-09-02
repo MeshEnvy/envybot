@@ -529,10 +529,14 @@ body {
   color: #8aa0b5;
 }
 
-.badge-leak,
-.badge-mismatch {
+.badge-due {
   background: #3d221a;
   color: #ff9b6e;
+}
+
+.badge-leak {
+  background: #4a1c1c;
+  color: #ff7a7a;
 }
 
 .detail-toolbar {

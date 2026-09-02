@@ -73,11 +73,13 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   (`m35h3nvy`, placeholders, short), or colliding guests. Admin is never
   invented by apply. Apply SETs book admin (`password`) after ACL/login.
 - Apply due = `profile_id` vs last ok sqlite stamp, or weak guest assign.
-  Per-field stamps in sqlite `applies` (name, lat, lon, …, ota_autofetch). Onboard
-  stamps those after USB SET + ACL (private only). Legacy
+  Per-field stamps in sqlite `applies` (name, lat, lon, …, ota_autofetch).
+  `ota config autofetch` `Unknown command` stamps the field done (no CLI).
+  A SET timeout still retries. Onboard stamps those after USB SET + ACL
+  (private only). Legacy
   `profile` ok row still counts as fully synced. `--force` is Pull plus Push.
-  UI leak / mismatch is the inverse of that stamp (private due / public
-  due), not heard last-seen identity. Poll default: status/telemetry every 1h
+  UI ``due`` is that stamp (apply needed). ``leak`` is heard identity on a
+  private node (name/GPS/advert), not a stale stamp. Poll default: status/telemetry every 1h
   (`--min-interval`); neighbors
   stay 24h (`discover.neighbors` + wait + GET; UI drops rows older
   than 7d). Long-running fleet re-checks due groups about every 60s
@@ -166,4 +168,4 @@ Separate USB OTA repeater for `motatool serve`.
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-02 (trust does not apply Public channel)
+Last updated: 2026-09-02 (due vs leak; ota autofetch unsupported stamps)

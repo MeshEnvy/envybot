@@ -324,17 +324,17 @@ def compute_health(
         checks.append(
             _check(
                 "Config",
-                "warn",
-                "Private node needs profile apply (leak)",
-                fix="Fleet auto-queues a Push when the profile stamp is due. Use Push to force it now.",
+                "bad",
+                "Private node is advertising name, GPS, or adverts",
+                fix="Push the private mask (Repeater, 0,0, advert off). Pull first if last-seen is stale.",
             )
         )
-    elif drift == "mismatch":
+    elif drift == "due":
         checks.append(
             _check(
                 "Config",
                 "warn",
-                "Public node profile mismatch",
+                "Profile apply is due",
                 fix="Fleet auto-queues a Push when the profile stamp is due. Use Push to force it now.",
             )
         )

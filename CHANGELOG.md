@@ -35,12 +35,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- `ota config autofetch` on firmware without the CLI (`Unknown command`)
+  stamps the field done. Non-OTA nodes no longer stay apply-due forever.
+  A SET timeout still retries.
+
 - `_upsert_last_seen` now persists `ota_status_at` / `ota_ls_at` /
   `ota_state` (was writing snapshots only). Console and Refresh both
   rely on those stamps.
 
 - Onboard stamps the private apply profile in sqlite after USB SET +
-  ACL. Fleet no longer treats a freshly onboarded unit as `leak` / first
+  ACL. Fleet no longer treats a freshly onboarded unit as `due` / first
   mesh apply-due.
 
 - Status/telemetry history no longer re-inserts the previous group's
@@ -48,6 +52,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   on a 2-minute gap.
 
 ### Changed
+
+- Fleet drift `due` is a stale apply stamp. `leak` is a private node
+  heard advertising name, GPS, or adverts. Stamp-due is no longer called
+  leak.
 
 - `trust` no longer adds or updates the stock MeshCore Public channel.
   A `public` row in `channels.yaml` is ignored.

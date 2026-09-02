@@ -10,9 +10,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from envybot.fleet_worker import PollAccumulator, WorkerContext, _execute_apply
-from envybot.history import open_history, source_histories
+from envybot.apply import applicable_field_desireds
+from envybot.history import last_ok_apply, open_history, source_histories
 from envybot.jobs import JobOutcome, RadioJob, UnitQueue
-from envybot.radio import PollLog, RouterTarget
+from envybot.radio import OtaAutofetchUnsupported, PollLog, RouterTarget
 
 
 class RecordGroupTests(unittest.TestCase):
@@ -115,6 +116,36 @@ class ApplyTimeoutTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(outcome, JobOutcome.HARD_FAIL)
         self.assertEqual(payload, "advert")
         self.assertEqual([j.kind for j in uq.jobs], ["apply:advert", "apply:flood"])
+
+    async def test_ota_autofetch_unsupported_stamps_done(self) -> None:
+        target = RouterTarget(
+            key="me0048",
+            unit_id="ME0048",
+            name="ME0048",
+            site=None,
+            pubkey_hex="aa" * 32,
+            admin_password="AdminOneStrong1",
+        )
+        node = {
+            "guest_password": "GuestOneStrong1",
+            "admin_password": "AdminOneStrong1",
+            "identity_pubkey": "aa" * 32,
+        }
+        job = RadioJob(kind="apply:ota_autofetch", unit_key="me0048")
+        uq = UnitQueue(target=target, jobs=deque([job]))
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = self._ctx(tmp, node)
+            with patch(
+                "envybot.fleet_worker.set_ota_autofetch_policy",
+                new=AsyncMock(side_effect=OtaAutofetchUnsupported()),
+            ):
+                outcome, payload = await _execute_apply(job, uq, ctx, node, 1)
+            want = applicable_field_desireds(
+                node, None, doc=ctx.doc, keys=ctx.keys, key="me0048"
+            )["ota_autofetch"]
+            self.assertEqual(outcome, JobOutcome.HEARD)
+            self.assertTrue(payload)
+            self.assertEqual(last_ok_apply(ctx.conn, "me0048", "ota_autofetch"), want)
 
 
 if __name__ == "__main__":

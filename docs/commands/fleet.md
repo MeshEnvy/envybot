@@ -48,8 +48,9 @@ while other units are still GETting. No extra radio traffic unless
 status/telemetry is ≥1h stale, neighbors ≥24h, or apply is due. UI
 freshness stays 24h.
 
-Default runs never GET sticky identity fields. Leak / mismatch in the UI
-follow the apply profile stamp, not a heard-identity GET.
+Default runs never GET sticky identity fields. UI ``due`` follows the
+apply profile stamp. ``leak`` is a private node whose last-seen name,
+GPS, or advert interval is unmasked (Pull / ``--group``).
 
 `paused: true` on a node skips auto GET and apply. The unit stays on the
 map. **Refresh**, **Pull**, and **Push** still work from the UI. Unpause
@@ -148,7 +149,8 @@ rolled and written back to the book. `public: true` pushes site name (or
 `unit_id` when bag/bench) plus resolved GPS.
 
 Always also SETs `path.hash.mode` (default 1 = 2-byte), `dutycycle`
-(default 100), `ota config autofetch` (default `off`), a strong book admin
+(default 100), `ota config autofetch` (default `off`; missing CLI stamps
+done), a strong book admin
 via `password`, and clock if unset
 or behind. Password-login every unit before GET or SET (login establishes
 the repeater session and refreshes mesh paths). Live clock comes from
@@ -202,8 +204,8 @@ device `0,0`. Pin color is last-heard age (green now, amber at 12h, red at
 24h+; never-heard is gray). Labels are `Site (3h)` when bound, else book
 alias, else unit id. Age ticks live from `last_heard`. Detail shows unit id and site name, editable **alias** and **notes**
 (when bag/bench, alias becomes the list title), a `public` toggle, and drift
-from the apply stamp (`leak` if a private profile is due, `mismatch` if a
-public profile is due). List cards show the same primary label with unit id
+from the apply stamp (`due` when the profile is stale) or heard identity
+(`leak` when a private radio is advertising name, GPS, or adverts). List cards show the same primary label with unit id
 as secondary when it differs. While the companion worker is live, **Refresh** on a
 unit pulls live telemetry now; **Pull** also GETs fw/name/GPS/advert/acl;
 **Push** force-SETs the book profile (overrides `--skip`, `paused`, and

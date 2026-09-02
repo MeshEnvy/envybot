@@ -300,7 +300,7 @@ def stamp_profile_after_onboard(
 ) -> str | None:
     """After USB onboard applied the private mask, stamp every SET field.
 
-    Fleet-ready: apply is not due and the UI must not show leak. USB always
+    Fleet-ready: apply is not due and the UI must not show due. USB always
     writes the private mask, so a ``public: true`` row is left unstamped.
     """
     if is_public(node):
@@ -668,10 +668,10 @@ async def apply_one(
         except OtaAutofetchUnsupported:
             unsupported = True
             applied = None
-        if applied is not None:
+        if applied is not None or unsupported:
             stamp("ota_autofetch")
-        elif unsupported:
-            log.step("ota autofetch: skip (unsupported)")
+            if unsupported:
+                log.step("ota autofetch: skip (unsupported)")
         else:
             return abort("ota_autofetch")
     else:

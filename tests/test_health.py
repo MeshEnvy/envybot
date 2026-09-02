@@ -52,7 +52,33 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(health["summary"], "Healthy — all checks pass")
         self.assertEqual(health["issues"], [])
 
-    def test_config_leak_has_fix(self) -> None:
+    def test_config_due_has_fix(self) -> None:
+        health = compute_health(
+            freshness="fresh",
+            session={"state": "ok"},
+            drift="due",
+            status={"battery_mv": 4200, "packets_recv": 1000, "recv_errors": 10},
+            telemetry={"voltage": 4.2, "temperature": 25.0},
+            traffic_interval={
+                "packets_recv": 50,
+                "packets_sent": 10,
+                "recv_errors": 2,
+                "duration_secs": 3600,
+                "rx_airtime_pct": 5.0,
+            },
+            traffic_window=_traffic_window(),
+            status_rows=[
+                {"ts": 1, "battery_mv": 4200, "uptime_secs": 1000},
+                {"ts": 2, "battery_mv": 4190, "uptime_secs": 2000},
+            ],
+            reboot_count=0,
+        )
+        self.assertEqual(health["headline"], "attention")
+        cfg = next(i for i in health["issues"] if i["name"] == "Config")
+        self.assertIn("due", (cfg["reason"] or "").lower())
+        self.assertIn("Push", cfg.get("fix") or "")
+
+    def test_config_leak_is_bad(self) -> None:
         health = compute_health(
             freshness="fresh",
             session={"state": "ok"},
@@ -73,10 +99,9 @@ class HealthTests(unittest.TestCase):
             ],
             reboot_count=0,
         )
-        self.assertEqual(health["headline"], "attention")
         cfg = next(i for i in health["issues"] if i["name"] == "Config")
-        self.assertIn("leak", cfg["reason"] or "")
-        self.assertIn("Push", cfg.get("fix") or "")
+        self.assertEqual(cfg["status"], "bad")
+        self.assertIn("advertising", cfg["reason"] or "")
 
     def test_reachability_never(self) -> None:
         health = compute_health(

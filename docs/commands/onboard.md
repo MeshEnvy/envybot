@@ -27,7 +27,7 @@ Idempotent on identity, creds, radio, name, and GPS:
    `keys.yaml` + book/node `trust` (`get acl` + `setperm`). Skip ACL if
    there are no named people yet. MeshCore prints `ACL:` on serial and
    does not send a `->` reply for `get acl`. Then stamp sqlite `applies`
-   for the private profile so fleet is not apply-due (no `leak`, no first
+   for the private profile so fleet is not apply-due (no `due`, no first
    mesh Push). `public: true` rows stay unstamped. `--no-write` skips the
    stamp.
 7. Read public + secret keys. Set host clock. Pull `ota self` (EndF

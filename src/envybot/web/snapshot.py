@@ -22,6 +22,7 @@ from envybot.history import (
 from envybot.ota_parse import ota_badge
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
+    MASK_NAME,
     is_decommissioned,
     is_meshcore_platform,
     is_paused,
@@ -246,11 +247,43 @@ def build_unit_status(
     return merged or None
 
 
-def drift_state(node: dict[str, Any], *, profile_ok: bool) -> str | None:
-    """None = profile OK. leak (private due) or mismatch (public due)."""
-    if profile_ok:
-        return None
-    return "mismatch" if is_public(node) else "leak"
+def _heard_nonzero(value: Any) -> bool:
+    if value is None or value == "":
+        return False
+    try:
+        return abs(float(value)) > 1e-9
+    except (TypeError, ValueError):
+        return False
+
+
+def heard_identity_leak(node: dict[str, Any], seen: dict[str, Any] | None) -> bool:
+    """True when a private radio is advertising name, GPS, or adverts."""
+    if is_public(node) or not seen:
+        return False
+    name = str(seen.get("name_heard") or "").strip()
+    if name and name.casefold() != MASK_NAME.casefold():
+        return True
+    if _heard_nonzero(seen.get("lat_heard")) or _heard_nonzero(seen.get("lon_heard")):
+        return True
+    if _heard_nonzero(seen.get("advert_interval_min")):
+        return True
+    if _heard_nonzero(seen.get("flood_advert_interval_h")):
+        return True
+    return False
+
+
+def drift_state(
+    node: dict[str, Any],
+    *,
+    profile_ok: bool,
+    seen: dict[str, Any] | None = None,
+) -> str | None:
+    """``leak`` = private node heard exposing identity. ``due`` = stamp stale."""
+    if heard_identity_leak(node, seen):
+        return "leak"
+    if not profile_ok:
+        return "due"
+    return None
 
 
 def sanitize_unit(
@@ -325,7 +358,7 @@ def sanitize_unit(
         "path_hash_mode": node.get("path_hash_mode"),
         "dutycycle": node.get("dutycycle"),
         "node_clock": (seen or {}).get("node_clock"),
-        "drift": drift_state(node, profile_ok=profile_ok),
+        "drift": drift_state(node, profile_ok=profile_ok, seen=seen),
     }
     if session:
         unit["session"] = session

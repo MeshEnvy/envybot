@@ -318,7 +318,7 @@ class SnapshotTests(unittest.TestCase):
             conn.close()
             snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
             self.assertIsNone(snap["units"]["me0001"]["drift"])
-            self.assertEqual(snap["units"]["me0002"]["drift"], "mismatch")
+            self.assertEqual(snap["units"]["me0002"]["drift"], "due")
 
     def test_status_traffic_from_latest_payload(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -496,13 +496,56 @@ class DriftStateTests(unittest.TestCase):
         self.assertIsNone(drift_state({"name": "Patrick"}, profile_ok=True))
         self.assertIsNone(drift_state({"name": "Ophir", "public": True}, profile_ok=True))
 
-    def test_due_private_is_leak(self) -> None:
-        self.assertEqual(drift_state({"name": "Patrick"}, profile_ok=False), "leak")
+    def test_due_private_is_due(self) -> None:
+        self.assertEqual(drift_state({"name": "Patrick"}, profile_ok=False), "due")
 
-    def test_due_public_is_mismatch(self) -> None:
+    def test_due_public_is_due(self) -> None:
         self.assertEqual(
             drift_state({"name": "Ophir", "public": True}, profile_ok=False),
-            "mismatch",
+            "due",
+        )
+
+    def test_heard_name_on_private_is_leak(self) -> None:
+        self.assertEqual(
+            drift_state(
+                {"name": "Patrick"},
+                profile_ok=True,
+                seen={"name_heard": "Ophir Hill"},
+            ),
+            "leak",
+        )
+
+    def test_heard_name_on_public_is_not_leak(self) -> None:
+        self.assertIsNone(
+            drift_state(
+                {"name": "Ophir", "public": True},
+                profile_ok=True,
+                seen={"name_heard": "Ophir"},
+            )
+        )
+
+    def test_masked_heard_is_not_leak(self) -> None:
+        self.assertIsNone(
+            drift_state(
+                {"name": "Patrick"},
+                profile_ok=True,
+                seen={
+                    "name_heard": "Repeater",
+                    "lat_heard": 0.0,
+                    "lon_heard": 0.0,
+                    "advert_interval_min": 0,
+                },
+            )
+        )
+
+    def test_leak_wins_over_due(self) -> None:
+        self.assertEqual(
+            drift_state(
+                {"name": "Patrick"},
+                profile_ok=False,
+                seen={"lat_heard": 39.5, "lon_heard": -119.8},
+            ),
+            "leak",
         )
 
 

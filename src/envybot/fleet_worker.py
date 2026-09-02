@@ -1232,8 +1232,10 @@ async def _execute_apply(
                 attempt_num=attempt_num, attempt_cap=attempt_cap,
             )
         except OtaAutofetchUnsupported:
-            return JobOutcome.HEARD, "skip"
-        send = "ok" if applied is not None else "timeout"
+            ctx.log.step("ota autofetch: skip (unsupported)")
+            send = "ok"
+        else:
+            send = "ok" if applied is not None else "timeout"
     elif field == "acl":
         try:
             want = resolve_node_acl(ctx.doc, node, ctx.keys or {})
