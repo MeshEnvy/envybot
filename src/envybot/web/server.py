@@ -27,6 +27,7 @@ from envybot.nodes_doc import (
 from envybot.position import bind_node_to_site, load_sites_doc, site_loc_for_unit, write_sites_doc
 from envybot.sun import attach_sun, sun_series
 from envybot.radio import load_targets
+from envybot.web.console import ConsoleManager
 from envybot.web.hub import FleetHub
 from envybot.web.snapshot import assert_no_secrets, build_fleet_snapshot, build_neighbor_edges
 
@@ -69,6 +70,7 @@ class MonitorWeb:
     _session_states: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
     _poll_state: dict[str, Any] = field(default_factory=dict, repr=False)
     _companion: str | None = field(default=None, repr=False)
+    console: ConsoleManager = field(default_factory=ConsoleManager, repr=False)
 
     def bind_scheduler(
         self,
@@ -133,6 +135,17 @@ class MonitorWeb:
             return 400, f"unknown job {job}"
         if not self._accepting:
             return 409, "fleet worker not accepting manual jobs"
+        if (
+            self._binding is not None
+            and self._binding.scheduler.exclusive_key is not None
+            and self._binding.scheduler.exclusive_key != key
+        ):
+            return 409, "exclusive console active on another unit"
+        if (
+            self._binding is not None
+            and self._binding.scheduler.exclusive_key == key
+        ):
+            return 409, "exclusive console active on this unit"
         doc = load_nodes_doc(self.nodes_path)
         nodes = doc.get("nodes") or {}
         node = nodes.get(key)
@@ -184,6 +197,115 @@ class MonitorWeb:
         )
         return status, err
 
+    def _load_target(self, key: str) -> tuple[int, str | None, Any | None]:
+        from envybot.nodes_doc import is_decommissioned, is_meshcore_platform
+
+        key = key.lower()
+        if not self._accepting:
+            return 409, "fleet worker not accepting manual jobs", None
+        if self._binding is None:
+            return 409, "fleet worker not accepting manual jobs", None
+        doc = load_nodes_doc(self.nodes_path)
+        nodes = doc.get("nodes") or {}
+        node = nodes.get(key)
+        if not isinstance(node, dict) or is_decommissioned(node) or not is_meshcore_platform(node):
+            return 404, "unknown unit", None
+        targets = load_targets(
+            self.nodes_path, deployed_only=False, include={key}, skip=None
+        )
+        if not targets:
+            return 404, "unknown unit", None
+        return 200, None, targets[0]
+
+    async def open_console(self, key: str) -> tuple[int, str | None, dict[str, Any] | None]:
+        status, err, target = self._load_target(key)
+        if status != 200 or target is None or self._binding is None:
+            return status, err, None
+        binding = self._binding
+        session = getattr(self, "_fleet_session", None)
+        if session is not None:
+            session.audit_source = "console"
+        await self.console.open(
+            key=key,
+            scheduler=binding.scheduler,
+            target=target,
+            max_attempts=binding.scheduler.max_attempts or 10,
+            manual_keys=binding.manual_keys,
+        )
+        poll = dict(self._poll_state)
+        poll["console"] = self.console.active.poll_console() if self.console.active else None
+        await self.refresh_snapshot(
+            session_states=dict(self._session_states),
+            companion=self._companion,
+            poll=poll,
+        )
+        return 200, None, self.console.active.to_event() if self.console.active else None
+
+    async def send_console(self, key: str, cmd: str) -> tuple[int, str | None, dict[str, Any] | None]:
+        key = key.lower()
+        cmd = cmd.strip()
+        if not cmd:
+            return 400, "empty command", None
+        if self.console.active is None or self.console.active.key != key:
+            return 409, "console not open for this unit", None
+        status, err, target = self._load_target(key)
+        if status != 200 or target is None or self._binding is None:
+            return status, err, None
+        if self.console.active.state == "sending":
+            return 409, "console busy", None
+        fut = await self.console.enqueue_send(
+            cmd=cmd,
+            scheduler=self._binding.scheduler,
+            target=target,
+        )
+        try:
+            result = await fut
+        except Exception as exc:
+            return 500, str(exc), None
+        if isinstance(result, str):
+            result = {"ok": True, "reply": result, "error": None}
+        if result.get("cancelled"):
+            return 200, None, {"ok": False, "error": "cancelled"}
+        return 200, None, {
+            "ok": bool(result.get("ok", True)),
+            "reply": result.get("reply"),
+            "error": result.get("error"),
+        }
+
+    async def cancel_console(self, key: str) -> tuple[int, str | None]:
+        key = key.lower()
+        if self.console.active is None or self.console.active.key != key:
+            return 409, "console not open for this unit"
+        if self._binding is None:
+            return 409, "fleet worker not accepting manual jobs"
+        session = getattr(self, "_fleet_session", None)
+        await self.console.cancel(
+            scheduler=self._binding.scheduler,
+            session=session,
+        )
+        return 200, None
+
+    async def close_console(self, key: str) -> tuple[int, str | None]:
+        key = key.lower()
+        if self.console.active is None or self.console.active.key != key:
+            return 409, "console not open for this unit"
+        if self._binding is None:
+            return 409, "fleet worker not accepting manual jobs"
+        session = getattr(self, "_fleet_session", None)
+        await self.console.close(
+            scheduler=self._binding.scheduler,
+            manual_keys=self._binding.manual_keys,
+            session=session,
+        )
+        poll = dict(self._poll_state)
+        poll.pop("console", None)
+        await self.refresh_snapshot(
+            session_states=dict(self._session_states),
+            companion=self._companion,
+            poll=poll,
+        )
+        return 200, None
+
     async def refresh_snapshot(
         self,
         *,
@@ -206,6 +328,8 @@ class MonitorWeb:
             poll=self._poll_state or poll or {"phase": "idle"},
         )
         snap["edges"] = build_neighbor_edges(snap["units"])
+        if self.console.active and self.console.active.state != "closed":
+            snap.setdefault("poll", {})["console"] = self.console.active.poll_console()
         await self.hub.set_snapshot(snap)
         return snap
 
@@ -548,6 +672,55 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
     return web.json_response(unit)
 
 
+async def _handle_console_open(request: web.Request) -> web.Response:
+    key = request.match_info["key"].lower()
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    status, err, payload = await web_ctx.open_console(key)
+    if status == 404:
+        return web.json_response({"error": err}, status=404)
+    if status == 409:
+        return web.json_response({"error": err}, status=409)
+    return web.json_response(payload or {})
+
+
+async def _handle_console_send(request: web.Request) -> web.Response:
+    key = request.match_info["key"].lower()
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        return web.json_response({"error": "object required"}, status=400)
+    cmd = body.get("cmd")
+    if not isinstance(cmd, str) or not cmd.strip():
+        return web.json_response({"error": "cmd required"}, status=400)
+    status, err, payload = await web_ctx.send_console(key, cmd)
+    if status == 400:
+        return web.json_response({"error": err}, status=400)
+    if status == 409:
+        return web.json_response({"error": err}, status=409)
+    return web.json_response(payload or {})
+
+
+async def _handle_console_cancel(request: web.Request) -> web.Response:
+    key = request.match_info["key"].lower()
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    status, err = await web_ctx.cancel_console(key)
+    if status == 409:
+        return web.json_response({"error": err}, status=409)
+    return web.json_response({"ok": True})
+
+
+async def _handle_console_close(request: web.Request) -> web.Response:
+    key = request.match_info["key"].lower()
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    status, err = await web_ctx.close_console(key)
+    if status == 409:
+        return web.json_response({"error": err}, status=409)
+    return web.json_response({"ok": True})
+
+
 async def _handle_index(_request: web.Request) -> web.Response:
     return web.FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
@@ -571,6 +744,10 @@ def make_app(web_ctx: MonitorWeb) -> web.Application:
     app.router.add_post("/api/push/{key}", lambda r: _handle_manual_job(r, "push"))
     app.router.add_post("/api/stage/{key}", _handle_stage_job)
     app.router.add_post("/api/install/{key}", _handle_install_job)
+    app.router.add_post("/api/console/{key}/open", _handle_console_open)
+    app.router.add_post("/api/console/{key}/send", _handle_console_send)
+    app.router.add_post("/api/console/{key}/cancel", _handle_console_cancel)
+    app.router.add_post("/api/console/{key}/close", _handle_console_close)
     app.router.add_get("/api/history/{unit}", _handle_history)
     app.router.add_get("/api/polls/{unit}", _handle_polls)
     app.router.add_get("/events", _handle_events)
@@ -600,6 +777,7 @@ async def create_monitor_web(
         stale_secs=stale_secs,
         url=f"http://{host}:{port}/",
     )
+    web_ctx.console.bind_publish(hub.publish_console)
     runner = web.AppRunner(make_app(web_ctx))
     await runner.setup()
     site = web.TCPSite(runner, host, port)

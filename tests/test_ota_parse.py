@@ -10,8 +10,32 @@ from envybot.ota_parse import (
     ota_ls_heard_empty,
     ota_status_heard_empty,
     parse_ota_ls,
+    parse_ota_stats,
     parse_ota_status,
 )
+
+
+class ParseOtaStatsTests(unittest.TestCase):
+    def test_idle_fetch(self) -> None:
+        raw = (
+            "OTA | fw v1.17.1-ev1 id=deadbeef body=abcd1234 100b 434K | serv 0 dg=cafebabe | "
+            "fetch idle | af=off hops=2"
+        )
+        parsed = parse_ota_stats(raw)
+        assert parsed is not None
+        self.assertEqual(parsed["running"]["body_hash"], "ABCD1234")
+        self.assertEqual(parsed["running"]["serving_count"], 0)
+        self.assertEqual(parsed["local"]["state"], "none")
+
+    def test_active_fetch(self) -> None:
+        raw = (
+            "OTA | fw v1.17.0-ev1 id=11111111 body=22222222 50b 400K | serv 1 dg=33333333 | "
+            "fetch dl 25/100 25% id=aabbccdd 120s | af=signed hops=4"
+        )
+        parsed = parse_ota_stats(raw)
+        assert parsed is not None
+        self.assertEqual(parsed["local"]["state"], "downloading")
+        self.assertEqual(parsed["local"]["pct"], 25)
 
 
 class ParseOtaStatusTests(unittest.TestCase):

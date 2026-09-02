@@ -116,6 +116,27 @@ While the companion worker is live:
 List cards expose **Refresh** only. Detail adds **Pull** and **Push** (Push
 is visually distinct; it rewrites passwords). CLI `--force` is Pull plus Push.
 
+### Console (detail card)
+
+While the companion worker is live, **Console** on the detail card acquires
+exclusive radio access for that unit. Auto poll/apply pauses fleet-wide until
+**Exit console**, close, or Escape. One console session at a time.
+
+- Opens with `console:login` (same `--attempts` retry cap as GET/SET).
+- Typed lines are MeshCore CLI (`ota stats`, `get name`, …) with flood before
+  each send.
+- Status line shows `(attempt N/10…)` with **Cancel** (user cancel, not a
+  timeout retry).
+- Refresh / Pull / Push / Stage / Install return HTTP 409 while exclusive.
+- `--web-only` cannot open console (409).
+- URL: `?unit=me0032&console=1` for reload.
+- Audit: `commands.source='console'` and `mesh_audit.source='console'` (same
+  tables as `./envybot cmd`; redacted passwords).
+- Tracked poll CLI replies (`ota status`, `ota stats`, `ota self`, `ota ls`,
+  `ver`, `get bootloader.ver`, `get name` / `lat` / `lon` / advert intervals,
+  `get acl`) also stamp sqlite last-seen like a poll. Binary GETs (status,
+  telemetry, neighbors) still need Refresh.
+
 ## Apply
 
 Nodes without `public: true` get the privacy mask: name `Repeater`, lat/lon

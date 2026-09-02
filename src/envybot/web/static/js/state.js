@@ -113,6 +113,15 @@ export function patchSession(poll) {
   if (poll.companion != null) fleetStore.companion = poll.companion
 }
 
+/** @param {Record<string, unknown>} event */
+export function patchConsole(event) {
+  if (event.state === 'closed') {
+    delete fleetStore.poll.console
+  } else if (event.key) {
+    fleetStore.poll.console = { key: event.key, state: event.state }
+  }
+}
+
 /** @param {string} key @param {UnitHistory} histories */
 export function loadHistories(key, histories) {
   const unit = ensureUnit(key)

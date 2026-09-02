@@ -26,6 +26,13 @@ SERVING_RE = re.compile(r"serving:(\w+)\s+\((\d+)\)")
 KEYS_RE = re.compile(r"keys:(\d+)")
 SEED_RE = re.compile(r"\|\s*seed:(on|off)")
 
+OTA_STATS_HEAD_RE = re.compile(
+    r"^OTA \| fw (\S+) id=([0-9A-Fa-f?]+) body=([0-9A-Fa-f?]+) (\d+)b (\d+)K \| serv (\d+)"
+)
+OTA_STATS_FETCH_RE = re.compile(
+    r"fetch idle|fetch (\S+) (\d+)/(\d+) (\d+)% id=([0-9A-Fa-f]+) (\d+)s"
+)
+
 
 def ota_ls_heard_empty(text: str) -> bool:
     """True when the radio answered but the catalog is not populated yet."""
@@ -73,6 +80,44 @@ def _local_state_from_download(word: str, pct: int) -> str:
     if pct >= 100:
         return "ready"
     return "downloading"
+
+
+def parse_ota_stats(text: str) -> dict[str, Any] | None:
+    """Dense admin line from ``ota stats``. Stored as ota_status snapshot."""
+    if not text:
+        return None
+    stripped = text.strip()
+    m = OTA_STATS_HEAD_RE.search(stripped)
+    if not m:
+        return None
+    fw_ver, mid, body, _blocks, image_k, serv_count = m.groups()
+    running: dict[str, Any] = {
+        "fw_version": fw_ver,
+        "serving_count": int(serv_count),
+        "serving": int(serv_count) > 0,
+        "image_kib": int(image_k),
+    }
+    if body != "?":
+        running["body_hash"] = body.upper()
+    if mid != "?":
+        running["self_mid"] = mid.lower()
+
+    local: dict[str, Any] = {"state": "none"}
+    if "fetch idle" not in stripped:
+        fm = OTA_STATS_FETCH_RE.search(stripped)
+        if fm and fm.group(1):
+            word, have, total, pct, fmid, age = fm.groups()
+            local = {
+                "state": _local_state_from_download(word, int(pct)),
+                "mid": fmid.lower(),
+                "have": int(have),
+                "total": int(total),
+                "pct": int(pct),
+                "age_s": int(age),
+                "status_word": word.strip(),
+            }
+
+    return {"running": running, "local": local}
 
 
 def parse_ota_status(text: str) -> dict[str, Any] | None:

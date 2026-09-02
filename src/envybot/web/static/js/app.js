@@ -1,15 +1,16 @@
 import { createApp, computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { connectEvents, fetchFleet, fetchPolls, installUnit, patchUnit, pullUnit, pushUnit, refreshUnit, stageUnit } from './api.js'
+import { connectEvents, fetchFleet, fetchPolls, installUnit, patchUnit, pullUnit, pushUnit, refreshUnit, stageUnit, openConsole as apiOpenConsole, sendConsole as apiSendConsole, cancelConsole as apiCancelConsole, closeConsole as apiCloseConsole } from './api.js'
 import {
   clearHistories,
   fleetStore,
   loadHistories,
+  patchConsole,
   patchSession,
   patchUnit as storePatchUnit,
   replaceSnapshot,
   startClock,
   stopClock,
-} from './state.js?v=3'
+} from './state.js?v=4'
 import {
   formatAgo,
   formatBattery,
@@ -56,6 +57,14 @@ const App = {
       neighbors: LOG_PAGE,
       acl: LOG_PAGE,
     })
+    const consoleMode = ref(false)
+    /** @type {import('vue').Ref<{ cmd: string, reply?: string, error?: string, pending?: boolean }[]>} */
+    const consoleTranscript = ref([])
+    const consoleDraft = ref('')
+    /** @type {import('vue').Ref<Record<string, unknown> | null>} */
+    const consoleLive = ref(null)
+    /** @type {import('vue').Ref<HTMLElement | null>} */
+    const consoleScroll = ref(null)
 
     function resetLogShown() {
       logShown.status = LOG_PAGE
@@ -109,6 +118,30 @@ const App = {
 
     const manualAccepting = computed(() => !!fleet.poll?.accepting)
 
+    const exclusiveConsoleKey = computed(() => {
+      const c = fleet.poll?.console
+      if (!c || typeof c !== 'object') return null
+      const key = c.key
+      const state = c.state
+      if (typeof key !== 'string' || state === 'closed') return null
+      return key
+    })
+
+    const consoleBusy = computed(() => {
+      const ev = consoleLive.value
+      return ev?.state === 'sending' || ev?.state === 'acquiring'
+    })
+
+    const consoleStatusLine = computed(() => {
+      const ev = consoleLive.value
+      if (!ev) return ''
+      if (ev.state === 'acquiring') return 'Acquiring exclusive console access…'
+      if (ev.state === 'sending' && ev.attempt && ev.max_attempts) {
+        return `(attempt ${ev.attempt}/${ev.max_attempts}…)`
+      }
+      return ''
+    })
+
     const MANUAL_BUSY = new Set([
       'queued',
       'refreshing',
@@ -129,7 +162,126 @@ const App = {
     /** @param {Record<string, unknown> | undefined} unit @param {'refresh' | 'pull' | 'push'} [job] */
     function canManualUnit(unit, job) {
       if (!unit || !manualAccepting.value) return false
+      if (exclusiveConsoleKey.value) return false
       return true
+    }
+
+    function consoleFromLocation() {
+      return new URLSearchParams(location.search).get('console') === '1'
+    }
+
+    function scrollConsoleBottom() {
+      requestAnimationFrame(() => {
+        const el = consoleScroll.value
+        if (el) el.scrollTop = el.scrollHeight
+      })
+    }
+
+    /** @param {Record<string, unknown>} event */
+    function applyConsoleEvent(event) {
+      patchConsole(event)
+      consoleLive.value = event
+      if (event.state === 'ready' && event.reply != null) {
+        const rows = consoleTranscript.value
+        for (let i = rows.length - 1; i >= 0; i -= 1) {
+          if (rows[i].pending) {
+            rows[i].pending = false
+            rows[i].reply = String(event.reply)
+            break
+          }
+        }
+      }
+      if (event.state === 'ready' && event.error) {
+        const rows = consoleTranscript.value
+        for (let i = rows.length - 1; i >= 0; i -= 1) {
+          if (rows[i].pending) {
+            rows[i].pending = false
+            rows[i].error = String(event.error)
+            break
+          }
+        }
+      }
+      scrollConsoleBottom()
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    async function startConsole(unit) {
+      if (!unit?.key) return
+      consoleMode.value = true
+      consoleTranscript.value = []
+      consoleLive.value = { state: 'acquiring', key: unit.key }
+      syncLocation(String(unit.key), { console: true })
+      try {
+        const ev = await apiOpenConsole(String(unit.key))
+        consoleLive.value = ev
+        patchConsole(ev)
+      } catch (err) {
+        console.error(err)
+        consoleLive.value = { state: 'ready', key: unit.key, error: String(err) }
+      }
+    }
+
+    async function exitConsole() {
+      const key = selectedKey.value
+      if (key && (consoleMode.value || exclusiveConsoleKey.value === key)) {
+        try {
+          await apiCloseConsole(key)
+        } catch (err) {
+          console.error(err)
+        }
+      }
+      consoleMode.value = false
+      consoleTranscript.value = []
+      consoleLive.value = null
+      syncLocation(key, { console: false })
+    }
+
+    async function submitConsoleLine() {
+      const key = selectedKey.value
+      const cmd = consoleDraft.value.trim()
+      if (!key || !cmd || consoleBusy.value) return
+      consoleTranscript.value.push({ cmd, pending: true })
+      consoleDraft.value = ''
+      scrollConsoleBottom()
+      try {
+        const res = await apiSendConsole(key, cmd)
+        const rows = consoleTranscript.value
+        const row = rows[rows.length - 1]
+        if (row && row.cmd === cmd) {
+          row.pending = false
+          if (res.error) row.error = String(res.error)
+          else row.reply = res.reply != null ? String(res.reply) : ''
+        }
+      } catch (err) {
+        const rows = consoleTranscript.value
+        const row = rows[rows.length - 1]
+        if (row) {
+          row.pending = false
+          row.error = String(err)
+        }
+      }
+      scrollConsoleBottom()
+    }
+
+    async function cancelConsoleSend() {
+      const key = selectedKey.value
+      if (!key) return
+      try {
+        await apiCancelConsole(key)
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
+    async function maybeReopenConsole() {
+      const key = unitKeyFromLocation()
+      if (!key || !consoleFromLocation()) return
+      if (exclusiveConsoleKey.value === key) {
+        consoleMode.value = true
+        return
+      }
+      const unit = fleet.units[key]
+      if (unit) await startConsole(unit)
     }
 
     /** @param {Record<string, unknown> | null | undefined} ota */
@@ -433,10 +585,12 @@ const App = {
       return lower
     }
 
-    function syncLocation(key) {
+    function syncLocation(key, { console: inConsole = false } = {}) {
       const url = new URL(location.href)
       if (key) url.searchParams.set('unit', key)
       else url.searchParams.delete('unit')
+      if (inConsole) url.searchParams.set('console', '1')
+      else url.searchParams.delete('console')
       const next = `${url.pathname}${url.search}${url.hash}`
       const cur = `${location.pathname}${location.search}${location.hash}`
       if (next === cur) return
@@ -445,6 +599,7 @@ const App = {
 
     function openUnit(key, { fly = true } = {}) {
       selectedKey.value = key
+      syncLocation(key, { console: consoleMode.value })
       if (fly) mapCtrl?.flyTo(key, fleet)
       mapCtrl?.sync(fleet, key, fleet.now)
       loadHistoriesFor(key)
@@ -472,8 +627,10 @@ const App = {
       openUnit(key)
     }
 
-    function clearSelection() {
+    async function clearSelection() {
+      if (consoleMode.value) await exitConsole()
       selectedKey.value = null
+      syncLocation(null)
       mapCtrl?.sync(fleet, null, fleet.now)
     }
 
@@ -512,7 +669,10 @@ const App = {
       notesDraft.value = typeof unit.notes === 'string' ? unit.notes : ''
     }
 
-    watch(selectedKey, (key) => {
+    watch(selectedKey, async (key, prev) => {
+      if (prev && consoleMode.value && key !== prev) {
+        await exitConsole()
+      }
       aliasEditing.value = false
       notesEditing.value = false
       resetLogShown()
@@ -608,6 +768,7 @@ const App = {
       try {
         applyHello(await fetchFleet())
         applyLocationUnit()
+        await maybeReopenConsole()
       } catch (err) {
         console.error(err)
       }
@@ -618,6 +779,7 @@ const App = {
         onHello: (snap) => {
           applyHello(snap)
           applyLocationUnit()
+          maybeReopenConsole()
           pushMap()
         },
         onUnit: (unit) => {
@@ -626,6 +788,9 @@ const App = {
         },
         onSession: (poll) => {
           applySession(poll)
+        },
+        onConsole: (event) => {
+          applyConsoleEvent(event)
         },
       })
     })
@@ -717,6 +882,18 @@ const App = {
       canStageRow,
       runStage,
       runInstall,
+      consoleMode,
+      consoleTranscript,
+      consoleDraft,
+      consoleScroll,
+      consoleBusy,
+      consoleStatusLine,
+      consoleLive,
+      exclusiveConsoleKey,
+      startConsole,
+      exitConsole,
+      submitConsoleLine,
+      cancelConsoleSend,
     }
   },
   template: `
@@ -750,11 +927,13 @@ const App = {
         <div
           v-if="selectedUnit"
           class="detail-modal"
+          :class="{ 'detail-console-mode': consoleMode }"
           @click.self="clearSelection"
         >
           <div
             id="detail"
             class="detail"
+            :class="{ 'detail-console': consoleMode }"
             role="dialog"
             aria-modal="true"
             aria-labelledby="detail-title"
@@ -763,7 +942,7 @@ const App = {
             <h2 id="detail-title">{{ unitTitle(selectedUnit) }}</h2>
             <button type="button" class="detail-close" aria-label="Close" @click="clearSelection">×</button>
           </div>
-          <p class="sub">
+          <p v-if="!consoleMode" class="sub">
             {{ selectedUnit.unit_id }}
             · {{ selectedUnit.public ? 'public' : 'private' }}
             · {{ formatRelative(selectedUnit.last_heard, fleet.now) }}
@@ -788,9 +967,26 @@ const App = {
             </label>
             <div v-if="manualAccepting" class="manual-actions">
               <button
+                v-if="!consoleMode"
+                type="button"
+                class="manual-btn manual-btn-console"
+                :disabled="!!exclusiveConsoleKey && exclusiveConsoleKey !== selectedUnit.key"
+                @click="startConsole(selectedUnit)"
+              >
+                Console
+              </button>
+              <button
+                v-else
+                type="button"
+                class="manual-btn manual-btn-console-exit"
+                @click="exitConsole"
+              >
+                Exit console
+              </button>
+              <button
                 type="button"
                 class="manual-btn"
-                :disabled="!canManualUnit(selectedUnit, 'refresh')"
+                :disabled="!canManualUnit(selectedUnit, 'refresh') || consoleMode"
                 @click="runManualJob(selectedUnit, 'refresh', $event)"
               >
                 Refresh
@@ -798,7 +994,7 @@ const App = {
               <button
                 type="button"
                 class="manual-btn"
-                :disabled="!canManualUnit(selectedUnit, 'pull')"
+                :disabled="!canManualUnit(selectedUnit, 'pull') || consoleMode"
                 @click="runManualJob(selectedUnit, 'pull', $event)"
               >
                 Pull
@@ -806,13 +1002,42 @@ const App = {
               <button
                 type="button"
                 class="manual-btn manual-btn-push"
-                :disabled="!canManualUnit(selectedUnit, 'push')"
+                :disabled="!canManualUnit(selectedUnit, 'push') || consoleMode"
                 @click="runManualJob(selectedUnit, 'push', $event)"
               >
                 Push
               </button>
             </div>
           </div>
+          <section v-if="consoleMode" class="console-panel">
+            <div ref="consoleScroll" class="console-transcript">
+              <div v-for="(row, i) in consoleTranscript" :key="i" class="console-block">
+                <div class="console-cmd">&gt; {{ row.cmd }}</div>
+                <div v-if="row.pending && consoleStatusLine" class="console-status">
+                  {{ consoleStatusLine }}
+                  <button type="button" class="console-cancel" @click="cancelConsoleSend">Cancel</button>
+                </div>
+                <pre v-if="row.reply" class="console-reply">{{ row.reply }}</pre>
+                <pre v-if="row.error" class="console-error">{{ row.error }}</pre>
+              </div>
+              <div v-if="!consoleTranscript.length && consoleStatusLine" class="console-status console-status-empty">
+                {{ consoleStatusLine }}
+              </div>
+            </div>
+            <form class="console-input-row" @submit.prevent="submitConsoleLine">
+              <input
+                v-model="consoleDraft"
+                class="console-input"
+                type="text"
+                placeholder="ota stats"
+                autocomplete="off"
+                spellcheck="false"
+                :disabled="consoleBusy || consoleLive?.state === 'acquiring'"
+              />
+              <button type="submit" class="manual-btn" :disabled="consoleBusy || !consoleDraft.trim()">Send</button>
+            </form>
+          </section>
+          <template v-if="!consoleMode">
           <section class="book-edit">
             <label class="book-field">
               <span class="book-field-label">Alias</span>
@@ -1252,6 +1477,7 @@ const App = {
               </button>
             </div>
           </section>
+          </template>
           </div>
         </div>
       </main>

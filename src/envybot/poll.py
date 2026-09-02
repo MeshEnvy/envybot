@@ -47,7 +47,7 @@ GET_GROUP_ORDER = tuple(GET_GROUPS.keys())
 PERIODIC_GROUPS = tuple(g for g in GET_GROUP_ORDER if GET_GROUPS[g].mode == "periodic")
 MANUAL_JOBS = frozenset({"refresh", "pull", "push", "stage", "install"})
 IN_FLIGHT_STATES = frozenset(
-    {"queued", "refreshing", "pulling", "pushing", "staging", "installing", "polling"}
+    {"queued", "refreshing", "pulling", "pushing", "staging", "installing", "polling", "console"}
 )
 
 _STAGE_LABELS = {
@@ -86,6 +86,8 @@ _STAGE_LABELS = {
     "apply:ota_autofetch": "Setting OTA autofetch",
     "apply:acl": "Setting ACL",
     "apply:clock": "Syncing clock",
+    "console:login": "Console login",
+    "console:cli": "Console CLI",
 }
 
 
@@ -107,6 +109,7 @@ def manual_job_session_state(job: str) -> str:
         "push": "pushing",
         "stage": "staging",
         "install": "installing",
+        "console": "console",
     }[job]
 
 

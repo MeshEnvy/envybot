@@ -18,6 +18,7 @@ class JobOutcome(str, Enum):
     TIMEOUT = "timeout"
     HARD_FAIL = "hard_fail"
     TIMER_DONE = "timer_done"
+    CANCELLED = "cancelled"
 
 
 INVENTORY_GROUPS = frozenset(
@@ -88,6 +89,7 @@ class FleetScheduler:
     _idle_waiters: list[asyncio.Future[None]] = field(default_factory=list, repr=False)
     _stop: bool = False
     _timer_tasks: set[asyncio.Task[None]] = field(default_factory=set, repr=False)
+    exclusive_key: str | None = None
 
     def get_or_create(self, target: RouterTarget) -> UnitQueue:
         key = target.key
@@ -143,6 +145,65 @@ class FleetScheduler:
         )
         self._wake_idle()
         return 200, None
+
+    def set_exclusive(self, key: str) -> None:
+        """Hold the radio for one unit: cancel timers and drain all job queues."""
+        key = key.lower()
+        entering = self.exclusive_key != key
+        self.exclusive_key = key
+        for uq in self.units.values():
+            self._cancel_timer(uq)
+            uq.jobs.clear()
+            uq.backoff_until = 0.0
+        self._wake_idle()
+        if entering:
+            print(
+                f"Exclusive mode: entered for {key} (auto poll paused fleet-wide)",
+                flush=True,
+            )
+
+    def clear_exclusive(self) -> None:
+        if self.exclusive_key is None:
+            self._wake_idle()
+            return
+        key = self.exclusive_key
+        self.exclusive_key = None
+        self._wake_idle()
+        print(f"Exclusive mode: exited ({key}), resuming auto poll", flush=True)
+
+    def cancel_console_cli(self, key: str) -> bool:
+        """Pop in-queue console:cli on the exclusive unit. Returns True if popped."""
+        if self.exclusive_key != key.lower():
+            return False
+        uq = self.units.get(key.lower())
+        if uq is None or not uq.jobs:
+            return False
+        head = uq.jobs[0]
+        if head.kind != "console:cli":
+            return False
+        uq.jobs.popleft()
+        if head.future and not head.future.done():
+            head.future.set_result({"cancelled": True})
+        return True
+
+    def enqueue_console(
+        self,
+        target: RouterTarget,
+        jobs: list[RadioJob],
+    ) -> None:
+        uq = self.get_or_create(target)
+        uq.manual = True
+        uq.manual_job = "console"
+        uq.manual_bump = True
+        uq.apply_aborted = False
+        uq.succeeded = False
+        for job in jobs:
+            job.manual = True
+            job.manual_job = "console"
+            job.unit_key = target.key
+        uq.jobs.extend(jobs)
+        uq.backoff_until = 0.0
+        self._wake_idle()
 
     def drop_auto_paused(self, paused_keys: set[str], *, manual_keys: set[str]) -> list[str]:
         dropped: list[str] = []
@@ -202,6 +263,10 @@ class FleetScheduler:
         for task in list(self._timer_tasks):
             task.cancel()
 
+    def _defer_console_future(self, job: RadioJob) -> bool:
+        """ConsoleManager.on_cli_done resolves console:cli waiters."""
+        return job.kind == "console:cli" and job.future is not None
+
     def _settle_job(
         self,
         uq: UnitQueue,
@@ -210,9 +275,10 @@ class FleetScheduler:
         payload: Any | None,
         succeeded: dict[str, bool],
     ) -> None:
+        defer = self._defer_console_future(job)
         head = uq.jobs[0] if uq.jobs else None
         if head is not job:
-            if job.future and not job.future.done():
+            if job.future and not job.future.done() and not defer:
                 if outcome in (JobOutcome.HEARD, JobOutcome.TIMER_DONE):
                     job.future.set_result(payload)
                 else:
@@ -221,16 +287,21 @@ class FleetScheduler:
         if outcome in (JobOutcome.HEARD, JobOutcome.TIMER_DONE):
             uq.jobs.popleft()
             job.attempt = 0
-            if job.future and not job.future.done():
+            if job.future and not job.future.done() and not defer:
                 job.future.set_result(payload)
             if not uq.jobs:
                 uq.succeeded = True
                 succeeded[uq.target.key] = True
-                if uq.manual:
+                if uq.manual and uq.manual_job != "console":
                     uq.manual = False
                     uq.manual_job = None
+        elif outcome == JobOutcome.CANCELLED:
+            uq.jobs.popleft()
+            job.attempt = 0
+            if job.future and not job.future.done() and not defer:
+                job.future.set_result({"cancelled": True})
         elif outcome == JobOutcome.HARD_FAIL:
-            if job.future and not job.future.done():
+            if job.future and not job.future.done() and not defer:
                 job.future.set_exception(RuntimeError(str(payload or "hard fail")))
             if job.kind.startswith("apply:"):
                 uq.jobs.popleft()
@@ -245,11 +316,11 @@ class FleetScheduler:
                 dropped = uq.session_extra.setdefault("dropped_jobs", [])
                 if isinstance(dropped, list):
                     dropped.append(job.kind)
-                if job.future and not job.future.done():
+                if job.future and not job.future.done() and not defer:
                     job.future.set_exception(
                         TimeoutError(f"{job.kind} gave up after {self.max_attempts} attempts")
                     )
-                if job.kind == "login":
+                if job.kind in ("login", "console:login"):
                     uq.jobs.clear()
                 elif job.kind.startswith("apply:"):
                     extra = drop_remaining_apply(uq)
@@ -280,6 +351,8 @@ class FleetScheduler:
         now = now or time.monotonic()
         candidates: list[tuple[int, float, str, UnitQueue, RadioJob]] = []
         for key, uq in self.units.items():
+            if self.exclusive_key is not None and key != self.exclusive_key:
+                continue
             if not uq.jobs:
                 continue
             if uq.backoff_until > now:

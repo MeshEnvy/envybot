@@ -25,9 +25,9 @@ from envybot.apply import (
     _ensure_guest_password,
     _set_cli,
 )
-from envybot.history import get_last_seen, insert_apply, record_poll
+from envybot.history import get_last_seen, insert_apply, insert_command, record_poll
 from envybot.jobs import INVENTORY_GROUPS, JobOutcome, RadioJob, UnitQueue
-from envybot.keys_doc import UnknownPerson, resolve_node_acl
+from envybot.keys_doc import UnknownPerson, parse_serial_acl, resolve_node_acl
 from envybot.nodes_doc import MASK_NAME, is_public
 from envybot.passwords import normalize_password, password_is_strong
 from envybot.poll import GET_GROUP_ORDER, PollPolicy, pull_due_groups, refresh_due_groups
@@ -38,6 +38,7 @@ from envybot.ota_parse import (
     ota_ls_heard_empty,
     ota_status_heard_empty,
     parse_ota_ls,
+    parse_ota_stats,
     parse_ota_status,
 )
 from envybot.radio import (
@@ -216,7 +217,13 @@ def job_sample(
 
     if job.kind == "login":
         return None
-    if job.kind == "get:status" and acc.status:
+    effective_kind = job.kind
+    if job.kind == "console:cli":
+        captured = job.extra.get("captured_group")
+        if not captured:
+            return None
+        effective_kind = f"get:{captured}"
+    if effective_kind == "get:status" and acc.status:
         st = acc.status
         battery = st.get("battery_mv")
         sample = {
@@ -230,7 +237,7 @@ def job_sample(
         }
         _sample_site_sun(sample, site_loc)
         return ("status", sample)
-    if job.kind == "get:telemetry" and acc.telemetry:
+    if effective_kind == "get:telemetry" and acc.telemetry:
         volt = None
         temp = None
         for item in acc.telemetry:
@@ -243,13 +250,18 @@ def job_sample(
         sample = {"ts": ts, "voltage": volt, "temperature": temp}
         _sample_site_sun(sample, site_loc)
         return ("telemetry", sample)
-    if job.kind == "get:neighbors" and acc.neighbors is not None:
+    if effective_kind == "get:neighbors" and acc.neighbors is not None:
         return (
             "neighbors",
             {"ts": ts, "count": len(acc.neighbors), "neighbors": acc.neighbors},
         )
-    if job.kind == "get:acl" and acc.acl is not None:
+    if effective_kind == "get:acl" and acc.acl is not None:
         return ("acl", {"ts": ts, "count": len(acc.acl), "acl": acc.acl})
+    if effective_kind == "get:ota_status" and acc.ota is not None:
+        return ("ota", {"ts": ts, "ota": acc.ota})
+    if effective_kind == "get:ota_ls" and acc.ota is not None:
+        heard = acc.ota.get("heard") if isinstance(acc.ota, dict) else None
+        return ("ota", {"ts": ts, "ota": acc.ota, "heard_count": len(heard or [])})
     return None
 
 
@@ -441,6 +453,250 @@ def build_install_jobs(target: RouterTarget) -> list[RadioJob]:
     ]
 
 
+def _console_insert_command(
+    ctx: WorkerContext,
+    target: RouterTarget,
+    cmd: str,
+    reply: str | None,
+    *,
+    ok: bool,
+) -> None:
+    from envybot.commands.cmd import redact_snippet
+
+    insert_command(
+        ctx.conn,
+        unit=target.key,
+        argv=redact_snippet(cmd, max_len=500) or cmd,
+        reply=redact_snippet(reply),
+        ok=ok,
+        source="console",
+    )
+
+
+# Console CLI that matches a fleet GET group → stamp sqlite like a poll.
+_CONSOLE_POLL_CMDS: dict[str, str] = {
+    "ota status": "ota_status",
+    "ota st": "ota_status",
+    "ota stats": "ota_status",
+    "ota ls": "ota_ls",
+    "ota n": "ota_ls",
+    "ota neighbors": "ota_ls",
+    "ota nbrs": "ota_ls",
+    "ota updates": "ota_ls",
+    "ota self": "ota",
+    "ver": "firmware",
+    "version": "firmware",
+    "get bootloader.ver": "bootloader",
+    "bootloader.ver": "bootloader",
+    "get name": "name",
+    "get lat": "lat",
+    "get lon": "lon",
+    "get advert.interval": "advert",
+    "get flood.advert.interval": "flood_advert",
+    "get acl": "acl",
+}
+
+
+def _console_poll_group(cmd: str) -> str | None:
+    key = " ".join(cmd.lower().split())
+    hit = _CONSOLE_POLL_CMDS.get(key)
+    if hit:
+        return hit
+    for prefix, group in (
+        ("ota ls ", "ota_ls"),
+        ("ota n ", "ota_ls"),
+        ("ota neighbors ", "ota_ls"),
+    ):
+        if key.startswith(prefix):
+            return group
+    return None
+
+
+def _apply_cli_poll_reply(
+    group: str,
+    raw: str,
+    *,
+    acc: PollAccumulator,
+    ctx: WorkerContext,
+    target: RouterTarget,
+) -> bool:
+    """Parse a CLI GET reply and record_poll. True if stamped."""
+    if group == "ota_status":
+        if not ota_status_heard_empty(raw) and cli_error_reply(raw):
+            return False
+        parsed = parse_ota_stats(raw) or parse_ota_status(raw)
+        if parsed is None:
+            return False
+        acc.ota_partial = merge_ota_snapshot(
+            acc.ota_partial, status=parsed, raw_status=raw.strip()
+        )
+        acc.ota = acc.ota_partial
+        acc.record_group(ctx, target.key, "ota_status")
+        return True
+    if group == "ota_ls":
+        if not ota_ls_heard_empty(raw) and cli_error_reply(raw):
+            return False
+        heard = parse_ota_ls(raw)
+        if heard is None:
+            return False
+        acc.ota_partial = merge_ota_snapshot(
+            acc.ota_partial, heard=heard, raw_ls=raw.strip()
+        )
+        acc.ota = acc.ota_partial
+        acc.record_group(ctx, target.key, "ota_ls")
+        return True
+    if group == "ota":
+        if not ota_self_heard_empty(raw) and cli_error_reply(raw):
+            return False
+        parsed_ota = parse_ota_self(raw)
+        if parsed_ota is None:
+            return False
+        acc.base_hash = parsed_ota
+        acc.record_group(ctx, target.key, "ota")
+        return True
+    if cli_error_reply(raw) or raw.strip().upper().startswith("ERR"):
+        return False
+    if group == "firmware":
+        fw, platform = parse_firmware(raw)
+        if not fw:
+            return False
+        acc.fw = fw
+        acc.platform = platform
+        acc.raw_ver = raw
+        acc.record_group(ctx, target.key, "firmware")
+        return True
+    if group == "bootloader":
+        bl = parse_bootloader(raw) or ""
+        acc.bl = bl
+        acc.raw_bl = raw
+        acc.record_group(ctx, target.key, "bootloader")
+        return True
+    if group == "name":
+        acc.name = parse_get_value(raw) or ""
+        acc.record_group(ctx, target.key, "name")
+        return True
+    if group == "lat":
+        acc.lat = parse_coord(raw)
+        if acc.lat is None:
+            acc.lat = 0.0
+        acc.record_group(ctx, target.key, "lat")
+        return True
+    if group == "lon":
+        acc.lon = parse_coord(raw)
+        if acc.lon is None:
+            acc.lon = 0.0
+        acc.record_group(ctx, target.key, "lon")
+        return True
+    if group == "advert":
+        acc.advert_min = parse_int_get_value(raw) or 0
+        acc.record_group(ctx, target.key, "advert")
+        return True
+    if group == "flood_advert":
+        acc.flood_h = parse_int_get_value(raw) or 0
+        acc.record_group(ctx, target.key, "flood_advert")
+        return True
+    if group == "acl":
+        acl = parse_serial_acl(raw)
+        acc.acl = acl
+        acc.heard_acl = acl
+        acc.record_group(ctx, target.key, "acl")
+        return True
+    return False
+
+
+def _console_capture_tracked(
+    ctx: WorkerContext,
+    uq: UnitQueue,
+    target: RouterTarget,
+    cmd: str,
+    raw: str,
+) -> str | None:
+    """If cmd is a tracked poll CLI, stamp history. Returns group or None."""
+    group = _console_poll_group(cmd)
+    if not group:
+        return None
+    acc = _poll_acc(uq)
+    if _apply_cli_poll_reply(group, raw, acc=acc, ctx=ctx, target=target):
+        ctx.log.step(f"console captured {group}")
+        return group
+    return None
+
+
+async def _execute_console_cli(
+    job: RadioJob,
+    uq: UnitQueue,
+    ctx: WorkerContext,
+    attempt_num: int,
+    attempt_cap: int | None,
+) -> tuple[JobOutcome, Any | None]:
+    target = uq.target
+    cmd = str(job.extra.get("cmd") or "").strip()
+    if not cmd:
+        return JobOutcome.HARD_FAIL, "empty command"
+    if not ctx.session.is_authed(target.key):
+        if not uq.jobs or uq.jobs[0].kind != "console:login":
+            uq.jobs.insert(
+                0,
+                RadioJob(
+                    kind="console:login",
+                    unit_key=target.key,
+                    manual=True,
+                    manual_job="console",
+                ),
+            )
+        return JobOutcome.TIMEOUT, "not authed"
+    cancel_gen = int(job.extra.get("cancel_gen") or 0)
+    manager = uq.session_extra.get("console_manager")
+
+    def cancel_check() -> bool:
+        if ctx.session.console_cli_cancel_gen > cancel_gen:
+            return True
+        if manager is not None and manager.cancel_check(cancel_gen):
+            return True
+        return False
+
+    cancelled: list[bool] = []
+    raw = await send_cmd_once(
+        ctx.client,
+        target,
+        cmd,
+        timeout=ctx.cmd_timeout,
+        session=ctx.session,
+        log=ctx.log,
+        attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
+        cancel_check=cancel_check,
+        cancelled_out=cancelled,
+    )
+    if cancelled:
+        return JobOutcome.CANCELLED, "cancelled"
+    if raw is None:
+        _console_insert_command(ctx, target, cmd, "command timeout", ok=False)
+        return JobOutcome.TIMEOUT, "command timeout"
+    if cli_suggests_auth_failure(raw):
+        ctx.session.clear_auth(target.key)
+        if not uq.jobs or uq.jobs[0].kind != "console:login":
+            uq.jobs.insert(
+                0,
+                RadioJob(
+                    kind="console:login",
+                    unit_key=target.key,
+                    manual=True,
+                    manual_job="console",
+                ),
+            )
+        return JobOutcome.TIMEOUT, "auth"
+    ok = not (cli_error_reply(raw) or raw.strip().upper().startswith("ERR"))
+    _console_insert_command(ctx, target, cmd, raw, ok=ok)
+    if ok:
+        captured = _console_capture_tracked(ctx, uq, target, cmd, raw)
+        if captured:
+            job.extra["captured_group"] = captured
+    if not ok:
+        return JobOutcome.HEARD, raw
+    return JobOutcome.HEARD, raw
+
+
 async def execute_job(
     job: RadioJob,
     uq: UnitQueue,
@@ -469,6 +725,27 @@ async def execute_job(
         if err and "rejected" in str(err).lower():
             return JobOutcome.HARD_FAIL, err
         return JobOutcome.TIMEOUT, err
+
+    if job.kind == "console:login":
+        ok, err, clock = await admin_login_attempt(
+            ctx.client,
+            target,
+            login_timeout=ctx.login_timeout,
+            session=ctx.session,
+            log=ctx.log,
+            attempt_num=attempt_num,
+            attempt_cap=attempt_cap,
+        )
+        if ok:
+            acc.node_clock = clock
+            uq.session_extra["login_clock"] = clock
+            return JobOutcome.HEARD, clock
+        if err and "rejected" in str(err).lower():
+            return JobOutcome.HARD_FAIL, err
+        return JobOutcome.TIMEOUT, err
+
+    if job.kind == "console:cli":
+        return await _execute_console_cli(job, uq, ctx, attempt_num, attempt_cap)
 
     if job.kind == "get:neighbors_wait":
         wait_s = float(job.extra.get("wait_s", ctx.discover_wait))
@@ -702,17 +979,11 @@ async def _execute_ota_status(
     if cli_suggests_auth_failure(raw):
         ctx.session.clear_auth(target.key)
         return JobOutcome.HARD_FAIL, raw
-    if not ota_status_heard_empty(raw) and cli_error_reply(raw):
-        return JobOutcome.HARD_FAIL, raw
-    parsed = parse_ota_status(raw)
-    if parsed is None:
+    if not _apply_cli_poll_reply("ota_status", raw, acc=acc, ctx=ctx, target=target):
+        if not ota_status_heard_empty(raw) and cli_error_reply(raw):
+            return JobOutcome.HARD_FAIL, raw
         return JobOutcome.TIMEOUT, None
-    acc.ota_partial = merge_ota_snapshot(
-        acc.ota_partial, status=parsed, raw_status=raw.strip()
-    )
-    acc.ota = acc.ota_partial
-    acc.record_group(ctx, target.key, "ota_status")
-    return JobOutcome.HEARD, parsed
+    return JobOutcome.HEARD, acc.ota
 
 
 async def _execute_ota_ls(
@@ -742,17 +1013,11 @@ async def _execute_ota_ls(
     if job.kind == "get:ota_ls_probe":
         ctx.log.step("ota ls probe (catalog query started)")
         return JobOutcome.HEARD, raw
-    if not ota_ls_heard_empty(raw) and cli_error_reply(raw):
-        return JobOutcome.HARD_FAIL, raw
-    heard = parse_ota_ls(raw)
-    if heard is None:
+    if not _apply_cli_poll_reply("ota_ls", raw, acc=acc, ctx=ctx, target=target):
+        if not ota_ls_heard_empty(raw) and cli_error_reply(raw):
+            return JobOutcome.HARD_FAIL, raw
         return JobOutcome.TIMEOUT, None
-    acc.ota_partial = merge_ota_snapshot(
-        acc.ota_partial, heard=heard, raw_ls=raw.strip()
-    )
-    acc.ota = acc.ota_partial
-    acc.record_group(ctx, target.key, "ota_ls")
-    return JobOutcome.HEARD, heard
+    return JobOutcome.HEARD, (acc.ota or {}).get("heard")
 
 
 async def _execute_get_cli(
@@ -791,65 +1056,36 @@ async def _execute_get_cli(
     )
     if raw is None:
         return JobOutcome.TIMEOUT, None
+    if cli_suggests_auth_failure(raw):
+        ctx.session.clear_auth(target.key)
+        return JobOutcome.HARD_FAIL, raw
     if group == "ota":
-        if cli_suggests_auth_failure(raw):
-            ctx.session.clear_auth(target.key)
-            return JobOutcome.HARD_FAIL, raw
-        if not ota_self_heard_empty(raw) and cli_error_reply(raw):
-            return JobOutcome.HARD_FAIL, raw
-        parsed_ota = parse_ota_self(raw)
-        if parsed_ota is None:
+        if not _apply_cli_poll_reply("ota", raw, acc=acc, ctx=ctx, target=target):
+            if not ota_self_heard_empty(raw) and cli_error_reply(raw):
+                return JobOutcome.HARD_FAIL, raw
             return JobOutcome.TIMEOUT, None
-        acc.base_hash = parsed_ota
-        acc.record_group(ctx, target.key, "ota")
-        if parsed_ota:
-            ctx.log.step(f"ota base_hash={parsed_ota}")
+        if acc.base_hash:
+            ctx.log.step(f"ota base_hash={acc.base_hash}")
         else:
             ctx.log.step("ota self: empty (no OTA or no EndF)")
-        return JobOutcome.HEARD, parsed_ota
-    if cli_suggests_auth_failure(raw) or cli_error_reply(raw):
-        if cli_suggests_auth_failure(raw):
-            ctx.session.clear_auth(target.key)
+        return JobOutcome.HEARD, acc.base_hash
+    if cli_error_reply(raw):
         return JobOutcome.HARD_FAIL, raw
-
-    if group == "firmware":
-        fw, platform = parse_firmware(raw)
-        if fw:
-            acc.fw = fw
-            acc.platform = platform
-            acc.raw_ver = raw
-            acc.record_group(ctx, target.key, "firmware")
-            return JobOutcome.HEARD, fw
+    if not _apply_cli_poll_reply(group, raw, acc=acc, ctx=ctx, target=target):
         return JobOutcome.TIMEOUT, None
+    if group == "firmware":
+        return JobOutcome.HEARD, acc.fw
     if group == "bootloader":
-        bl = parse_bootloader(raw) or ""
-        acc.bl = bl
-        acc.raw_bl = raw
-        acc.record_group(ctx, target.key, "bootloader")
-        return JobOutcome.HEARD, bl
+        return JobOutcome.HEARD, acc.bl
     if group == "name":
-        acc.name = parse_get_value(raw) or ""
-        acc.record_group(ctx, target.key, "name")
         return JobOutcome.HEARD, acc.name
     if group == "lat":
-        acc.lat = parse_coord(raw)
-        if acc.lat is None:
-            acc.lat = 0.0
-        acc.record_group(ctx, target.key, "lat")
         return JobOutcome.HEARD, acc.lat
     if group == "lon":
-        acc.lon = parse_coord(raw)
-        if acc.lon is None:
-            acc.lon = 0.0
-        acc.record_group(ctx, target.key, "lon")
         return JobOutcome.HEARD, acc.lon
     if group == "advert":
-        acc.advert_min = parse_int_get_value(raw) or 0
-        acc.record_group(ctx, target.key, "advert")
         return JobOutcome.HEARD, acc.advert_min
     if group == "flood_advert":
-        acc.flood_h = parse_int_get_value(raw) or 0
-        acc.record_group(ctx, target.key, "flood_advert")
         return JobOutcome.HEARD, acc.flood_h
     return JobOutcome.TIMEOUT, None
 

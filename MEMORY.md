@@ -35,7 +35,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/commands/trust.py` | Contacts + channels + keys.yaml / ACL login |
 | `src/envybot/commands/cmd.py` | Remote MeshCore CLI |
 | `src/envybot/commands/onboard.py` | USB repeater text CLI onboard (`path.hash.mode` 1, `get acl` is `ACL:` dump). Stamps private `applies` so fleet is ready. |
-| `src/envybot/web/` | Fleet UI (`:8787`) |
+| `src/envybot/web/` | Fleet UI (`:8787`); detail **Console** (exclusive CLI) |
 
 ## Contract
 
@@ -128,6 +128,11 @@ Separate USB OTA repeater for `motatool serve`.
   **Refresh**, **Pull**, and **Push** always enqueue (even while that unit
   is polling) and run ahead of auto work until the click is done. Overrides
   `--skip` and `paused`. Refresh is live GET only; Pull adds sticky GET;
+  Push is SET-only force. **Console** (detail) holds exclusive companion
+  access for one unit: pauses all other fleet radio work, manual CLI with
+  flood + scheduler retries, audit `source=console`. Tracked CLI poll
+  replies (`ota status`, `ver`, …) stamp last-seen like Refresh. Exit
+  resumes auto poll/apply for everyone.
   Push force-SETs profile (including passwords). CLI `--force` is Pull plus
   Push. Auto-apply queues when `apply_is_due` even if the fleet is mid-sync.
   **Pause** (detail checkbox) writes `paused: true` and drops the unit from

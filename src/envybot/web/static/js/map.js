@@ -105,6 +105,7 @@ export function unitStatus(unit) {
 /** Badge text: current job stage when in flight, else unitStatus. */
 export function unitStage(unit) {
   const s = unit?.session
+  if (s && typeof s === 'object' && s.state === 'console') return 'Console'
   const stage = s && typeof s === 'object' && typeof s.stage === 'string' ? s.stage.trim() : ''
   if (stage) return stage
   return unitStatus(unit)

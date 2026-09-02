@@ -95,6 +95,7 @@ def log_cmd_record(
         argv=redact_snippet(command, max_len=500) or command,
         reply=redact_snippet(reply),
         ok=ok,
+        source="cmd",
     )
     conn.close()
 

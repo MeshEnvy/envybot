@@ -100,7 +100,8 @@ CREATE TABLE IF NOT EXISTS commands (
   unit TEXT NOT NULL,
   argv TEXT,
   reply TEXT,
-  ok INTEGER NOT NULL
+  ok INTEGER NOT NULL,
+  source TEXT
 );
 CREATE INDEX IF NOT EXISTS commands_unit_ts ON commands (unit, ts);
 
@@ -122,7 +123,8 @@ CREATE TABLE IF NOT EXISTS mesh_audit (
   ok INTEGER NOT NULL,
   outcome TEXT NOT NULL,
   reply TEXT,
-  error TEXT
+  error TEXT,
+  source TEXT
 );
 CREATE INDEX IF NOT EXISTS mesh_audit_unit_ts ON mesh_audit (unit, ts_sent);
 """
@@ -169,9 +171,19 @@ def open_history(book: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.executescript(SCHEMA)
     _ensure_last_seen_columns(conn)
+    _ensure_audit_source_columns(conn)
     _ensure_sample_loc_columns(conn)
     _backfill_sample_loc_from_sites(conn, book)
     return conn
+
+
+def _ensure_audit_source_columns(conn: sqlite3.Connection) -> None:
+    cmd_cols = {row[1] for row in conn.execute("PRAGMA table_info(commands)")}
+    if "source" not in cmd_cols:
+        conn.execute("ALTER TABLE commands ADD COLUMN source TEXT")
+    audit_cols = {row[1] for row in conn.execute("PRAGMA table_info(mesh_audit)")}
+    if "source" not in audit_cols:
+        conn.execute("ALTER TABLE mesh_audit ADD COLUMN source TEXT")
 
 
 def _ensure_sample_loc_columns(conn: sqlite3.Connection) -> None:
@@ -704,10 +716,11 @@ def insert_command(
     reply: str | None,
     ok: bool,
     ts: int | None = None,
+    source: str | None = None,
 ) -> None:
     conn.execute(
-        "INSERT INTO commands (ts, unit, argv, reply, ok) VALUES (?, ?, ?, ?, ?)",
-        (ts or int(time.time()), unit, argv, reply, 1 if ok else 0),
+        "INSERT INTO commands (ts, unit, argv, reply, ok, source) VALUES (?, ?, ?, ?, ?, ?)",
+        (ts or int(time.time()), unit, argv, reply, 1 if ok else 0, source),
     )
     conn.commit()
 
@@ -1315,6 +1328,9 @@ def _upsert_last_seen(conn: sqlite3.Connection, unit: str, fields: dict[str, Any
         "packets_sent",
         "err_events",
         "recv_errors",
+        "ota_status_at",
+        "ota_ls_at",
+        "ota_state",
     ]
     placeholders = ", ".join("?" for _ in cols)
     col_sql = ", ".join(cols)
@@ -1636,6 +1652,7 @@ def import_jsonl(conn: sqlite3.Connection, path: Path) -> int:
                     reply=rec.get("reply"),
                     ok=bool(rec.get("ok")),
                     ts=ts,
+                    source="cmd",
                 )
                 n += 1
                 continue
@@ -1675,15 +1692,16 @@ def begin_mesh_audit(
     attempt: int | None,
     path: str,
     wait_s: float | None,
+    source: str | None = None,
 ) -> int | None:
     """Insert a mesh send row at send time. Returns row id or None if conn is omitted."""
     if conn is None:
         return None
     cur = conn.execute(
         "INSERT INTO mesh_audit "
-        "(ts_sent, unit, kind, label, attempt, path, wait_s, ok, outcome) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'pending')",
-        (time.time(), unit.lower(), kind, label, attempt, path, wait_s),
+        "(ts_sent, unit, kind, label, attempt, path, wait_s, ok, outcome, source) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'pending', ?)",
+        (time.time(), unit.lower(), kind, label, attempt, path, wait_s, source),
     )
     conn.commit()
     return int(cur.lastrowid)

@@ -8,6 +8,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- Fleet detail **Console**: exclusive manual CLI on one unit while the
+  companion worker is live. Pauses auto poll/apply fleet-wide; flood +
+  `--attempts` retries; Cancel; audit rows tagged `source=console`.
+  Tracked poll CLI replies (`ota status`, `ver`, …) stamp last-seen.
+  `./envybot cmd` unchanged.
+
 - Book field `ota_autofetch` (`off`|`any`|`signed`, default `off`). Fleet Push
   and USB onboard SET `ota config autofetch off` when the apply stamp is due.
 - Fleet open card is `?unit=me0032` in the address bar. Reload and
@@ -28,6 +34,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   horizon line. Temperature displays as °F (radio still reports °C).
 
 ### Fixed
+
+- `_upsert_last_seen` now persists `ota_status_at` / `ota_ls_at` /
+  `ota_state` (was writing snapshots only). Console and Refresh both
+  rely on those stamps.
 
 - Onboard stamps the private apply profile in sqlite after USB SET +
   ACL. Fleet no longer treats a freshly onboarded unit as `leak` / first

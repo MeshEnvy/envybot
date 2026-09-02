@@ -291,6 +291,46 @@ class PickNextTests(unittest.TestCase):
         self.assertEqual(uq.target.key, "me0002")
         self.assertTrue(sched.units["me0002"].manual)
 
+    def test_exclusive_pick_only_held_unit(self) -> None:
+        sched = FleetScheduler()
+        a = _target("me0001")
+        b = _target("me0002")
+        sched.enqueue_jobs(a, [RadioJob(kind="login", unit_key="me0001")])
+        sched.enqueue_jobs(b, [RadioJob(kind="login", unit_key="me0002")])
+        sched.set_exclusive("me0002")
+        sched.enqueue_console(
+            b,
+            [RadioJob(kind="console:login", unit_key="me0002", manual=True, manual_job="console")],
+        )
+        picked = sched.pick_next(0.0)
+        assert picked is not None
+        uq, job = picked
+        self.assertEqual(uq.target.key, "me0002")
+        self.assertEqual(job.kind, "console:login")
+
+    def test_clear_exclusive(self) -> None:
+        sched = FleetScheduler()
+        sched.set_exclusive("me0001")
+        sched.clear_exclusive()
+        self.assertIsNone(sched.exclusive_key)
+
+    def test_console_cli_future_deferred_to_manager(self) -> None:
+        sched = FleetScheduler()
+        uq = sched.get_or_create(_target("me0052"))
+        loop = asyncio.new_event_loop()
+        fut = loop.create_future()
+        job = RadioJob(
+            kind="console:cli",
+            unit_key="me0052",
+            manual=True,
+            manual_job="console",
+            future=fut,
+        )
+        uq.jobs.append(job)
+        sched._settle_job(uq, job, JobOutcome.HEARD, "OTA | fw v1", {})
+        self.assertFalse(fut.done())
+        loop.close()
+
 
 if __name__ == "__main__":
     unittest.main()

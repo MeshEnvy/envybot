@@ -199,6 +199,8 @@ class FleetSession:
     _register_binary_orig: Any = None
     _recovery_client: MeshCore | None = field(default=None, repr=False)
     _recovery_targets: list[Any] = field(default_factory=list, repr=False)
+    audit_source: str | None = None
+    console_cli_cancel_gen: int = 0
 
     def enable_companion_recovery(self, client: MeshCore, targets: list[Any]) -> None:
         """After BLE/USB drop, reconnect transport + re-sync fleet contacts."""
@@ -1653,6 +1655,7 @@ def _audit_begin(
         attempt=attempt,
         path=path,
         wait_s=wait_s,
+        source=session.audit_source,
     )
 
 
@@ -1873,6 +1876,7 @@ async def wait_cli_response(
     session: FleetSession | None = None,
     unit: str | None = None,
     slack0: float = 0.0,
+    cancel_check: Any | None = None,
 ) -> str | None:
     """Wait for CLI reply, keeping the message listener armed the whole time.
 
@@ -1904,6 +1908,8 @@ async def wait_cli_response(
     msg_task = arm_msg_listener(left)
     try:
         while True:
+            if cancel_check is not None and cancel_check():
+                return None
             left = remaining()
             if left <= 0:
                 return None
@@ -2289,6 +2295,8 @@ async def send_cmd_sync(
     session: FleetSession | None = None,
     attempt_num: int | None = None,
     attempt_cap: int | None = None,
+    cancel_check: Any | None = None,
+    cancelled_out: list[bool] | None = None,
 ) -> str | None:
     log = log or PollLog()
     """Send CLI command; always floods (companion out_path reset before each send)."""
@@ -2381,7 +2389,13 @@ async def send_cmd_sync(
             session=session,
             unit=target.unit_id,
             slack0=slack0,
+            cancel_check=cancel_check,
         )
+        if cancel_check is not None and cancel_check() and text is None:
+            if cancelled_out is not None:
+                cancelled_out.append(True)
+            _audit_finish(session, audit_id, ok=False, outcome="cancelled", error="cancelled")
+            return None
         if exp is not None and text:
             session.resolve_expect(exp)
         if text:
@@ -2409,6 +2423,8 @@ async def send_cmd_once(
     session: FleetSession | None = None,
     attempt_num: int = 1,
     attempt_cap: int | None = None,
+    cancel_check: Any | None = None,
+    cancelled_out: list[bool] | None = None,
 ) -> str | None:
     """Single CLI send+wait."""
     return await send_cmd_sync(
@@ -2421,6 +2437,8 @@ async def send_cmd_once(
         session=session,
         attempt_num=attempt_num,
         attempt_cap=attempt_cap,
+        cancel_check=cancel_check,
+        cancelled_out=cancelled_out,
     )
 
 

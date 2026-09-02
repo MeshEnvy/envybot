@@ -7,7 +7,7 @@ export async function fetchFleet() {
   return /** @type {FleetSnapshot} */ (await res.json())
 }
 
-/** @param {{ onHello: (s: FleetSnapshot) => void, onUnit: (u: Record<string, unknown>) => void, onSession: (p: Record<string, unknown>) => void }} handlers */
+/** @param {{ onHello: (s: FleetSnapshot) => void, onUnit: (u: Record<string, unknown>) => void, onSession: (p: Record<string, unknown>) => void, onConsole?: (c: Record<string, unknown>) => void }} handlers */
 export function connectEvents(handlers) {
   const es = new EventSource('/events')
   es.addEventListener('hello', (ev) => {
@@ -19,6 +19,11 @@ export function connectEvents(handlers) {
   es.addEventListener('session', (ev) => {
     handlers.onSession(JSON.parse(/** @type {MessageEvent} */ (ev).data))
   })
+  if (handlers.onConsole) {
+    es.addEventListener('console', (ev) => {
+      handlers.onConsole(JSON.parse(/** @type {MessageEvent} */ (ev).data))
+    })
+  }
   es.onerror = () => {
     /* browser reconnects automatically */
   }
@@ -78,6 +83,50 @@ export async function installUnit(key) {
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.error || `install ${res.status}`)
+  }
+  return res.json()
+}
+
+/** @param {string} key */
+export async function openConsole(key) {
+  const res = await fetch(`/api/console/${encodeURIComponent(key)}/open`, { method: 'POST' })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `console open ${res.status}`)
+  }
+  return res.json()
+}
+
+/** @param {string} key @param {string} cmd */
+export async function sendConsole(key, cmd) {
+  const res = await fetch(`/api/console/${encodeURIComponent(key)}/send`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cmd }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `console send ${res.status}`)
+  }
+  return res.json()
+}
+
+/** @param {string} key */
+export async function cancelConsole(key) {
+  const res = await fetch(`/api/console/${encodeURIComponent(key)}/cancel`, { method: 'POST' })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `console cancel ${res.status}`)
+  }
+  return res.json()
+}
+
+/** @param {string} key */
+export async function closeConsole(key) {
+  const res = await fetch(`/api/console/${encodeURIComponent(key)}/close`, { method: 'POST' })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `console close ${res.status}`)
   }
   return res.json()
 }

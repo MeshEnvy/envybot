@@ -350,6 +350,8 @@ async def run(args: argparse.Namespace) -> int:
 
     if web_ctx:
         web_ctx.set_worker_active(True)
+        web_ctx._fleet_session = session
+        web_ctx.console.bind_publish(web_ctx.hub.publish_console)
     if initial_units:
         work_targets = [t for t in auto_targets if scheduler.units.get(t.key, None) and scheduler.units[t.key].jobs]
         if work_targets:
@@ -363,6 +365,24 @@ async def run(args: argparse.Namespace) -> int:
 
     async def on_job_start(uq: Any, job: Any) -> None:
         target = uq.target
+        uq.session_extra["console_manager"] = web_ctx.console if web_ctx else None
+        if scheduler.exclusive_key == target.key:
+            session.audit_source = "console"
+        elif session.audit_source == "console":
+            session.audit_source = None
+        if web_ctx and web_ctx.console.active and web_ctx.console.active.key == target.key:
+            if job.kind == "console:login":
+                await web_ctx.console.on_login_start(
+                    job.attempt + 1,
+                    scheduler.max_attempts or worker_ctx.max_attempts,
+                )
+            elif job.kind == "console:cli":
+                cmd = str(job.extra.get("cmd") or "")
+                await web_ctx.console.on_cli_start(
+                    job.attempt + 1,
+                    scheduler.max_attempts or worker_ctx.max_attempts,
+                    cmd,
+                )
         node_record = nodes.get(target.key) or {}
         job_name = uq.manual_job
         unit_force = args.force or job_name == "push"
@@ -392,6 +412,13 @@ async def run(args: argparse.Namespace) -> int:
             due_groups=list(getattr(target, "due_groups", [])),
             apply=apply_due_now,
         )
+        if uq.manual_job == "console":
+            session_states[target.key] = {
+                "state": "console",
+                "kind": job.kind,
+                "attempt": job.attempt + 1,
+                "max_attempts": scheduler.max_attempts,
+            }
         if web_ctx:
             active_poll = {
                 "phase": "polling",
@@ -419,6 +446,50 @@ async def run(args: argparse.Namespace) -> int:
     async def on_job_done(uq: Any, job: Any, outcome: JobOutcome, payload: Any) -> None:
         nonlocal yaml_dirty, round_num
         target = uq.target
+        if web_ctx and web_ctx.console.active and web_ctx.console.active.key == target.key:
+            if job.kind == "console:login" and outcome == JobOutcome.HEARD:
+                await web_ctx.console.on_login_ready()
+            elif job.kind == "console:login" and outcome in (
+                JobOutcome.TIMEOUT,
+                JobOutcome.HARD_FAIL,
+            ) and not uq.jobs:
+                await web_ctx.console.on_cli_done(
+                    ok=False,
+                    reply=None,
+                    error=str(payload or "login failed"),
+                )
+            elif job.kind == "console:cli":
+                if outcome == JobOutcome.CANCELLED:
+                    await web_ctx.console.on_cli_done(
+                        ok=False,
+                        reply=None,
+                        error="cancelled",
+                    )
+                elif outcome == JobOutcome.HEARD:
+                    err = None
+                    reply = str(payload) if payload is not None else None
+                    if reply and (
+                        reply.strip().upper().startswith("ERR")
+                        or "unknown command" in reply.lower()
+                    ):
+                        err = reply
+                    await web_ctx.console.on_cli_done(
+                        ok=err is None,
+                        reply=reply,
+                        error=err,
+                    )
+                elif outcome == JobOutcome.HARD_FAIL:
+                    await web_ctx.console.on_cli_done(
+                        ok=False,
+                        reply=str(payload) if payload is not None else None,
+                        error=str(payload or "failed"),
+                    )
+                elif outcome == JobOutcome.TIMEOUT and not uq.jobs:
+                    await web_ctx.console.on_cli_done(
+                        ok=False,
+                        reply=None,
+                        error=str(payload or "command timeout"),
+                    )
         node_record = nodes.get(target.key) or {}
         guest_before = str(node_record.get("guest_password") or "")
 
@@ -428,7 +499,8 @@ async def run(args: argparse.Namespace) -> int:
         if prev.get("state") == "paused":
             pass
         elif (
-            not apply_job
+            uq.manual_job != "console"
+            and not apply_job
             and (
                 outcome == JobOutcome.HARD_FAIL
                 or (outcome == JobOutcome.TIMEOUT and not uq.jobs)
@@ -442,6 +514,11 @@ async def run(args: argparse.Namespace) -> int:
             if not args.quiet:
                 print(f"  unreachable: {payload}")
             manual_keys.discard(target.key)
+        elif uq.manual_job == "console" and scheduler.exclusive_key == target.key:
+            session_states[target.key] = {
+                "state": "console",
+                "kind": uq.jobs[0].kind if uq.jobs else "ready",
+            }
         elif uq.jobs:
             head = uq.jobs[0]
             session_states[target.key] = in_flight_session(
@@ -466,7 +543,10 @@ async def run(args: argparse.Namespace) -> int:
                 elif scheduler.max_attempts:
                     print(f"  {job.kind}: gave up after {scheduler.max_attempts}, continuing")
         else:
-            session_states[target.key] = {"state": "ok", "due_groups": []}
+            if uq.manual_job == "console" and scheduler.exclusive_key == target.key:
+                session_states[target.key] = {"state": "console", "kind": "ready"}
+            else:
+                session_states[target.key] = {"state": "ok", "due_groups": []}
             dropped = uq.session_extra.get("dropped_jobs") or []
             if (
                 not args.quiet
@@ -487,7 +567,8 @@ async def run(args: argparse.Namespace) -> int:
                     else:
                         print(f"  OK {poll_summary(res)}")
             uq.session_extra.pop("dropped_jobs", None)
-            manual_keys.discard(target.key)
+            if uq.manual_job != "console":
+                manual_keys.discard(target.key)
 
         if str(node_record.get("guest_password") or "") != guest_before:
             yaml_dirty = True
@@ -551,6 +632,9 @@ async def run(args: argparse.Namespace) -> int:
                 await scheduler.wait_for_work(timeout=CADENCE_CHECK_S)
                 if scheduler._stop:
                     break
+                if scheduler.exclusive_key is not None:
+                    await scheduler.wait_for_work(timeout=1.0)
+                    continue
                 cadence_policy = PollPolicy(
                     force=False,
                     live_only=args.live and not args.force,
@@ -601,6 +685,8 @@ async def run(args: argparse.Namespace) -> int:
             if args.once:
                 break
             if scheduler.pending_count() == 0:
+                continue
+            if scheduler.exclusive_key is not None:
                 continue
             cadence_policy = PollPolicy(
                 force=False,

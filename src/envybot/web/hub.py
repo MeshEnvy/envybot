@@ -42,6 +42,17 @@ class FleetHub:
             poll.update(session)
         await self._broadcast("session", session)
 
+    async def publish_console(self, event: dict[str, Any]) -> None:
+        if self._snapshot is not None:
+            poll = self._snapshot.setdefault("poll", {})
+            key = event.get("key")
+            state = event.get("state")
+            if state == "closed":
+                poll.pop("console", None)
+            elif isinstance(key, str) and key:
+                poll["console"] = {"key": key, "state": state}
+        await self._broadcast("console", event)
+
     async def _broadcast(self, event: str, data: dict[str, Any]) -> None:
         dead: list[asyncio.Queue[tuple[str, dict[str, Any]]]] = []
         for queue in list(self._clients):
