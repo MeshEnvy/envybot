@@ -33,6 +33,7 @@ class _Res:
     def __init__(self, **kwargs):
         self.firmware_version = kwargs.get("firmware_version")
         self.bootloader_version = kwargs.get("bootloader_version")
+        self.base_hash = kwargs.get("base_hash")
         self.firmware_platform = kwargs.get("firmware_platform")
         self.name = kwargs.get("name")
         self.lat = kwargs.get("lat")
@@ -89,6 +90,19 @@ class HistoryTests(unittest.TestCase):
             noise = history_series(conn, "me0001", "noise_floor")
             self.assertEqual(len(noise), 1)
             self.assertEqual(noise[0]["value"], -94)
+
+    def test_record_ota_base_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            record_poll(
+                conn,
+                unit="me0001",
+                res=_Res(base_hash="0011223344556677", polled_groups=frozenset({"ota"})),
+            )
+            seen = get_last_seen(conn, "me0001")
+            assert seen is not None
+            self.assertEqual(seen["base_hash"], "0011223344556677")
+            self.assertIsNotNone(seen["ota_at"])
 
     def test_record_poll_logs_site_loc(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

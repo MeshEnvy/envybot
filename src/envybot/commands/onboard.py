@@ -63,6 +63,7 @@ from envybot.radio import (
     parse_firmware,
     parse_get_value,
     parse_int_get_value,
+    parse_ota_self,
     serial_port_candidates,
 )
 
@@ -154,6 +155,13 @@ def read_bootloader(cli: "RepeaterSerial") -> tuple[str, str]:
     parsed = parse_bootloader(raw) or ""
     if parsed.lower() == "unknown":
         parsed = ""
+    return parsed, raw
+
+
+def read_ota_self(cli: "RepeaterSerial") -> tuple[str | None, str]:
+    """Same parse as fleet pull. Returns (base_hash_or_empty, raw_reply). None if unparsed."""
+    raw = cli.cmd("ota self")
+    parsed = parse_ota_self(raw)
     return parsed, raw
 
 
@@ -699,6 +707,15 @@ def onboard(
     else:
         print(f"   bl unknown ({bl_raw})")
 
+    print("   ota self …")
+    base_hash, ota_raw = read_ota_self(cli)
+    if base_hash is None:
+        print(f"   base hash unparsed ({ota_raw.strip()[:60]})")
+    elif base_hash:
+        print(f"   base hash {base_hash}")
+    else:
+        print(f"   base hash empty ({ota_raw.strip()[:60]})")
+
     if not pubkey:
         pubkey = normalize_hex(parse_get_value(cli.cmd("get public.key")) or "", PUB_HEX_LEN, "public.key")
     print(f"   pub {pubkey}")
@@ -814,6 +831,7 @@ def onboard(
         "firmware_platform": platform or "meshcore",
         "firmware_raw": ver_raw,
         "bootloader_version": bl,
+        "base_hash": base_hash,
         "node_clock": now,
         "neighbors": None,
     }
@@ -878,6 +896,7 @@ def register(nodes_path: Path, result: dict[str, Any], *, unit: str | None) -> t
         unit=key,
         firmware_version=result.get("firmware_version"),
         bootloader_version=result.get("bootloader_version"),
+        base_hash=result.get("base_hash"),
         firmware_platform=result.get("firmware_platform"),
         node_clock=result.get("node_clock"),
         neighbors=result.get("neighbors"),

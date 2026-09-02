@@ -299,6 +299,7 @@ def sanitize_unit(
         "firmware_version": (seen or {}).get("firmware_version"),
         "firmware_platform": node.get("firmware_platform"),
         "bootloader_version": (seen or {}).get("bootloader_version"),
+        "base_hash": (seen or {}).get("base_hash") or None,
         "identity_pubkey": str(node.get("identity_pubkey") or "").lower() or None,
         "position": position,
         "mapped": position is not None,

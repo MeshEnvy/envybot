@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS last_seen (
   updated_at INTEGER NOT NULL,
   firmware_at INTEGER,
   bootloader_at INTEGER,
+  ota_at INTEGER,
   name_at INTEGER,
   gps_at INTEGER,
   advert_at INTEGER,
@@ -28,6 +29,7 @@ CREATE TABLE IF NOT EXISTS last_seen (
   neighbors_at INTEGER,
   firmware_version TEXT,
   bootloader_version TEXT,
+  base_hash TEXT,
   firmware_platform TEXT,
   name_heard TEXT,
   lat_heard REAL,
@@ -255,6 +257,10 @@ def _ensure_last_seen_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE last_seen ADD COLUMN uptime_secs INTEGER")
     if "temperature" not in cols:
         conn.execute("ALTER TABLE last_seen ADD COLUMN temperature REAL")
+    if "ota_at" not in cols:
+        conn.execute("ALTER TABLE last_seen ADD COLUMN ota_at INTEGER")
+    if "base_hash" not in cols:
+        conn.execute("ALTER TABLE last_seen ADD COLUMN base_hash TEXT")
     _backfill_last_seen_promoted_fields(conn)
 
 
@@ -1222,6 +1228,7 @@ def _upsert_last_seen(conn: sqlite3.Connection, unit: str, fields: dict[str, Any
         "updated_at",
         "firmware_at",
         "bootloader_at",
+        "ota_at",
         "name_at",
         "gps_at",
         "advert_at",
@@ -1232,6 +1239,7 @@ def _upsert_last_seen(conn: sqlite3.Connection, unit: str, fields: dict[str, Any
         "neighbors_at",
         "firmware_version",
         "bootloader_version",
+        "base_hash",
         "firmware_platform",
         "name_heard",
         "lat_heard",
@@ -1287,6 +1295,9 @@ def record_poll(
     if "bootloader" in groups and res.bootloader_version is not None:
         fields["bootloader_version"] = res.bootloader_version
         fields["bootloader_at"] = now
+    if "ota" in groups and res.base_hash is not None:
+        fields["base_hash"] = res.base_hash
+        fields["ota_at"] = now
     if "name" in groups and res.name is not None:
         fields["name_heard"] = res.name
         fields["name_at"] = now
@@ -1368,6 +1379,7 @@ def record_onboard_heard(
     unit: str,
     firmware_version: str | None = None,
     bootloader_version: str | None = None,
+    base_hash: str | None = None,
     firmware_platform: str | None = None,
     node_clock: int | None = None,
     neighbors: Any = None,
@@ -1390,6 +1402,9 @@ def record_onboard_heard(
     if bootloader_version is not None:
         fields["bootloader_version"] = bootloader_version
         fields["bootloader_at"] = now
+    if base_hash is not None:
+        fields["base_hash"] = base_hash
+        fields["ota_at"] = now
     if node_clock is not None:
         fields["node_clock"] = node_clock
     if neighbors is not None:

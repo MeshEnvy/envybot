@@ -14,9 +14,10 @@ from envybot.radio import RouterTarget
 class _Res:
     def __init__(self, **kwargs):
         self.firmware_version = kwargs.get("firmware_version")
-        self.bootloader_version = None
-        self.firmware_platform = None
-        self.name = None
+        self.bootloader_version = kwargs.get("bootloader_version")
+        self.base_hash = kwargs.get("base_hash")
+        self.firmware_platform = kwargs.get("firmware_platform")
+        self.name = kwargs.get("name")
         self.lat = None
         self.lon = None
         self.node_clock = None
@@ -34,6 +35,7 @@ class JobStageTests(unittest.TestCase):
         from envybot.poll import in_flight_session, job_stage_label
 
         self.assertEqual(job_stage_label("login"), "Logging in")
+        self.assertEqual(job_stage_label("get:ota"), "Fetching OTA")
         self.assertEqual(job_stage_label("get:acl"), "Fetching ACL")
         self.assertEqual(job_stage_label("get:status"), "Fetching status")
         self.assertEqual(job_stage_label("apply:acl"), "Setting ACL")
@@ -123,6 +125,22 @@ class PollCadenceTests(unittest.TestCase):
             seen = conn.execute("SELECT * FROM last_seen WHERE unit = 'me0001'").fetchone()
             seen = dict(seen)
             self.assertFalse(group_is_due(seen, "firmware", policy=policy, now=now + 99999))
+
+    def test_ota_inventory_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            policy = PollPolicy()
+            now = 1_700_000_000
+            self.assertTrue(group_is_due(None, "ota", policy=policy, now=now))
+            record_poll(
+                conn,
+                unit="me0001",
+                res=_Res(base_hash="AABBCCDDEEFF0011", polled_groups=frozenset({"ota"})),
+            )
+            seen = conn.execute("SELECT * FROM last_seen WHERE unit = 'me0001'").fetchone()
+            seen = dict(seen)
+            self.assertEqual(seen["base_hash"], "AABBCCDDEEFF0011")
+            self.assertFalse(group_is_due(seen, "ota", policy=policy, now=now + 99999))
 
 
 class TrustStampTests(unittest.TestCase):

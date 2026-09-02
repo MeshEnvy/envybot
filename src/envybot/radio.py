@@ -38,6 +38,7 @@ except ImportError as exc:  # pragma: no cover
 
 VER_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)*)\s*\(Build:", re.I)
 BL_RE = re.compile(r"^>\s*(.+)$")
+OTA_SELF_HASH_RE = re.compile(r"base_hash=([0-9A-Fa-f]{16})", re.I)
 VERSION_POLL_NOTE_RE = re.compile(r"(?:\s*[—–-]\s*)?version poll (\d{4}-\d{2}-\d{2})", re.I)
 CLOCK_CLI_RE = re.compile(
     r"(\d{1,2}):(\d{2})\s*-\s*(\d{1,2})/(\d{1,2})/(\d{4})\s*UTC", re.I
@@ -681,6 +682,8 @@ def gaps_from_poll_result(res: PollResult) -> list[str]:
         gaps.append("firmware")
     if "bootloader" in res.polled_groups and res.bootloader_version is None:
         gaps.append("bootloader")
+    if "ota" in res.polled_groups and res.base_hash is None:
+        gaps.append("ota")
     if "name" in res.polled_groups and res.name is None:
         gaps.append("name")
     if "lat" in res.polled_groups and res.lat is None:
@@ -765,6 +768,7 @@ class PollResult:
     ok: bool
     firmware_version: str | None = None
     bootloader_version: str | None = None
+    base_hash: str | None = None
     firmware_platform: str | None = None
     error: str | None = None
     raw_ver: str | None = None
@@ -897,6 +901,31 @@ def parse_bootloader(text: str) -> str | None:
     if text.upper().startswith("ERROR"):
         return None
     return text or None
+
+
+def ota_self_heard_empty(text: str) -> bool:
+    """True when the radio answered but has no OTA identity to report."""
+    lower = text.strip().lower()
+    if lower == "unknown command":
+        return True
+    if "unknown ota command" in lower:
+        return True
+    if lower.startswith("err no endf"):
+        return True
+    return False
+
+
+def parse_ota_self(text: str) -> str | None:
+    """Return 16-char hex base_hash, '' if OTA absent/no EndF, None if unparsed."""
+    if not text:
+        return None
+    stripped = text.strip()
+    if ota_self_heard_empty(stripped):
+        return ""
+    match = OTA_SELF_HASH_RE.search(stripped)
+    if match:
+        return match.group(1).upper()
+    return None
 
 
 def cli_error_reply(text: str | None) -> bool:
@@ -2601,6 +2630,7 @@ async def poll_one(
     fw: str | None = None
     platform: str | None = None
     bl: str | None = None
+    base_hash: str | None = None
     raw_ver: str | None = None
     raw_bl: str | None = None
     lat: float | None = None
@@ -2789,6 +2819,40 @@ async def poll_one(
                 if not bl:
                     log.step(f"bootloader unknown ({raw_bl.strip()[:60]})")
 
+        if "ota" in polled:
+            raw_ota = await send_cmd_sync(
+                client,
+                target,
+                "ota self",
+                timeout=cmd_timeout,
+                attempts=attempts,
+                log=log,
+                session=session,
+            )
+            if raw_ota is None:
+                stat_errors.append("ota: no response")
+                log.step("ota self: no response")
+            elif cli_suggests_auth_failure(raw_ota):
+                if session is not None:
+                    session.clear_auth(target.key)
+                    log.step("auth cleared (CLI denied)")
+                stat_errors.append("ota: error")
+                log.step("ota self: auth error")
+            elif not ota_self_heard_empty(raw_ota) and cli_error_reply(raw_ota):
+                stat_errors.append("ota: error")
+                log.step("ota self: error")
+            else:
+                parsed_ota = parse_ota_self(raw_ota)
+                if parsed_ota is None:
+                    stat_errors.append("ota: unparsed")
+                    log.step(f"ota self: unparsed ({raw_ota.strip()[:60]})")
+                else:
+                    base_hash = parsed_ota
+                    if parsed_ota:
+                        log.step(f"ota base_hash={parsed_ota}")
+                    else:
+                        log.step("ota self: empty (no OTA or no EndF)")
+
         if "lat" in polled or "gps" in polled:
             raw_lat = await send_cmd_sync(
                 client, target, "get lat", timeout=cmd_timeout, attempts=attempts, log=log, session=session
@@ -2873,6 +2937,7 @@ async def poll_one(
             ok=True,
             firmware_version=fw,
             bootloader_version=bl,
+            base_hash=base_hash,
             firmware_platform=platform,
             raw_ver=raw_ver,
             raw_bl=raw_bl,
@@ -3262,6 +3327,8 @@ def poll_summary(res: PollResult) -> str:
         parts.append(f"fw={res.firmware_version or '?'}")
     if "bootloader" in res.polled_groups:
         parts.append(f"bl={res.bootloader_version if res.bootloader_version else '?'}")
+    if "ota" in res.polled_groups:
+        parts.append(f"base={res.base_hash if res.base_hash else '-'}")
     if "name" in res.polled_groups and res.name:
         parts.append(f"name={res.name}")
     if "lat" in res.polled_groups and res.lat is not None:

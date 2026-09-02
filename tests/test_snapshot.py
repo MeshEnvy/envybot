@@ -147,6 +147,37 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(len(nbs), 1)
             self.assertEqual(nbs[0]["label"], "ME0002")
 
+    def test_exposes_base_hash_from_sqlite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            yaml = YAML()
+            yaml.dump({"sites": {}}, sites_path.open("w", encoding="utf-8"))
+            yaml.dump(
+                {
+                    "next_unit": 2,
+                    "nodes": {
+                        "me0001": {
+                            "unit_id": "ME0001",
+                            "identity_pubkey": "a" * 64,
+                            "admin_password": "secret-admin",
+                        },
+                    },
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            conn = open_history(book)
+
+            class _Res:
+                base_hash = "AABBCCDDEEFF0011"
+                polled_groups = frozenset({"ota"})
+
+            record_poll(conn, unit="me0001", res=_Res())
+            conn.close()
+            snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
+            self.assertEqual(snap["units"]["me0001"]["base_hash"], "AABBCCDDEEFF0011")
+
     def test_omits_decommissioned(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             book = Path(tmp)

@@ -711,6 +711,8 @@ const App = {
               </dd>
               <dt v-if="selectedUnit.bootloader_version">Bootloader</dt>
               <dd v-if="selectedUnit.bootloader_version">{{ selectedUnit.bootloader_version }}</dd>
+              <dt v-if="selectedUnit.base_hash">Base hash</dt>
+              <dd v-if="selectedUnit.base_hash">{{ selectedUnit.base_hash }}</dd>
               <dt>GPS</dt>
               <dd>
                 <template v-if="selectedUnit.position">

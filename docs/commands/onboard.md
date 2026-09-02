@@ -30,7 +30,8 @@ Idempotent on identity, creds, radio, name, and GPS:
    for the private profile so fleet is not apply-due (no `leak`, no first
    mesh Push). `public: true` rows stay unstamped. `--no-write` skips the
    stamp.
-7. Read public + secret keys. Set host clock.
+7. Read public + secret keys. Set host clock. Pull `ota self` (EndF
+   `base_hash`) with firmware and bootloader into sqlite.
 8. Neighbor discover/fetch (default 3 rounds). Prompts to attach an
    antenna first (Enter to continue, `s` to skip). `--no-discover` skips
    the prompt. No TTY skips discover.

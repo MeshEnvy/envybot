@@ -51,6 +51,8 @@ from envybot.radio import (
     parse_firmware,
     parse_get_value,
     parse_int_get_value,
+    parse_ota_self,
+    ota_self_heard_empty,
     pull_repeater_status,
     send_cmd_once,
     set_book_coord,
@@ -109,6 +111,7 @@ class PollAccumulator:
     fw: str | None = None
     platform: str | None = None
     bl: str | None = None
+    base_hash: str | None = None
     raw_ver: str | None = None
     raw_bl: str | None = None
     lat: float | None = None
@@ -132,6 +135,7 @@ class PollAccumulator:
             error=error,
             firmware_version=self.fw,
             bootloader_version=self.bl,
+            base_hash=self.base_hash,
             firmware_platform=self.platform,
             raw_ver=self.raw_ver,
             raw_bl=self.raw_bl,
@@ -556,6 +560,7 @@ async def _execute_get_cli(
     cmd_map = {
         "firmware": "ver",
         "bootloader": "get bootloader.ver",
+        "ota": "ota self",
         "name": "get name",
         "lat": "get lat",
         "lon": "get lon",
@@ -578,6 +583,22 @@ async def _execute_get_cli(
     )
     if raw is None:
         return JobOutcome.TIMEOUT, None
+    if group == "ota":
+        if cli_suggests_auth_failure(raw):
+            ctx.session.clear_auth(target.key)
+            return JobOutcome.HARD_FAIL, raw
+        if not ota_self_heard_empty(raw) and cli_error_reply(raw):
+            return JobOutcome.HARD_FAIL, raw
+        parsed_ota = parse_ota_self(raw)
+        if parsed_ota is None:
+            return JobOutcome.TIMEOUT, None
+        acc.base_hash = parsed_ota
+        acc.record_group(ctx, target.key, "ota")
+        if parsed_ota:
+            ctx.log.step(f"ota base_hash={parsed_ota}")
+        else:
+            ctx.log.step("ota self: empty (no OTA or no EndF)")
+        return JobOutcome.HEARD, parsed_ota
     if cli_suggests_auth_failure(raw) or cli_error_reply(raw):
         if cli_suggests_auth_failure(raw):
             ctx.session.clear_auth(target.key)

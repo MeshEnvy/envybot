@@ -28,6 +28,7 @@ from envybot.radio import (
 GET_GROUPS: dict[str, PullGroupSpec] = {
     "firmware": PullGroupSpec("inventory", "firmware_at"),
     "bootloader": PullGroupSpec("inventory", "bootloader_at"),
+    "ota": PullGroupSpec("inventory", "ota_at"),
     "name": PullGroupSpec("audit", "name_at"),
     "lat": PullGroupSpec("audit", "gps_at"),
     "lon": PullGroupSpec("audit", "gps_at"),
@@ -48,6 +49,7 @@ _STAGE_LABELS = {
     "login": "Logging in",
     "get:firmware": "Fetching firmware",
     "get:bootloader": "Fetching bootloader",
+    "get:ota": "Fetching OTA",
     "get:name": "Fetching name",
     "get:lat": "Fetching GPS",
     "get:lon": "Fetching GPS",
@@ -306,6 +308,8 @@ def gaps_from_poll(res: PollResult) -> list[str]:
         gaps.append("firmware")
     if "bootloader" in res.polled_groups and res.bootloader_version is None:
         gaps.append("bootloader")
+    if "ota" in res.polled_groups and res.base_hash is None:
+        gaps.append("ota")
     if "name" in res.polled_groups and res.name is None:
         gaps.append("name")
     if "lat" in res.polled_groups and res.lat is None:

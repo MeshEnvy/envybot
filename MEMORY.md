@@ -81,7 +81,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   stay 24h (`discover.neighbors` + wait + GET; UI drops rows older
   than 7d). Long-running fleet re-checks due groups about every 60s
   while idle, and after each swim-lane batch (so apply-due units
-  do not wait for the whole fleet to go quiet). fw/bl once; name/gps/advert/acl audit-only (Pull /
+  do not wait for the whole fleet to go quiet). fw/bl/ota once; name/gps/advert/acl audit-only (Pull /
   `--group` / `--force`). Status/telemetry samples log bound-site GPS.
   One-shot `sample_loc_backfill` stamps current site loc onto older
   rows that lack it. Bench/unmapped stay blank. Voltage is status
@@ -152,4 +152,4 @@ Separate USB OTA repeater for `motatool serve`.
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-02
+Last updated: 2026-09-02 (fleet inventories OTA `base_hash` via `ota self`)
