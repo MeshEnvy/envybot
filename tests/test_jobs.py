@@ -333,6 +333,48 @@ class PickNextTests(unittest.TestCase):
         self.assertTrue(sched.units["me0001"].jobs)
         self.assertTrue(sched.units["me0002"].jobs)
 
+    def test_enqueue_console_fifo_behind_existing_console(self) -> None:
+        sched = FleetScheduler()
+        t = _target("me0001")
+        sched.enqueue_console(
+            t,
+            [RadioJob(kind="console:cli", unit_key="me0001", extra={"tab_id": "a"})],
+        )
+        sched.enqueue_console(
+            t,
+            [RadioJob(kind="console:cli", unit_key="me0001", extra={"tab_id": "b"})],
+        )
+        tabs = [j.extra.get("tab_id") for j in sched.units["me0001"].jobs]
+        self.assertEqual(tabs, ["a", "b"])
+
+    def test_cancel_console_jobs_by_tab_leaves_other(self) -> None:
+        sched = FleetScheduler()
+        t = _target("me0001")
+        sched.enqueue_jobs(t, [RadioJob(kind="get:status", unit_key="me0001")])
+        sched.enqueue_console(
+            t, [RadioJob(kind="console:cli", unit_key="me0001", extra={"tab_id": "a"})]
+        )
+        sched.enqueue_console(
+            t, [RadioJob(kind="console:cli", unit_key="me0001", extra={"tab_id": "b"})]
+        )
+        self.assertTrue(sched.cancel_console_jobs("me0001", "a"))
+        kinds = [(j.kind, j.extra.get("tab_id")) for j in sched.units["me0001"].jobs]
+        self.assertEqual(kinds, [("console:cli", "b"), ("get:status", None)])
+
+    def test_pick_prefers_retrying_console(self) -> None:
+        sched = FleetScheduler()
+        a = _target("me0001")
+        b = _target("me0002")
+        sched.enqueue_console(a, [RadioJob(kind="console:cli", unit_key="me0001")])
+        sched.enqueue_console(b, [RadioJob(kind="console:cli", unit_key="me0002")])
+        sched.units["me0001"].jobs[0].attempt = 2
+        sched.units["me0001"].last_served = 100.0
+        sched.units["me0002"].last_served = 0.0
+        picked = sched.pick_next(0.0)
+        assert picked is not None
+        uq, _ = picked
+        self.assertEqual(uq.target.key, "me0001")
+
     def test_enqueue_console_prepends_without_clearing(self) -> None:
         sched = FleetScheduler()
         t = _target("me0001")

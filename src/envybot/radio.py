@@ -200,7 +200,6 @@ class FleetSession:
     _recovery_client: MeshCore | None = field(default=None, repr=False)
     _recovery_targets: list[Any] = field(default_factory=list, repr=False)
     audit_source: str | None = None
-    console_cli_cancel_gen: int = 0
 
     def enable_companion_recovery(self, client: MeshCore, targets: list[Any]) -> None:
         """After BLE/USB drop, reconnect transport + re-sync fleet contacts."""

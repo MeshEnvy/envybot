@@ -35,7 +35,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/commands/trust.py` | Contacts + channels + keys.yaml / ACL login |
 | `src/envybot/commands/cmd.py` | Remote MeshCore CLI |
 | `src/envybot/commands/onboard.py` | USB repeater text CLI onboard (`path.hash.mode` 1, `get acl` is `ACL:` dump). Stamps private `applies` so fleet is ready. |
-| `src/envybot/web/` | Fleet UI (`:8787`); detail **Console** (priority CLI) |
+| `src/envybot/web/` | Fleet UI (`:8787`); header **Console** (tabbed priority CLI) |
 
 ## Contract
 
@@ -96,6 +96,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   unit per turn, then rotates to the least-recently-served ready lane. Timeout
   parks that unit's head job; other lanes keep sending. A `console:*` head
   stays on the radio until heard, exhausted, or Cancel (does not rotate).
+  Tabs (`tab_id`) FIFO among `console:*`; cancel is per tab.
   `--attempts` is the
   per-command retry cap (scheduler-owned); logs show `N/max` not `N/1`.
   Successful GET_STATUS / GET_TELEMETRY / CLI log a one-line result as soon
@@ -132,12 +133,18 @@ Separate USB OTA repeater for `motatool serve`.
   **Refresh**, **Pull**, and **Push** always enqueue (even while that unit
   is polling) and run ahead of auto work until the click is done. Overrides
   `--skip` and `paused`. Refresh is live GET only; Pull adds sticky GET;
-  Push is SET-only force. **Console** (detail) is a UI session: opening
-  does not touch the radio. Typed CLI splices to the front of that unit
-  (login on first send if not authed) and keeps the radio until heard,
-  exhausted, or Cancel. Other lanes stay queued. Cadence runs while the
-  prompt is idle. Audit `source=console`. Tracked CLI poll replies
-  (`ota status`, `ver`, …) stamp last-seen like Refresh.
+  Push is SET-only force.   **Console** (header or unit-row icon): tabbed modal, optional extra sessions to the
+  same unit. Row icon focuses the first tab for that unit or opens one.
+  Open is radio-free. CLI jumps that unit (login on first send).
+  A timeout parks that line (Retry beside the error; Continue if queued)
+  and does not auto-retry or drain. Per-tab Cancel while sending
+  (Retry only after the line has stopped, not during attempts).
+  Busy send stages the next line. Hide
+  keeps running. List or map select closes the console and opens the card. Per-tab up/down command recall (survives Clear history).
+  Clipboard copies the transcript.
+  Unread `*` on a tab (header icon too when hidden).
+  `localStorage` + hello survive refresh / fleet restart.
+  Audit `source=console`. Tracked CLI replies stamp last-seen.
   Push force-SETs profile (including passwords). CLI `--force` is Pull plus
   Push. Auto-apply queues when `apply_is_due` even if the fleet is mid-sync.
   **Pause** (detail checkbox) writes `paused: true` and drops the unit from
@@ -171,4 +178,4 @@ Separate USB OTA repeater for `motatool serve`.
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-02 (console is priority lane, not exclusive)
+Last updated: 2026-09-02 (console copy transcript)

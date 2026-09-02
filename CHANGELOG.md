@@ -8,12 +8,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
-- Fleet detail **Console**: priority manual CLI on one unit. Opening the
-  panel does not take the radio. Typed lines jump the queue and retry
-  without rotating to other units (flood + `--attempts`; Cancel). Cadence
-  keeps running while the prompt is idle. Audit rows tagged
-  `source=console`. Tracked poll CLI replies (`ota status`, `ver`, …)
-  stamp last-seen. `./envybot cmd` unchanged.
+- Fleet header **Console**: tabbed modal (not the unit card). Multiple
+  tabs, including separate sessions to the same unit. Opening a tab does
+  not take the radio. Typed lines jump that unit's queue and retry
+  without rotating (flood + `--attempts`; Cancel is per tab). Send while
+  a line is running stages the next one (edit or delete in the queue).
+  Timeout or hard fail parks that line (no auto-retry): Retry next to
+  the stopped error, including cancelled or timeout rows in history.
+  Retry is hidden while the line is still sending. Continue if anything
+  is queued. The queue does not auto-advance.
+  Hide leaves tabs running. A list or map pin click hides the console
+  and opens that unit's card. Row console icon toggles that unit's
+  session closed if it is already showing. Each list row has a console icon: first
+  matching tab, or a new one. Up/down recalls that tab's sent lines
+  (survives Clear history). Clipboard icon copies that tab's transcript.
+  A red `*` marks a tab whose transcript
+  changed since you last looked at it. The header icon shows the same
+  `*` while the modal is closed. History and queues survive refresh and
+  `fleet` restart via `localStorage` + hello. Status shows
+  `(attempt 1/10…)` as soon as a line is queued. Cadence keeps running
+  while idle. Audit `source=console`. Tracked poll CLI replies
+  (`ota status`, `ver`, …) stamp last-seen. `./envybot cmd` unchanged.
 
 - Book field `ota_autofetch` (`off`|`any`|`signed`, default `off`). Fleet Push
   and USB onboard SET `ota config autofetch off` when the apply stamp is due.

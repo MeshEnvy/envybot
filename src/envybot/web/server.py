@@ -209,7 +209,14 @@ class MonitorWeb:
             return 404, "unknown unit", None
         return 200, None, targets[0]
 
-    async def open_console(self, key: str) -> tuple[int, str | None, dict[str, Any] | None]:
+    def _attach_console(self, poll: dict[str, Any] | None = None) -> dict[str, Any]:
+        out = dict(poll if poll is not None else self._poll_state)
+        out["console"] = self.console.poll_console()
+        return out
+
+    async def open_console(
+        self, key: str, tab_id: str | None = None
+    ) -> tuple[int, str | None, dict[str, Any] | None]:
         status, err, target = self._load_target(key, require_worker=False)
         if status != 200 or target is None:
             return status, err, None
@@ -219,38 +226,41 @@ class MonitorWeb:
         if binding is not None:
             scheduler = binding.scheduler
             max_attempts = binding.scheduler.max_attempts or 10
-        await self.console.open(
+        sess = await self.console.open(
             key=key,
+            tab_id=tab_id,
             scheduler=scheduler,
             max_attempts=max_attempts,
         )
-        poll = dict(self._poll_state)
-        poll["console"] = self.console.active.poll_console() if self.console.active else None
         await self.refresh_snapshot(
             session_states=dict(self._session_states),
             companion=self._companion,
-            poll=poll,
+            poll=self._attach_console(),
         )
-        return 200, None, self.console.active.to_event() if self.console.active else None
+        return 200, None, sess.to_event()
 
-    async def send_console(self, key: str, cmd: str) -> tuple[int, str | None, dict[str, Any] | None]:
-        key = key.lower()
+    async def send_console(
+        self, tab_id: str, cmd: str
+    ) -> tuple[int, str | None, dict[str, Any] | None]:
         cmd = cmd.strip()
         if not cmd:
             return 400, "empty command", None
-        if self.console.active is None or self.console.active.key != key:
-            return 409, "console not open for this unit", None
-        status, err, target = self._load_target(key)
+        sess = self.console.get(tab_id)
+        if sess is None:
+            return 409, "console tab not open", None
+        status, err, target = self._load_target(sess.key)
         if status != 200 or target is None or self._binding is None:
             return status, err, None
-        if self.console.active.state == "sending":
-            return 409, "console busy", None
         fut = await self.console.enqueue_send(
+            tab_id=tab_id,
             cmd=cmd,
             scheduler=self._binding.scheduler,
             target=target,
             session=getattr(self, "_fleet_session", None),
         )
+        if fut is None:
+            live = self.console.get(tab_id)
+            return 200, None, {"ok": True, "staged": True, **(live.to_event() if live else {})}
         try:
             result = await fut
         except Exception as exc:
@@ -265,28 +275,104 @@ class MonitorWeb:
             "error": result.get("error"),
         }
 
-    async def cancel_console(self, key: str) -> tuple[int, str | None]:
-        key = key.lower()
-        if self.console.active is None or self.console.active.key != key:
-            return 409, "console not open for this unit"
+    async def patch_console_pending(
+        self, tab_id: str, pending_id: str, cmd: str
+    ) -> tuple[int, str | None, dict[str, Any] | None]:
+        cmd = cmd.strip()
+        if not cmd:
+            return 400, "empty command", None
+        sess = self.console.patch_pending(tab_id, pending_id, cmd)
+        if sess is None:
+            return 409, "console tab not open", None
+        await self.hub.publish_console(sess.to_event())
+        return 200, None, sess.to_event()
+
+    async def delete_console_pending(
+        self, tab_id: str, pending_id: str | None
+    ) -> tuple[int, str | None, dict[str, Any] | None]:
+        sess = self.console.delete_pending(tab_id, pending_id)
+        if sess is None:
+            return 409, "console tab not open", None
+        await self.hub.publish_console(sess.to_event())
+        return 200, None, sess.to_event()
+
+    async def clear_console_history(
+        self, tab_id: str
+    ) -> tuple[int, str | None, dict[str, Any] | None]:
+        sess = self.console.clear_history(tab_id)
+        if sess is None:
+            return 409, "console tab not open", None
+        await self.hub.publish_console(sess.to_event())
+        return 200, None, sess.to_event()
+
+    async def cancel_console(self, tab_id: str) -> tuple[int, str | None]:
+        if self.console.get(tab_id) is None:
+            return 409, "console tab not open"
         session = getattr(self, "_fleet_session", None)
         scheduler = self._binding.scheduler if self._binding is not None else None
-        await self.console.cancel(scheduler=scheduler, session=session)
+        await self.console.cancel(tab_id, scheduler=scheduler, session=session)
         return 200, None
 
-    async def close_console(self, key: str) -> tuple[int, str | None]:
-        key = key.lower()
-        if self.console.active is None or self.console.active.key != key:
-            return 409, "console not open for this unit"
+    async def park_console(
+        self, tab_id: str, cmd: str, error: str | None
+    ) -> tuple[int, str | None, dict[str, Any] | None]:
+        sess = self.console.get(tab_id)
+        if sess is None:
+            return 409, "console tab not open", None
+        _status, _err, target = self._load_target(sess.key, require_worker=False)
+        scheduler = self._binding.scheduler if self._binding is not None else None
+        parked = await self.console.park(
+            tab_id,
+            cmd=cmd,
+            error=error,
+            scheduler=scheduler,
+            target=target,
+            session=getattr(self, "_fleet_session", None),
+        )
+        return 200, None, parked.to_event() if parked else None
+
+    async def retry_console(self, tab_id: str) -> tuple[int, str | None, dict[str, Any] | None]:
+        sess = self.console.get(tab_id)
+        if sess is None:
+            return 409, "console tab not open", None
+        if sess.state not in ("failed", "sending") or not sess.cmd:
+            return 409, "nothing to retry", None
+        status, err, target = self._load_target(sess.key)
+        if status != 200 or target is None or self._binding is None:
+            return status, err or "radio not bound", None
+        retried = await self.console.retry(
+            tab_id,
+            scheduler=self._binding.scheduler,
+            target=target,
+            session=getattr(self, "_fleet_session", None),
+        )
+        return 200, None, retried.to_event() if retried else None
+
+    async def skip_console(self, tab_id: str) -> tuple[int, str | None, dict[str, Any] | None]:
+        sess = self.console.get(tab_id)
+        if sess is None:
+            return 409, "console tab not open", None
+        if sess.state != "failed":
+            return 409, "nothing to skip", None
+        _status, _err, target = self._load_target(sess.key, require_worker=False)
+        skipped = await self.console.skip(
+            tab_id,
+            scheduler=self._binding.scheduler if self._binding is not None else None,
+            target=target,
+            session=getattr(self, "_fleet_session", None),
+        )
+        return 200, None, skipped.to_event() if skipped else None
+
+    async def close_console(self, tab_id: str) -> tuple[int, str | None]:
+        if self.console.get(tab_id) is None:
+            return 409, "console tab not open"
         session = getattr(self, "_fleet_session", None)
         scheduler = self._binding.scheduler if self._binding is not None else None
-        await self.console.close(scheduler=scheduler, session=session)
-        poll = dict(self._poll_state)
-        poll.pop("console", None)
+        await self.console.close(tab_id, scheduler=scheduler, session=session)
         await self.refresh_snapshot(
             session_states=dict(self._session_states),
             companion=self._companion,
-            poll=poll,
+            poll=self._attach_console(),
         )
         return 200, None
 
@@ -312,8 +398,7 @@ class MonitorWeb:
             poll=self._poll_state or poll or {"phase": "idle"},
         )
         snap["edges"] = build_neighbor_edges(snap["units"])
-        if self.console.active and self.console.active.state != "closed":
-            snap.setdefault("poll", {})["console"] = self.console.active.poll_console()
+        snap.setdefault("poll", {})["console"] = self.console.poll_console()
         await self.hub.set_snapshot(snap)
         return snap
 
@@ -342,6 +427,7 @@ class MonitorWeb:
             poll=self._poll_state or poll or {"phase": "idle"},
         )
         snap["edges"] = build_neighbor_edges(snap["units"])
+        snap.setdefault("poll", {})["console"] = self.console.poll_console()
         unit = snap["units"].get(key)
         if unit is None:
             return
@@ -656,10 +742,24 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
     return web.json_response(unit)
 
 
+async def _console_json(request: web.Request) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except Exception:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
 async def _handle_console_open(request: web.Request) -> web.Response:
-    key = request.match_info["key"].lower()
     web_ctx: MonitorWeb = request.app["web_ctx"]
-    status, err, payload = await web_ctx.open_console(key)
+    body = await _console_json(request)
+    key = str(body.get("key") or "").strip().lower()
+    tab_id = body.get("tab_id")
+    if not key:
+        return web.json_response({"error": "key required"}, status=400)
+    if tab_id is not None and not isinstance(tab_id, str):
+        return web.json_response({"error": "tab_id must be a string"}, status=400)
+    status, err, payload = await web_ctx.open_console(key, tab_id)
     if status == 404:
         return web.json_response({"error": err}, status=404)
     if status == 409:
@@ -668,18 +768,13 @@ async def _handle_console_open(request: web.Request) -> web.Response:
 
 
 async def _handle_console_send(request: web.Request) -> web.Response:
-    key = request.match_info["key"].lower()
+    tab_id = request.match_info["tab_id"]
     web_ctx: MonitorWeb = request.app["web_ctx"]
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    if not isinstance(body, dict):
-        return web.json_response({"error": "object required"}, status=400)
+    body = await _console_json(request)
     cmd = body.get("cmd")
     if not isinstance(cmd, str) or not cmd.strip():
         return web.json_response({"error": "cmd required"}, status=400)
-    status, err, payload = await web_ctx.send_console(key, cmd)
+    status, err, payload = await web_ctx.send_console(tab_id, cmd)
     if status == 400:
         return web.json_response({"error": err}, status=400)
     if status == 409:
@@ -687,19 +782,88 @@ async def _handle_console_send(request: web.Request) -> web.Response:
     return web.json_response(payload or {})
 
 
-async def _handle_console_cancel(request: web.Request) -> web.Response:
-    key = request.match_info["key"].lower()
+async def _handle_console_pending_patch(request: web.Request) -> web.Response:
+    tab_id = request.match_info["tab_id"]
+    pending_id = request.match_info["pending_id"]
     web_ctx: MonitorWeb = request.app["web_ctx"]
-    status, err = await web_ctx.cancel_console(key)
+    body = await _console_json(request)
+    cmd = body.get("cmd")
+    if not isinstance(cmd, str) or not cmd.strip():
+        return web.json_response({"error": "cmd required"}, status=400)
+    status, err, payload = await web_ctx.patch_console_pending(tab_id, pending_id, cmd)
+    if status == 400:
+        return web.json_response({"error": err}, status=400)
+    if status == 409:
+        return web.json_response({"error": err}, status=409)
+    return web.json_response(payload or {})
+
+
+async def _handle_console_pending_delete(request: web.Request) -> web.Response:
+    tab_id = request.match_info["tab_id"]
+    pending_id = request.match_info.get("pending_id")
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    status, err, payload = await web_ctx.delete_console_pending(tab_id, pending_id)
+    if status == 409:
+        return web.json_response({"error": err}, status=409)
+    return web.json_response(payload or {})
+
+
+async def _handle_console_clear(request: web.Request) -> web.Response:
+    tab_id = request.match_info["tab_id"]
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    status, err, payload = await web_ctx.clear_console_history(tab_id)
+    if status == 409:
+        return web.json_response({"error": err}, status=409)
+    return web.json_response(payload or {})
+
+
+async def _handle_console_cancel(request: web.Request) -> web.Response:
+    tab_id = request.match_info["tab_id"]
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    status, err = await web_ctx.cancel_console(tab_id)
     if status == 409:
         return web.json_response({"error": err}, status=409)
     return web.json_response({"ok": True})
 
 
-async def _handle_console_close(request: web.Request) -> web.Response:
-    key = request.match_info["key"].lower()
+async def _handle_console_park(request: web.Request) -> web.Response:
+    tab_id = request.match_info["tab_id"]
     web_ctx: MonitorWeb = request.app["web_ctx"]
-    status, err = await web_ctx.close_console(key)
+    body = await _console_json(request)
+    cmd = body.get("cmd")
+    if not isinstance(cmd, str) or not cmd.strip():
+        return web.json_response({"error": "cmd required"}, status=400)
+    error = body.get("error")
+    if error is not None and not isinstance(error, str):
+        error = str(error)
+    status, err, payload = await web_ctx.park_console(tab_id, cmd.strip(), error)
+    if status == 409:
+        return web.json_response({"error": err}, status=409)
+    return web.json_response(payload or {})
+
+
+async def _handle_console_retry(request: web.Request) -> web.Response:
+    tab_id = request.match_info["tab_id"]
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    status, err, payload = await web_ctx.retry_console(tab_id)
+    if status == 409:
+        return web.json_response({"error": err}, status=409)
+    return web.json_response(payload or {})
+
+
+async def _handle_console_skip(request: web.Request) -> web.Response:
+    tab_id = request.match_info["tab_id"]
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    status, err, payload = await web_ctx.skip_console(tab_id)
+    if status == 409:
+        return web.json_response({"error": err}, status=409)
+    return web.json_response(payload or {})
+
+
+async def _handle_console_close(request: web.Request) -> web.Response:
+    tab_id = request.match_info["tab_id"]
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    status, err = await web_ctx.close_console(tab_id)
     if status == 409:
         return web.json_response({"error": err}, status=409)
     return web.json_response({"ok": True})
@@ -728,10 +892,17 @@ def make_app(web_ctx: MonitorWeb) -> web.Application:
     app.router.add_post("/api/push/{key}", lambda r: _handle_manual_job(r, "push"))
     app.router.add_post("/api/stage/{key}", _handle_stage_job)
     app.router.add_post("/api/install/{key}", _handle_install_job)
-    app.router.add_post("/api/console/{key}/open", _handle_console_open)
-    app.router.add_post("/api/console/{key}/send", _handle_console_send)
-    app.router.add_post("/api/console/{key}/cancel", _handle_console_cancel)
-    app.router.add_post("/api/console/{key}/close", _handle_console_close)
+    app.router.add_post("/api/console/open", _handle_console_open)
+    app.router.add_post("/api/console/{tab_id}/send", _handle_console_send)
+    app.router.add_post("/api/console/{tab_id}/cancel", _handle_console_cancel)
+    app.router.add_post("/api/console/{tab_id}/park", _handle_console_park)
+    app.router.add_post("/api/console/{tab_id}/retry", _handle_console_retry)
+    app.router.add_post("/api/console/{tab_id}/skip", _handle_console_skip)
+    app.router.add_post("/api/console/{tab_id}/close", _handle_console_close)
+    app.router.add_post("/api/console/{tab_id}/clear", _handle_console_clear)
+    app.router.add_patch("/api/console/{tab_id}/pending/{pending_id}", _handle_console_pending_patch)
+    app.router.add_delete("/api/console/{tab_id}/pending/{pending_id}", _handle_console_pending_delete)
+    app.router.add_delete("/api/console/{tab_id}/pending", _handle_console_pending_delete)
     app.router.add_get("/api/history/{unit}", _handle_history)
     app.router.add_get("/api/polls/{unit}", _handle_polls)
     app.router.add_get("/events", _handle_events)

@@ -1,5 +1,5 @@
-import { createApp, computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { connectEvents, fetchFleet, fetchPolls, installUnit, patchUnit, pullUnit, pushUnit, refreshUnit, stageUnit, openConsole as apiOpenConsole, sendConsole as apiSendConsole, cancelConsole as apiCancelConsole, closeConsole as apiCloseConsole } from './api.js'
+import { createApp, computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { connectEvents, fetchFleet, fetchPolls, installUnit, patchUnit, pullUnit, pushUnit, refreshUnit, stageUnit, openConsole as apiOpenConsole, sendConsole as apiSendConsole, cancelConsole as apiCancelConsole, closeConsole as apiCloseConsole, parkConsole as apiParkConsole, retryConsole as apiRetryConsole, skipConsole as apiSkipConsole, patchConsolePending as apiPatchPending, deleteConsolePending as apiDeletePending, clearConsoleHistory as apiClearHistory } from './api.js'
 import {
   clearHistories,
   fleetStore,
@@ -10,7 +10,7 @@ import {
   replaceSnapshot,
   startClock,
   stopClock,
-} from './state.js?v=4'
+} from './state.js?v=5'
 import {
   formatAgo,
   formatBattery,
@@ -36,7 +36,7 @@ import {
   unitLabel,
   unitTitle,
 } from './format.js?v=23'
-import { buildNeighborEdges, createMapController, unitStage, unitStatus } from './map.js?v=27'
+import { buildNeighborEdges, createMapController, unitStage, unitStatus } from './map.js?v=28'
 import { seriesFromHistories, sparklineWallTime, SPARK_MIN_SPAN } from './sparklines.js?v=9'
 
 const App = {
@@ -57,27 +57,21 @@ const App = {
       neighbors: LOG_PAGE,
       acl: LOG_PAGE,
     })
-    const consoleMode = ref(false)
-    /** @type {Record<string, { cmd: string, reply?: string, error?: string, pending?: boolean }[]>} */
-    const consoleHistoryByKey = reactive({})
-    /** @type {Record<string, string>} */
-    const consoleDraftByKey = reactive({})
-    const consoleTranscript = computed(() => transcriptFor(selectedKey.value))
-    const consoleDraft = computed({
-      get() {
-        const key = selectedKey.value
-        if (!key) return ''
-        return consoleDraftByKey[key] ?? ''
-      },
-      set(value) {
-        const key = selectedKey.value
-        if (key) consoleDraftByKey[key] = value
-      },
-    })
-    /** @type {import('vue').Ref<Record<string, unknown> | null>} */
-    const consoleLive = ref(null)
+    const CONSOLE_STORE_KEY = 'envybot.console.v1'
+    const CMD_HISTORY_CAP = 100
+    const consoleOpen = ref(false)
+    const consoleActiveId = ref(/** @type {string | null} */ (null))
+    const consolePickerOpen = ref(false)
+    const consolePickerQuery = ref('')
     /** @type {import('vue').Ref<HTMLElement | null>} */
     const consoleScroll = ref(null)
+    /** @type {import('vue').Ref<HTMLInputElement | null>} */
+    const consolePickerSearch = ref(null)
+    /** @typedef {{ tab_id: string, key: string, state: string, attempt?: number, max_attempts?: number, cmd?: string | null, error?: string | null, history: { cmd: string, reply?: string, error?: string }[], pending: { id: string, cmd: string }[], draft: string, unread?: boolean, cmds?: string[], cmdIndex?: number | null, cmdHold?: string }} ConsoleTab */
+    const consoleTabs = reactive(/** @type {ConsoleTab[]} */ ([]))
+    let consoleSeeding = false
+    const consoleCopied = ref(false)
+    let consoleCopyTimer = 0
 
     function resetLogShown() {
       logShown.status = LOG_PAGE
@@ -119,6 +113,7 @@ const App = {
 
     function applyHello(snap) {
       replaceSnapshot(snap)
+      reconcileConsole(snap)
     }
 
     function applyUnit(unit) {
@@ -131,28 +126,38 @@ const App = {
 
     const manualAccepting = computed(() => !!fleet.poll?.accepting)
 
-    const openConsoleKey = computed(() => {
-      const c = fleet.poll?.console
-      if (!c || typeof c !== 'object') return null
-      const key = c.key
-      const state = c.state
-      if (typeof key !== 'string' || state === 'closed') return null
-      return key
-    })
-
-    const consoleBusy = computed(() => {
-      const ev = consoleLive.value
-      return ev?.state === 'sending' || ev?.state === 'acquiring'
-    })
-
+    const consoleActive = computed(() => consoleTabs.find((t) => t.tab_id === consoleActiveId.value) || null)
+    const consoleBusy = computed(() => consoleActive.value?.state === 'sending')
+    const consoleFailed = computed(() => consoleActive.value?.state === 'failed')
     const consoleStatusLine = computed(() => {
-      const ev = consoleLive.value
-      if (!ev) return ''
-      if (ev.state === 'acquiring') return 'Logging in…'
-      if (ev.state === 'sending' && ev.attempt && ev.max_attempts) {
-        return `(attempt ${ev.attempt}/${ev.max_attempts}…)`
+      const tab = consoleActive.value
+      if (!tab || tab.state !== 'sending') return ''
+      const n = tab.attempt || 1
+      const max = tab.max_attempts || 10
+      return `(attempt ${n}/${max}…)`
+    })
+    const consoleBadgeBusy = computed(
+      () =>
+        consoleTabs.some(
+          (t) => t.state === 'sending' || t.state === 'failed' || (t.pending && t.pending.length)
+        )
+    )
+    const consoleUnread = computed(
+      () => !consoleOpen.value && consoleTabs.some((t) => t.unread)
+    )
+    const consolePickerUnits = computed(() => {
+      const q = consolePickerQuery.value.trim().toLowerCase()
+      let units = Object.values(fleet.units || {})
+      if (q) {
+        units = units.filter((u) => {
+          const hay = [u.key, u.unit_id, u.site, u.site_name, u.alias, u.label, u.notes]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+          return hay.includes(q)
+        })
       }
-      return ''
+      return units.sort(compareUnits)
     })
 
     const MANUAL_BUSY = new Set([
@@ -178,31 +183,171 @@ const App = {
       return true
     }
 
-    function consoleFromLocation() {
-      return new URLSearchParams(location.search).get('console') === '1'
+    function newConsoleTabId() {
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
+      return `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
     }
 
-    function activeConsoleKey() {
-      const held = openConsoleKey.value
-      if (held) return held
-      if (consoleMode.value && selectedKey.value) return selectedKey.value
-      return null
+    function loadConsoleStore() {
+      try {
+        const raw = localStorage.getItem(CONSOLE_STORE_KEY)
+        if (!raw) return { tabs: [], active: null }
+        const parsed = JSON.parse(raw)
+        if (!parsed || !Array.isArray(parsed.tabs)) return { tabs: [], active: null }
+        return parsed
+      } catch {
+        return { tabs: [], active: null }
+      }
     }
 
-    /** @param {string | null | undefined} key */
-    function transcriptFor(key) {
-      const k = key ? String(key).toLowerCase() : ''
-      if (!k) return []
-      if (!consoleHistoryByKey[k]) consoleHistoryByKey[k] = []
-      return consoleHistoryByKey[k]
+    function historySig(history) {
+      if (!Array.isArray(history) || !history.length) return '0'
+      const last = history[history.length - 1]
+      return `${history.length}:${last.cmd || ''}:${last.reply || ''}:${last.error || ''}`
     }
 
-    function clearConsoleHistory() {
-      const key = selectedKey.value
-      if (!key) return
-      const k = String(key).toLowerCase()
-      consoleHistoryByKey[k] = []
-      delete consoleDraftByKey[k]
+    function consoleTabWatched(tabId) {
+      return consoleOpen.value && consoleActiveId.value === tabId
+    }
+
+    function seeConsoleTab(tabId) {
+      const tab = consoleTabs.find((t) => t.tab_id === tabId)
+      if (!tab?.unread) return
+      tab.unread = false
+      persistConsole()
+    }
+
+    function selectConsoleTab(tabId) {
+      consoleActiveId.value = tabId
+      seeConsoleTab(tabId)
+    }
+
+    function unreadFromStore(tabId) {
+      return !!(loadConsoleStore().tabs || []).find((t) => t.tab_id === tabId)?.unread
+    }
+
+    function cmdsFromHistory(history) {
+      const out = []
+      for (const row of history || []) {
+        const cmd = String(row?.cmd || '').trim()
+        if (!cmd) continue
+        if (out[out.length - 1] !== cmd) out.push(cmd)
+      }
+      return out.slice(-CMD_HISTORY_CAP)
+    }
+
+    function loadCmds(tabId, history) {
+      const stored = (loadConsoleStore().tabs || []).find((t) => t.tab_id === tabId)
+      if (stored && Array.isArray(stored.cmds)) return stored.cmds.slice(-CMD_HISTORY_CAP)
+      return cmdsFromHistory(history)
+    }
+
+    function rememberCmd(tab, cmd) {
+      const line = String(cmd || '').trim()
+      if (!tab || !line) return
+      const list = Array.isArray(tab.cmds) ? tab.cmds : (tab.cmds = [])
+      if (list[list.length - 1] !== line) list.push(line)
+      if (list.length > CMD_HISTORY_CAP) tab.cmds = list.slice(-CMD_HISTORY_CAP)
+      tab.cmdIndex = null
+      tab.cmdHold = ''
+    }
+
+    function recallConsoleCmd(dir) {
+      const tab = consoleActive.value
+      const list = tab?.cmds || []
+      if (!tab || !list.length) return
+      if (tab.cmdIndex == null) {
+        tab.cmdHold = tab.draft || ''
+        tab.cmdIndex = list.length
+      }
+      const next = tab.cmdIndex + dir
+      if (next < 0) return
+      if (next >= list.length) {
+        tab.cmdIndex = null
+        tab.draft = tab.cmdHold || ''
+        return
+      }
+      tab.cmdIndex = next
+      tab.draft = list[next]
+    }
+
+    function onConsoleDraftInput() {
+      const tab = consoleActive.value
+      if (!tab || tab.cmdIndex == null) return
+      tab.cmdIndex = null
+      tab.cmdHold = ''
+    }
+
+    function persistConsole() {
+      const tabs = consoleTabs.map((t) => ({
+        tab_id: t.tab_id,
+        key: t.key,
+        history: t.history || [],
+        pending: t.pending || [],
+        draft: t.draft || '',
+        inflight: t.state === 'sending' && t.cmd ? t.cmd : undefined,
+        failed: t.state === 'failed' && t.cmd ? t.cmd : undefined,
+        error: t.state === 'failed' ? t.error || '' : undefined,
+        unread: !!t.unread,
+        cmds: Array.isArray(t.cmds) ? t.cmds.slice(-CMD_HISTORY_CAP) : [],
+      }))
+      try {
+        localStorage.setItem(
+          CONSOLE_STORE_KEY,
+          JSON.stringify({ tabs, active: consoleActiveId.value })
+        )
+      } catch {
+        /* ignore quota */
+      }
+    }
+
+    /** @param {Record<string, unknown>} event @param {string} [draft] */
+    function upsertConsoleTab(event, draft) {
+      const tabId = String(event.tab_id || '')
+      if (!tabId || event.state === 'closed') {
+        const idx = consoleTabs.findIndex((t) => t.tab_id === tabId)
+        if (idx >= 0) consoleTabs.splice(idx, 1)
+        if (consoleActiveId.value === tabId) {
+          consoleActiveId.value = consoleTabs[0]?.tab_id || null
+        }
+        persistConsole()
+        return
+      }
+      const existing = consoleTabs.find((t) => t.tab_id === tabId)
+      const keepDraft = draft ?? existing?.draft ?? ''
+      const nextHistory = Array.isArray(event.history) ? event.history : existing?.history || []
+      const watched = consoleTabWatched(tabId)
+      let unread = existing ? !!existing.unread : unreadFromStore(tabId)
+      if (
+        existing &&
+        !consoleSeeding &&
+        !watched &&
+        (historySig(existing.history) !== historySig(nextHistory) ||
+          (String(event.state || '') === 'failed' && existing.state !== 'failed'))
+      ) {
+        unread = true
+      }
+      if (watched) unread = false
+      const cmds = Array.isArray(existing?.cmds) ? existing.cmds : loadCmds(tabId, nextHistory)
+      const next = {
+        tab_id: tabId,
+        key: String(event.key || existing?.key || ''),
+        state: String(event.state || 'ready'),
+        attempt: Number(event.attempt || 0),
+        max_attempts: Number(event.max_attempts || 10),
+        cmd: event.cmd == null ? null : String(event.cmd),
+        error: event.error == null ? null : String(event.error),
+        history: nextHistory,
+        pending: Array.isArray(event.pending) ? event.pending : existing?.pending || [],
+        draft: keepDraft,
+        unread,
+        cmds,
+        cmdIndex: existing?.cmdIndex ?? null,
+        cmdHold: existing?.cmdHold ?? '',
+      }
+      if (existing) Object.assign(existing, next)
+      else consoleTabs.push(next)
+      persistConsole()
     }
 
     function scrollConsoleBottom() {
@@ -215,107 +360,340 @@ const App = {
     /** @param {Record<string, unknown>} event */
     function applyConsoleEvent(event) {
       patchConsole(event)
-      consoleLive.value = event
-      if (event.state === 'ready' && event.reply != null) {
-        const rows = consoleTranscript.value
-        for (let i = rows.length - 1; i >= 0; i -= 1) {
-          if (rows[i].pending) {
-            rows[i].pending = false
-            rows[i].reply = String(event.reply)
-            break
-          }
-        }
-      }
-      if (event.state === 'ready' && event.error) {
-        const rows = consoleTranscript.value
-        for (let i = rows.length - 1; i >= 0; i -= 1) {
-          if (rows[i].pending) {
-            rows[i].pending = false
-            rows[i].error = String(event.error)
-            break
-          }
-        }
-      }
-      scrollConsoleBottom()
+      upsertConsoleTab(event)
+      if (event.tab_id === consoleActiveId.value) scrollConsoleBottom()
     }
 
-    /** @param {Record<string, unknown>} unit */
-    async function startConsole(unit) {
-      if (!unit?.key) return
-      consoleMode.value = true
-      consoleLive.value = { state: 'ready', key: unit.key }
-      syncLocation(String(unit.key), { console: true })
+    function consoleTabLabel(tab) {
+      const unit = fleet.units[tab.key]
+      const base = unit ? unitTitle(unit) : tab.key
+      const same = consoleTabs.filter((t) => t.key === tab.key)
+      if (same.length < 2) return base
+      const n = same.findIndex((t) => t.tab_id === tab.tab_id) + 1
+      return n === 1 ? base : `${base} ${n}`
+    }
+
+    async function addConsoleTab(key) {
+      const tabId = newConsoleTabId()
+      const tab = {
+        tab_id: tabId,
+        key: String(key).toLowerCase(),
+        state: 'ready',
+        history: [],
+        pending: [],
+        draft: '',
+        unread: false,
+        cmds: [],
+        cmdIndex: null,
+        cmdHold: '',
+      }
+      consoleTabs.push(tab)
+      consoleActiveId.value = tabId
+      consolePickerOpen.value = false
+      consolePickerQuery.value = ''
+      persistConsole()
       try {
-        const ev = await apiOpenConsole(String(unit.key))
-        consoleLive.value = ev
+        const ev = await apiOpenConsole(tab.key, tabId)
+        upsertConsoleTab(ev, tab.draft)
         patchConsole(ev)
       } catch (err) {
         console.error(err)
-        consoleLive.value = { state: 'ready', key: unit.key, error: String(err) }
       }
+      syncLocation(selectedKey.value)
     }
 
-    async function exitConsole() {
-      const key = activeConsoleKey()
-      if (key) {
-        try {
-          await apiCloseConsole(key)
-        } catch (err) {
-          console.error(err)
-        }
+    async function closeConsoleTab(tabId) {
+      try {
+        await apiCloseConsole(tabId)
+      } catch (err) {
+        console.error(err)
       }
-      patchConsole({ state: 'closed' })
-      consoleMode.value = false
-      consoleLive.value = null
-      syncLocation(selectedKey.value, { console: false })
+      upsertConsoleTab({ tab_id: tabId, state: 'closed' })
+      persistConsole()
+      syncLocation(selectedKey.value)
+    }
+
+    function hideConsole() {
+      consoleOpen.value = false
+      consolePickerOpen.value = false
+      syncLocation(selectedKey.value)
+    }
+
+    function toggleConsolePicker() {
+      consolePickerOpen.value = !consolePickerOpen.value
+      if (!consolePickerOpen.value) {
+        consolePickerQuery.value = ''
+        return
+      }
+      nextTick(() => consolePickerSearch.value?.focus())
+    }
+
+    async function showConsole() {
+      consoleOpen.value = true
+      if (!consoleTabs.length && selectedKey.value) {
+        await addConsoleTab(selectedKey.value)
+      } else if (!consoleActiveId.value && consoleTabs[0]) {
+        consoleActiveId.value = consoleTabs[0].tab_id
+      }
+      if (consoleActiveId.value) seeConsoleTab(consoleActiveId.value)
+      syncLocation(selectedKey.value)
+      scrollConsoleBottom()
+    }
+
+    async function toggleConsole() {
+      if (consoleOpen.value) hideConsole()
+      else await showConsole()
+    }
+
+    function consoleTabsForUnit(key) {
+      const k = String(key || '').toLowerCase()
+      return consoleTabs.filter((t) => t.key === k)
+    }
+
+    function unitConsoleUnread(unit) {
+      return consoleTabsForUnit(unit?.key).some((t) => t.unread)
+    }
+
+    function unitConsoleBusy(unit) {
+      return consoleTabsForUnit(unit?.key).some(
+        (t) => t.state === 'sending' || t.state === 'failed' || (t.pending && t.pending.length)
+      )
+    }
+
+    async function openConsoleForUnit(unit, ev) {
+      ev?.stopPropagation?.()
+      const key = String(unit?.key || '').toLowerCase()
+      if (!key) return
+      if (consoleOpen.value && consoleActive.value?.key === key) {
+        hideConsole()
+        return
+      }
+      const existing = consoleTabs.find((t) => t.key === key)
+      if (existing) selectConsoleTab(existing.tab_id)
+      else await addConsoleTab(key)
+      await showConsole()
     }
 
     async function submitConsoleLine() {
-      const key = selectedKey.value
-      const cmd = consoleDraft.value.trim()
-      if (!key || !cmd || consoleBusy.value) return
-      consoleTranscript.value.push({ cmd, pending: true })
-      consoleDraft.value = ''
-      scrollConsoleBottom()
+      const tab = consoleActive.value
+      const cmd = (tab?.draft || '').trim()
+      if (!tab || !cmd) return
+      rememberCmd(tab, cmd)
+      tab.draft = ''
+      persistConsole()
       try {
-        const res = await apiSendConsole(key, cmd)
-        const rows = consoleTranscript.value
-        const row = rows[rows.length - 1]
-        if (row && row.cmd === cmd) {
-          row.pending = false
-          if (res.error) row.error = String(res.error)
-          else row.reply = res.reply != null ? String(res.reply) : ''
-        }
-      } catch (err) {
-        const rows = consoleTranscript.value
-        const row = rows[rows.length - 1]
-        if (row) {
-          row.pending = false
-          row.error = String(err)
-        }
-      }
-      scrollConsoleBottom()
-    }
-
-    async function cancelConsoleSend() {
-      const key = selectedKey.value
-      if (!key) return
-      try {
-        await apiCancelConsole(key)
+        await apiSendConsole(tab.tab_id, cmd)
       } catch (err) {
         console.error(err)
       }
     }
 
-    async function maybeReopenConsole() {
-      const key = unitKeyFromLocation()
-      if (!key || !consoleFromLocation()) return
-      if (openConsoleKey.value === key) {
-        consoleMode.value = true
+    async function cancelConsoleSend() {
+      const tab = consoleActive.value
+      if (!tab) return
+      try {
+        await apiCancelConsole(tab.tab_id)
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
+    function consoleIsStopped(error) {
+      const text = String(error || '').toLowerCase()
+      return text.includes('timeout') || text.includes('cancelled') || text.includes('canceled')
+    }
+
+    function consoleHistoryRetry(row) {
+      if (!consoleIsStopped(row?.error)) return false
+      const tab = consoleActive.value
+      if (!tab) return false
+      if (tab.state === 'sending') return false
+      if (tab.state === 'failed' && tab.cmd === row.cmd) return false
+      return true
+    }
+
+    async function retryConsoleSend() {
+      const tab = consoleActive.value
+      if (!tab) return
+      try {
+        await apiRetryConsole(tab.tab_id)
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
+    async function retryConsoleCmd(cmd) {
+      const tab = consoleActive.value
+      const line = String(cmd || '').trim()
+      if (!tab || !line) return
+      rememberCmd(tab, line)
+      try {
+        if (tab.state === 'failed' && tab.cmd === line) await apiRetryConsole(tab.tab_id)
+        else await apiSendConsole(tab.tab_id, line)
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
+    async function skipConsoleFailed() {
+      const tab = consoleActive.value
+      if (!tab || !tab.pending?.length) return
+      try {
+        await apiSkipConsole(tab.tab_id)
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
+    async function clearConsoleHistory() {
+      const tab = consoleActive.value
+      if (!tab) return
+      try {
+        const ev = await apiClearHistory(tab.tab_id)
+        upsertConsoleTab(ev, tab.draft)
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
+    function consoleTranscriptText(tab) {
+      if (!tab) return ''
+      const blocks = []
+      for (const row of tab.history || []) {
+        const parts = [`> ${row.cmd}`]
+        if (row.reply) parts.push(String(row.reply).replace(/\s+$/g, ''))
+        if (row.error) parts.push(String(row.error).replace(/\s+$/g, ''))
+        blocks.push(parts.join('\n'))
+      }
+      if ((tab.state === 'sending' || tab.state === 'failed') && tab.cmd) {
+        const parts = [`> ${tab.cmd}`]
+        if (tab.error) parts.push(String(tab.error).replace(/\s+$/g, ''))
+        blocks.push(parts.join('\n'))
+      }
+      return blocks.join('\n\n')
+    }
+
+    const consoleCanCopy = computed(() => !!consoleTranscriptText(consoleActive.value))
+
+    async function copyConsoleHistory() {
+      const text = consoleTranscriptText(consoleActive.value)
+      if (!text) return
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error('no clipboard')
+        await navigator.clipboard.writeText(text)
+      } catch {
+        const ta = document.createElement('textarea')
+        ta.value = text
+        ta.setAttribute('readonly', '')
+        ta.style.position = 'fixed'
+        ta.style.left = '-9999px'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        ta.remove()
+      }
+      consoleCopied.value = true
+      window.clearTimeout(consoleCopyTimer)
+      consoleCopyTimer = window.setTimeout(() => {
+        consoleCopied.value = false
+      }, 1200)
+    }
+
+    async function savePendingCmd(tab, item) {
+      const cmd = String(item.cmd || '').trim()
+      if (!cmd) return
+      try {
+        const ev = await apiPatchPending(tab.tab_id, item.id, cmd)
+        upsertConsoleTab(ev, tab.draft)
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
+    async function dropPendingCmd(tab, item) {
+      try {
+        const ev = await apiDeletePending(tab.tab_id, item.id)
+        upsertConsoleTab(ev, tab.draft)
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
+    async function clearPendingAll() {
+      const tab = consoleActive.value
+      if (!tab) return
+      try {
+        const ev = await apiDeletePending(tab.tab_id)
+        upsertConsoleTab(ev, tab.draft)
+      } catch (err) {
+        console.error(err)
+      }
+    }
+
+    async function reconcileConsole(snap) {
+      const serverTabs = snap?.poll?.console?.tabs
+      if (Array.isArray(serverTabs) && serverTabs.length) {
+        const drafts = Object.fromEntries(consoleTabs.map((t) => [t.tab_id, t.draft]))
+        const stored = loadConsoleStore()
+        for (const t of stored.tabs || []) {
+          if (t.tab_id && t.draft && drafts[t.tab_id] == null) drafts[t.tab_id] = t.draft
+        }
+        for (const ev of serverTabs) upsertConsoleTab(ev, drafts[ev.tab_id])
+        const ids = new Set(serverTabs.map((t) => t.tab_id))
+        if (!consoleActiveId.value || !ids.has(consoleActiveId.value)) {
+          consoleActiveId.value = serverTabs[0].tab_id
+        }
+        persistConsole()
         return
       }
-      const unit = fleet.units[key]
-      if (unit) await startConsole(unit)
+      if (consoleSeeding) return
+      const stored = loadConsoleStore()
+      if (!stored.tabs?.length) return
+      consoleSeeding = true
+      try {
+        for (const t of stored.tabs) {
+          if (!t.tab_id || !t.key) continue
+          if (!consoleTabs.some((x) => x.tab_id === t.tab_id)) {
+            consoleTabs.push({
+              tab_id: t.tab_id,
+              key: t.key,
+              state: 'ready',
+              history: t.history || [],
+              pending: t.pending || [],
+              draft: t.draft || '',
+              unread: !!t.unread,
+              cmds: Array.isArray(t.cmds) ? t.cmds : cmdsFromHistory(t.history),
+              cmdIndex: null,
+              cmdHold: '',
+            })
+          }
+          try {
+            await apiOpenConsole(t.key, t.tab_id)
+            if (t.failed) await apiParkConsole(t.tab_id, t.failed, t.error)
+            else if (t.inflight) await apiSendConsole(t.tab_id, t.inflight)
+            for (const p of t.pending || []) {
+              if (p?.cmd) await apiSendConsole(t.tab_id, p.cmd)
+            }
+          } catch (err) {
+            console.error(err)
+          }
+        }
+        consoleActiveId.value = stored.active || consoleTabs[0]?.tab_id || null
+        persistConsole()
+      } finally {
+        consoleSeeding = false
+      }
+    }
+
+    function consoleFromLocation() {
+      return new URLSearchParams(location.search).get('console') === '1'
+    }
+
+    async function maybeReopenConsole() {
+      if (!consoleFromLocation()) return
+      const ctab = new URLSearchParams(location.search).get('ctab')
+      if (ctab && consoleTabs.some((t) => t.tab_id === ctab)) consoleActiveId.value = ctab
+      await showConsole()
     }
 
     /** @param {Record<string, unknown> | null | undefined} ota */
@@ -619,12 +997,18 @@ const App = {
       return lower
     }
 
-    function syncLocation(key, { console: inConsole = false } = {}) {
+    function syncLocation(key) {
       const url = new URL(location.href)
       if (key) url.searchParams.set('unit', key)
       else url.searchParams.delete('unit')
-      if (inConsole) url.searchParams.set('console', '1')
-      else url.searchParams.delete('console')
+      if (consoleOpen.value) {
+        url.searchParams.set('console', '1')
+        if (consoleActiveId.value) url.searchParams.set('ctab', consoleActiveId.value)
+        else url.searchParams.delete('ctab')
+      } else {
+        url.searchParams.delete('console')
+        url.searchParams.delete('ctab')
+      }
       const next = `${url.pathname}${url.search}${url.hash}`
       const cur = `${location.pathname}${location.search}${location.hash}`
       if (next === cur) return
@@ -632,9 +1016,8 @@ const App = {
     }
 
     function openUnit(key, { fly = true } = {}) {
-      const keepConsole = consoleMode.value && selectedKey.value === key
       selectedKey.value = key
-      syncLocation(key, { console: keepConsole })
+      syncLocation(key)
       if (fly) mapCtrl?.flyTo(key, fleet)
       mapCtrl?.sync(fleet, key, fleet.now)
       loadHistoriesFor(key)
@@ -644,7 +1027,6 @@ const App = {
       const key = unitKeyFromLocation()
       if (!key) {
         if (selectedKey.value) {
-          if (activeConsoleKey()) await exitConsole()
           selectedKey.value = null
           mapCtrl?.sync(fleet, null, fleet.now)
         }
@@ -652,21 +1034,33 @@ const App = {
       }
       if (!fleet.units[key]) return
       if (selectedKey.value === key) return
-      if (activeConsoleKey()) await exitConsole()
       openUnit(key)
     }
 
     async function selectUnit(key) {
+      const wasConsole = consoleOpen.value
+      if (wasConsole) hideConsole()
       if (selectedKey.value === key) {
+        if (wasConsole) {
+          syncLocation(key)
+          return
+        }
         await clearSelection()
         return
       }
-      if (activeConsoleKey()) await exitConsole()
       openUnit(key)
     }
 
+    function hideConsoleAtEvent(ev) {
+      const key = mapCtrl?.hitUnit?.(ev.clientX, ev.clientY)
+      if (key) {
+        selectUnit(key)
+        return
+      }
+      hideConsole()
+    }
+
     async function clearSelection() {
-      if (activeConsoleKey()) await exitConsole()
       selectedKey.value = null
       syncLocation(null)
       mapCtrl?.sync(fleet, null, fleet.now)
@@ -722,15 +1116,20 @@ const App = {
       notesDraft.value = typeof unit.notes === 'string' ? unit.notes : ''
     }
 
-    watch(selectedKey, async (key, prev) => {
-      if (prev && key !== prev && activeConsoleKey()) {
-        await exitConsole()
-      }
+    watch(selectedKey, (key) => {
       aliasEditing.value = false
       notesEditing.value = false
       resetLogShown()
       syncBookDrafts(selectedUnit.value)
       syncLocation(key)
+    })
+
+    watch(consoleActiveId, (id) => {
+      persistConsole()
+      if (consoleOpen.value) {
+        if (id) seeConsoleTab(id)
+        syncLocation(selectedKey.value)
+      }
     })
 
     watch(
@@ -809,14 +1208,23 @@ const App = {
         () => pushMap()
       )
       const onKey = (e) => {
-        if (e.key === 'Escape') clearSelection()
+        if (e.key === 'Escape') {
+          if (consoleOpen.value) {
+            hideConsole()
+            return
+          }
+          clearSelection()
+        }
       }
+      const onPageHide = () => persistConsole()
+      window.addEventListener('pagehide', onPageHide)
       const onPop = () => applyLocationUnit()
       window.addEventListener('keydown', onKey)
       window.addEventListener('popstate', onPop)
       onUnmounted(() => {
         window.removeEventListener('keydown', onKey)
         window.removeEventListener('popstate', onPop)
+        window.removeEventListener('pagehide', onPageHide)
       })
       try {
         applyHello(await fetchFleet())
@@ -938,19 +1346,46 @@ const App = {
       canStageRow,
       runStage,
       runInstall,
-      consoleMode,
-      consoleTranscript,
-      consoleDraft,
-      consoleScroll,
+      consoleOpen,
+      consoleTabs,
+      consoleActive,
+      consoleActiveId,
       consoleBusy,
+      consoleFailed,
       consoleStatusLine,
-      consoleLive,
-      openConsoleKey,
-      startConsole,
-      exitConsole,
+      consoleBadgeBusy,
+      consoleUnread,
+      consoleScroll,
+      consolePickerSearch,
+      consolePickerOpen,
+      consolePickerQuery,
+      consolePickerUnits,
+      toggleConsolePicker,
+      consoleTabLabel,
+      selectConsoleTab,
+      toggleConsole,
+      openConsoleForUnit,
+      unitConsoleUnread,
+      unitConsoleBusy,
+      hideConsole,
+      hideConsoleAtEvent,
+      addConsoleTab,
+      closeConsoleTab,
       clearConsoleHistory,
+      copyConsoleHistory,
+      consoleCanCopy,
+      consoleCopied,
       submitConsoleLine,
+      recallConsoleCmd,
+      onConsoleDraftInput,
       cancelConsoleSend,
+      retryConsoleSend,
+      retryConsoleCmd,
+      consoleHistoryRetry,
+      skipConsoleFailed,
+      savePendingCmd,
+      dropPendingCmd,
+      clearPendingAll,
     }
   },
   template: `
@@ -977,6 +1412,22 @@ const App = {
           />
         </label>
       </div>
+      <button
+        type="button"
+        class="console-launch"
+        :class="{ 'is-open': consoleOpen, 'is-busy': consoleBadgeBusy, 'is-unread': consoleUnread }"
+        :title="consoleTabs.length ? 'Console (' + consoleTabs.length + ')' : 'Console'"
+        :aria-label="consoleUnread ? 'Open console (unread)' : 'Open console'"
+        @click="toggleConsole"
+      >
+        <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7">
+          <rect x="2.5" y="3.5" width="15" height="13" rx="1.5" />
+          <path d="M6 8.5l2.2 1.6L6 11.7" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M10.2 12.4H14" stroke-linecap="round" />
+        </svg>
+        <span v-if="consoleUnread" class="console-launch-unread" aria-hidden="true">*</span>
+        <span v-if="consoleTabs.length" class="console-launch-badge">{{ consoleTabs.length }}</span>
+      </button>
     </header>
     <div id="layout">
       <main id="map-wrap">
@@ -984,14 +1435,12 @@ const App = {
         <div
           v-if="selectedUnit"
           class="detail-modal"
-          :class="{ 'detail-console-mode': consoleMode }"
           @mousedown.self="onModalBackdropMouseDown"
           @mouseup.self="onModalBackdropMouseUp"
         >
           <div
             id="detail"
             class="detail"
-            :class="{ 'detail-console': consoleMode }"
             role="dialog"
             aria-modal="true"
             aria-labelledby="detail-title"
@@ -1001,7 +1450,7 @@ const App = {
             <h2 id="detail-title">{{ unitTitle(selectedUnit) }}</h2>
             <button type="button" class="detail-close" aria-label="Close" @click="clearSelection">×</button>
           </div>
-          <p v-if="!consoleMode" class="sub">
+          <p class="sub">
             {{ selectedUnit.unit_id }}
             · {{ selectedUnit.public ? 'public' : 'private' }}
             · {{ formatRelative(selectedUnit.last_heard, fleet.now) }}
@@ -1025,22 +1474,6 @@ const App = {
               Pause
             </label>
             <div v-if="manualAccepting" class="manual-actions">
-              <button
-                v-if="!consoleMode"
-                type="button"
-                class="manual-btn manual-btn-console"
-                @click="startConsole(selectedUnit)"
-              >
-                Console
-              </button>
-              <button
-                v-else
-                type="button"
-                class="manual-btn manual-btn-console-exit"
-                @click="exitConsole"
-              >
-                Exit console
-              </button>
               <button
                 type="button"
                 class="manual-btn"
@@ -1067,45 +1500,6 @@ const App = {
               </button>
             </div>
           </div>
-          <section v-if="consoleMode" class="console-panel">
-            <div class="console-toolbar">
-              <button
-                type="button"
-                class="console-clear"
-                :disabled="!consoleTranscript.length"
-                @click="clearConsoleHistory"
-              >
-                Clear history
-              </button>
-            </div>
-            <div ref="consoleScroll" class="console-transcript">
-              <div v-for="(row, i) in consoleTranscript" :key="i" class="console-block">
-                <div class="console-cmd">&gt; {{ row.cmd }}</div>
-                <div v-if="row.pending && consoleStatusLine" class="console-status">
-                  {{ consoleStatusLine }}
-                  <button type="button" class="console-cancel" @click="cancelConsoleSend">Cancel</button>
-                </div>
-                <pre v-if="row.reply" class="console-reply">{{ row.reply }}</pre>
-                <pre v-if="row.error" class="console-error">{{ row.error }}</pre>
-              </div>
-              <div v-if="!consoleTranscript.length && consoleStatusLine" class="console-status console-status-empty">
-                {{ consoleStatusLine }}
-              </div>
-            </div>
-            <form class="console-input-row" @submit.prevent="submitConsoleLine">
-              <input
-                v-model="consoleDraft"
-                class="console-input"
-                type="text"
-                placeholder="ota stats"
-                autocomplete="off"
-                spellcheck="false"
-                :disabled="consoleBusy || consoleLive?.state === 'acquiring'"
-              />
-              <button type="submit" class="manual-btn" :disabled="consoleBusy || !consoleDraft.trim()">Send</button>
-            </form>
-          </section>
-          <template v-if="!consoleMode">
           <section class="book-edit">
             <label class="book-field">
               <span class="book-field-label">Alias</span>
@@ -1545,7 +1939,157 @@ const App = {
               </button>
             </div>
           </section>
-          </template>
+          </div>
+        </div>
+        <div
+          v-if="consoleOpen"
+          class="console-modal"
+          @mousedown.self="hideConsoleAtEvent"
+        >
+          <div class="console-shell" role="dialog" aria-modal="true" aria-label="Console" @mousedown.stop>
+            <div class="console-tabs">
+              <button
+                v-for="tab in consoleTabs"
+                :key="tab.tab_id"
+                type="button"
+                class="console-tab"
+                :class="{ on: tab.tab_id === consoleActiveId, busy: tab.state === 'sending', failed: tab.state === 'failed' }"
+                @click="selectConsoleTab(tab.tab_id)"
+              >
+                <span>{{ consoleTabLabel(tab) }}</span>
+                <span v-if="tab.unread" class="console-tab-unread" aria-label="Unread">*</span>
+                <span v-if="tab.pending.length" class="console-tab-count">{{ tab.pending.length }}</span>
+                <span class="console-tab-close" title="Close tab" @click.stop="closeConsoleTab(tab.tab_id)">×</span>
+              </button>
+              <div class="console-tab-add-wrap">
+                <button type="button" class="console-tab-add" title="New tab" @click="toggleConsolePicker">+</button>
+                <div v-if="consolePickerOpen" class="console-picker">
+                  <input
+                    ref="consolePickerSearch"
+                    v-model="consolePickerQuery"
+                    class="console-picker-search"
+                    type="search"
+                    placeholder="Open unit…"
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                  <button
+                    v-for="unit in consolePickerUnits"
+                    :key="unit.key"
+                    type="button"
+                    class="console-picker-item"
+                    @click="addConsoleTab(unit.key)"
+                  >
+                    {{ unitTitle(unit) }}
+                    <span class="console-picker-id">{{ unit.unit_id || unit.key }}</span>
+                  </button>
+                  <p v-if="!consolePickerUnits.length" class="console-picker-empty">No units</p>
+                </div>
+              </div>
+              <button type="button" class="console-modal-close" aria-label="Hide console" @click="hideConsole">×</button>
+            </div>
+            <section v-if="consoleActive" class="console-panel">
+              <div class="console-toolbar">
+                <button
+                  type="button"
+                  class="console-copy"
+                  :class="{ copied: consoleCopied }"
+                  :disabled="!consoleCanCopy"
+                  :title="consoleCopied ? 'Copied' : 'Copy history'"
+                  :aria-label="consoleCopied ? 'Copied' : 'Copy history'"
+                  @click="copyConsoleHistory"
+                >
+                  <svg v-if="!consoleCopied" viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6">
+                    <rect x="7" y="5.5" width="9" height="11.5" rx="1.4" />
+                    <path d="M13 5.5V4.4A1.4 1.4 0 0 0 11.6 3H4.4A1.4 1.4 0 0 0 3 4.4v10.2A1.4 1.4 0 0 0 4.4 16H6" />
+                  </svg>
+                  <svg v-else viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4.5 10.5l3.4 3.4 7.6-7.8" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  <span v-if="consoleCopied">Copied</span>
+                </button>
+                <button
+                  type="button"
+                  class="console-clear"
+                  :disabled="!consoleActive.history.length"
+                  @click="clearConsoleHistory"
+                >
+                  Clear history
+                </button>
+              </div>
+              <div ref="consoleScroll" class="console-transcript">
+                <div v-for="(row, i) in consoleActive.history" :key="i" class="console-block">
+                  <div class="console-cmd">&gt; {{ row.cmd }}</div>
+                  <pre v-if="row.reply" class="console-reply">{{ row.reply }}</pre>
+                  <div v-if="row.error" class="console-status">
+                    <pre class="console-error">{{ row.error }}</pre>
+                    <button
+                      v-if="consoleHistoryRetry(row)"
+                      type="button"
+                      class="console-cancel"
+                      @click="retryConsoleCmd(row.cmd)"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                </div>
+                <div v-if="consoleBusy" class="console-block">
+                  <div class="console-cmd">&gt; {{ consoleActive.cmd }}</div>
+                  <div class="console-status">
+                    {{ consoleStatusLine }}
+                    <button type="button" class="console-cancel" @click="cancelConsoleSend">Cancel</button>
+                  </div>
+                </div>
+                <div v-else-if="consoleFailed" class="console-block">
+                  <div class="console-cmd">&gt; {{ consoleActive.cmd }}</div>
+                  <div class="console-status">
+                    <pre v-if="consoleActive.error" class="console-error">{{ consoleActive.error }}</pre>
+                    <button type="button" class="console-cancel" @click="retryConsoleSend">Retry</button>
+                    <button
+                      v-if="consoleActive.pending.length"
+                      type="button"
+                      class="console-cancel"
+                      @click="skipConsoleFailed"
+                    >
+                      Continue
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div v-if="consoleActive.pending.length" class="console-staging">
+                <div class="console-staging-head">
+                  <span>Queued</span>
+                  <button type="button" class="console-clear" @click="clearPendingAll">Clear queued</button>
+                </div>
+                <div v-for="item in consoleActive.pending" :key="item.id" class="console-stage-row">
+                  <input
+                    v-model="item.cmd"
+                    class="console-stage-input"
+                    type="text"
+                    spellcheck="false"
+                    autocomplete="off"
+                    @blur="savePendingCmd(consoleActive, item)"
+                    @keydown.enter.prevent="savePendingCmd(consoleActive, item)"
+                  />
+                  <button type="button" class="console-tab-close" title="Remove" @click="dropPendingCmd(consoleActive, item)">×</button>
+                </div>
+              </div>
+              <form class="console-input-row" @submit.prevent="submitConsoleLine">
+                <input
+                  v-model="consoleActive.draft"
+                  class="console-input"
+                  type="text"
+                  placeholder="ota stats"
+                  autocomplete="off"
+                  spellcheck="false"
+                  @keydown.up.prevent="recallConsoleCmd(-1)"
+                  @keydown.down.prevent="recallConsoleCmd(1)"
+                  @input="onConsoleDraftInput"
+                />
+                <button type="submit" class="manual-btn" :disabled="!consoleActive.draft.trim()">Send</button>
+              </form>
+            </section>
+            <p v-else class="console-empty">Pick a unit to open a tab.</p>
           </div>
         </div>
       </main>
@@ -1594,18 +2138,38 @@ const App = {
                   <span class="unit-ago">{{ formatRelative(unit.last_heard, fleet.now) }}</span>
                 </span>
               </span>
-              <button
-                v-if="manualAccepting"
-                type="button"
-                class="unit-refresh"
-                :class="{ spinning: isInFlight(unit) }"
-                :disabled="!canManualUnit(unit, 'refresh')"
-                :title="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
-                :aria-label="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
-                @click.stop="runManualJob(unit, 'refresh', $event)"
-              >
-                <span class="unit-refresh-icon" aria-hidden="true">↻</span>
-              </button>
+              <div class="unit-actions">
+                <button
+                  type="button"
+                  class="unit-console"
+                  :class="{
+                    'is-unread': unitConsoleUnread(unit),
+                    'is-busy': unitConsoleBusy(unit),
+                  }"
+                  title="Console"
+                  :aria-label="unitConsoleUnread(unit) ? 'Open console (unread)' : 'Open console'"
+                  @click.stop="openConsoleForUnit(unit, $event)"
+                >
+                  <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7">
+                    <rect x="2.5" y="3.5" width="15" height="13" rx="1.5" />
+                    <path d="M6 8.5l2.2 1.6L6 11.7" stroke-linecap="round" stroke-linejoin="round" />
+                    <path d="M10.2 12.4H14" stroke-linecap="round" />
+                  </svg>
+                  <span v-if="unitConsoleUnread(unit)" class="unit-console-unread" aria-hidden="true">*</span>
+                </button>
+                <button
+                  v-if="manualAccepting"
+                  type="button"
+                  class="unit-refresh"
+                  :class="{ spinning: isInFlight(unit) }"
+                  :disabled="!canManualUnit(unit, 'refresh')"
+                  :title="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
+                  :aria-label="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
+                  @click.stop="runManualJob(unit, 'refresh', $event)"
+                >
+                  <span class="unit-refresh-icon" aria-hidden="true">↻</span>
+                </button>
+              </div>
             </div>
             <Transition name="stage">
               <div

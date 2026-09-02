@@ -26,6 +26,7 @@ from envybot.jobs import (
     TIMER_JOB_KINDS,
     FleetScheduler,
     JobOutcome,
+    drop_console_jobs,
     is_console_job,
     keep_console_jobs,
 )
@@ -400,15 +401,18 @@ async def run(args: argparse.Namespace) -> int:
             session.audit_source = "console"
         elif session.audit_source == "console":
             session.audit_source = None
-        if web_ctx and web_ctx.console.active and web_ctx.console.active.key == target.key:
+        tab_id = str(job.extra.get("tab_id") or "")
+        if web_ctx and tab_id and is_console_job(job):
             if job.kind == "console:login":
                 await web_ctx.console.on_login_start(
+                    tab_id,
                     job.attempt + 1,
                     scheduler.max_attempts or worker_ctx.max_attempts,
                 )
             elif job.kind == "console:cli":
                 cmd = str(job.extra.get("cmd") or "")
                 await web_ctx.console.on_cli_start(
+                    tab_id,
                     job.attempt + 1,
                     scheduler.max_attempts or worker_ctx.max_attempts,
                     cmd,
@@ -478,22 +482,42 @@ async def run(args: argparse.Namespace) -> int:
     async def on_job_done(uq: Any, job: Any, outcome: JobOutcome, payload: Any) -> None:
         nonlocal yaml_dirty, round_num
         target = uq.target
-        if web_ctx and web_ctx.console.active and web_ctx.console.active.key == target.key:
-            if job.kind == "console:login" and outcome == JobOutcome.HEARD:
-                await web_ctx.console.on_login_ready()
+        tab_id = str(job.extra.get("tab_id") or "")
+        if web_ctx and tab_id:
+            job_gen = int(job.extra.get("cancel_gen") or 0)
+            same_tab = [
+                j
+                for j in uq.jobs
+                if is_console_job(j) and str(j.extra.get("tab_id") or "") == tab_id
+            ]
+            if is_console_job(job) and web_ctx.console.cancel_check(tab_id, job_gen):
+                pass
+            elif job.kind == "console:login" and outcome == JobOutcome.HEARD:
+                await web_ctx.console.on_login_ready(tab_id)
+            elif job.kind == "console:login" and outcome == JobOutcome.CANCELLED and not same_tab:
+                await web_ctx.console.on_cli_done(
+                    tab_id,
+                    ok=False,
+                    reply=None,
+                    error="cancelled",
+                )
             elif job.kind == "console:login" and outcome in (
                 JobOutcome.TIMEOUT,
                 JobOutcome.HARD_FAIL,
-                JobOutcome.CANCELLED,
-            ) and not any(is_console_job(j) for j in uq.jobs):
+            ):
+                drop_console_jobs(uq, tab_id or None)
                 await web_ctx.console.on_cli_done(
+                    tab_id,
                     ok=False,
                     reply=None,
                     error=str(payload or "login failed"),
+                    drop_pending=outcome == JobOutcome.HARD_FAIL,
+                    drain=False,
                 )
             elif job.kind == "console:cli":
                 if outcome == JobOutcome.CANCELLED:
                     await web_ctx.console.on_cli_done(
+                        tab_id,
                         ok=False,
                         reply=None,
                         error="cancelled",
@@ -507,21 +531,27 @@ async def run(args: argparse.Namespace) -> int:
                     ):
                         err = reply
                     await web_ctx.console.on_cli_done(
+                        tab_id,
                         ok=err is None,
                         reply=reply,
                         error=err,
                     )
                 elif outcome == JobOutcome.HARD_FAIL:
                     await web_ctx.console.on_cli_done(
+                        tab_id,
                         ok=False,
                         reply=str(payload) if payload is not None else None,
                         error=str(payload or "failed"),
+                        drain=False,
                     )
-                elif outcome == JobOutcome.TIMEOUT and not uq.jobs:
+                elif outcome == JobOutcome.TIMEOUT:
+                    drop_console_jobs(uq, tab_id or None)
                     await web_ctx.console.on_cli_done(
+                        tab_id,
                         ok=False,
                         reply=None,
                         error=str(payload or "command timeout"),
+                        drain=False,
                     )
         node_record = nodes.get(target.key) or {}
         guest_before = str(node_record.get("guest_password") or "")

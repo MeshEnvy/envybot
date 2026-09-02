@@ -45,12 +45,23 @@ class FleetHub:
     async def publish_console(self, event: dict[str, Any]) -> None:
         if self._snapshot is not None:
             poll = self._snapshot.setdefault("poll", {})
-            key = event.get("key")
-            state = event.get("state")
-            if state == "closed":
-                poll.pop("console", None)
-            elif isinstance(key, str) and key:
-                poll["console"] = {"key": key, "state": state}
+            console = poll.setdefault("console", {"tabs": []})
+            tabs = console.setdefault("tabs", [])
+            if not isinstance(tabs, list):
+                tabs = []
+                console["tabs"] = tabs
+            tab_id = event.get("tab_id")
+            if event.get("state") == "closed" and isinstance(tab_id, str):
+                console["tabs"] = [t for t in tabs if t.get("tab_id") != tab_id]
+            elif isinstance(tab_id, str) and tab_id:
+                replaced = False
+                for i, tab in enumerate(tabs):
+                    if tab.get("tab_id") == tab_id:
+                        tabs[i] = event
+                        replaced = True
+                        break
+                if not replaced:
+                    tabs.append(event)
         await self._broadcast("console", event)
 
     async def _broadcast(self, event: str, data: dict[str, Any]) -> None:

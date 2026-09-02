@@ -87,9 +87,13 @@ export async function installUnit(key) {
   return res.json()
 }
 
-/** @param {string} key */
-export async function openConsole(key) {
-  const res = await fetch(`/api/console/${encodeURIComponent(key)}/open`, { method: 'POST' })
+/** @param {string} key @param {string} [tabId] */
+export async function openConsole(key, tabId) {
+  const res = await fetch('/api/console/open', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(tabId ? { key, tab_id: tabId } : { key }),
+  })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.error || `console open ${res.status}`)
@@ -97,9 +101,9 @@ export async function openConsole(key) {
   return res.json()
 }
 
-/** @param {string} key @param {string} cmd */
-export async function sendConsole(key, cmd) {
-  const res = await fetch(`/api/console/${encodeURIComponent(key)}/send`, {
+/** @param {string} tabId @param {string} cmd */
+export async function sendConsole(tabId, cmd) {
+  const res = await fetch(`/api/console/${encodeURIComponent(tabId)}/send`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cmd }),
@@ -111,9 +115,43 @@ export async function sendConsole(key, cmd) {
   return res.json()
 }
 
-/** @param {string} key */
-export async function cancelConsole(key) {
-  const res = await fetch(`/api/console/${encodeURIComponent(key)}/cancel`, { method: 'POST' })
+/** @param {string} tabId @param {string} cmd @param {string | null} [error] */
+export async function parkConsole(tabId, cmd, error) {
+  const res = await fetch(`/api/console/${encodeURIComponent(tabId)}/park`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cmd, error: error || 'command timeout' }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `console park ${res.status}`)
+  }
+  return res.json()
+}
+
+/** @param {string} tabId */
+export async function retryConsole(tabId) {
+  const res = await fetch(`/api/console/${encodeURIComponent(tabId)}/retry`, { method: 'POST' })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `console retry ${res.status}`)
+  }
+  return res.json()
+}
+
+/** @param {string} tabId */
+export async function skipConsole(tabId) {
+  const res = await fetch(`/api/console/${encodeURIComponent(tabId)}/skip`, { method: 'POST' })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `console skip ${res.status}`)
+  }
+  return res.json()
+}
+
+/** @param {string} tabId */
+export async function cancelConsole(tabId) {
+  const res = await fetch(`/api/console/${encodeURIComponent(tabId)}/cancel`, { method: 'POST' })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.error || `console cancel ${res.status}`)
@@ -121,12 +159,54 @@ export async function cancelConsole(key) {
   return res.json()
 }
 
-/** @param {string} key */
-export async function closeConsole(key) {
-  const res = await fetch(`/api/console/${encodeURIComponent(key)}/close`, { method: 'POST' })
+/** @param {string} tabId */
+export async function closeConsole(tabId) {
+  const res = await fetch(`/api/console/${encodeURIComponent(tabId)}/close`, { method: 'POST' })
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))
     throw new Error(body.error || `console close ${res.status}`)
+  }
+  return res.json()
+}
+
+/** @param {string} tabId @param {string} pendingId @param {string} cmd */
+export async function patchConsolePending(tabId, pendingId, cmd) {
+  const res = await fetch(
+    `/api/console/${encodeURIComponent(tabId)}/pending/${encodeURIComponent(pendingId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd }),
+    }
+  )
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `console pending ${res.status}`)
+  }
+  return res.json()
+}
+
+/** @param {string} tabId @param {string} [pendingId] */
+export async function deleteConsolePending(tabId, pendingId) {
+  const suffix = pendingId
+    ? `/pending/${encodeURIComponent(pendingId)}`
+    : '/pending'
+  const res = await fetch(`/api/console/${encodeURIComponent(tabId)}${suffix}`, {
+    method: 'DELETE',
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `console pending ${res.status}`)
+  }
+  return res.json()
+}
+
+/** @param {string} tabId */
+export async function clearConsoleHistory(tabId) {
+  const res = await fetch(`/api/console/${encodeURIComponent(tabId)}/clear`, { method: 'POST' })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `console clear ${res.status}`)
   }
   return res.json()
 }

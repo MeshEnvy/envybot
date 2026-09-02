@@ -333,9 +333,22 @@ export function createMapController(containerId, onSelect, onClear) {
     })
   }
 
+  /** @param {number} clientX @param {number} clientY */
+  function hitUnit(clientX, clientY) {
+    if (!ready || !map.getLayer('units')) return null
+    const rect = map.getCanvas().getBoundingClientRect()
+    const point = [clientX - rect.left, clientY - rect.top]
+    const layers = ['units']
+    if (map.getLayer('units-label')) layers.push('units-label')
+    const hits = map.queryRenderedFeatures(point, { layers })
+    const key = hits[0]?.properties?.key
+    return typeof key === 'string' ? key : null
+  }
+
   return {
     sync,
     flyTo,
+    hitUnit,
     destroy() {
       ro.disconnect()
       map.remove()

@@ -80,6 +80,9 @@ class MonitorWebManualJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(err)
         assert payload is not None
         self.assertEqual(payload.get("state"), "ready")
+        self.assertTrue(payload.get("tab_id"))
+        self.assertIn("history", payload)
+        self.assertIn("pending", payload)
         uq = self.scheduler.units.get("me0003")
         self.assertTrue(uq is None or not uq.jobs)
 

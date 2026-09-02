@@ -85,12 +85,12 @@ def keep_console_jobs(uq: UnitQueue) -> list[RadioJob]:
     return kept
 
 
-def drop_console_jobs(uq: UnitQueue) -> list[RadioJob]:
+def drop_console_jobs(uq: UnitQueue, tab_id: str | None = None) -> list[RadioJob]:
     """Remove console jobs. Waiters are resolved by ConsoleManager."""
     dropped: list[RadioJob] = []
     kept: list[RadioJob] = []
     for job in uq.jobs:
-        if is_console_job(job):
+        if is_console_job(job) and (tab_id is None or job.extra.get("tab_id") == tab_id):
             dropped.append(job)
         else:
             kept.append(job)
@@ -183,19 +183,19 @@ class FleetScheduler:
         self._wake_idle()
         return 200, None
 
-    def cancel_console_jobs(self, key: str) -> bool:
-        """Drop queued console:* on this unit. In-flight wait uses cancel_check."""
+    def cancel_console_jobs(self, key: str, tab_id: str | None = None) -> bool:
+        """Drop queued console:* on this unit (one tab, or all). In-flight uses cancel_check."""
         uq = self.units.get(key.lower())
         if uq is None:
             return False
-        return bool(drop_console_jobs(uq))
+        return bool(drop_console_jobs(uq, tab_id))
 
     def enqueue_console(
         self,
         target: RouterTarget,
         jobs: list[RadioJob],
     ) -> None:
-        """Splice console commands to the front of this unit. Other lanes stay."""
+        """FIFO among console:* on this unit, still in front of poll/apply."""
         uq = self.get_or_create(target)
         uq.apply_aborted = False
         uq.succeeded = False
@@ -203,8 +203,13 @@ class FleetScheduler:
             job.manual = True
             job.manual_job = "console"
             job.unit_key = target.key
-        for job in reversed(jobs):
-            uq.jobs.appendleft(job)
+        existing = list(uq.jobs)
+        console_jobs = [job for job in existing if is_console_job(job)]
+        other = [job for job in existing if not is_console_job(job)]
+        uq.jobs.clear()
+        uq.jobs.extend(console_jobs)
+        uq.jobs.extend(jobs)
+        uq.jobs.extend(other)
         uq.backoff_until = 0.0
         self._wake_idle()
 
@@ -311,7 +316,7 @@ class FleetScheduler:
                 uq.jobs.popleft()
                 drop_remaining_apply(uq)
             elif is_console_job(job):
-                drop_console_jobs(uq)
+                drop_console_jobs(uq, job.extra.get("tab_id"))
             else:
                 uq.jobs.clear()
                 uq.apply_aborted = True
@@ -329,7 +334,7 @@ class FleetScheduler:
                 if job.kind == "login":
                     uq.jobs.clear()
                 elif job.kind == "console:login":
-                    drop_console_jobs(uq)
+                    drop_console_jobs(uq, job.extra.get("tab_id"))
                 elif job.kind.startswith("apply:"):
                     extra = drop_remaining_apply(uq)
                     if isinstance(dropped, list):
@@ -369,12 +374,13 @@ class FleetScheduler:
             job = uq.jobs[0]
             if job.kind in TIMER_JOB_KINDS:
                 continue
-            candidates.append((_pick_tier(uq, job), uq.last_served, key, uq, job))
+            retry_rank = 0 if is_console_job(job) and job.attempt else 1
+            candidates.append((_pick_tier(uq, job), retry_rank, uq.last_served, key, uq, job))
         if not candidates:
             return None
-        candidates.sort(key=lambda row: (row[0], row[1], row[2]))
-        uq = candidates[0][3]
-        job = candidates[0][4]
+        candidates.sort(key=lambda row: (row[0], row[1], row[2], row[3]))
+        uq = candidates[0][4]
+        job = candidates[0][5]
         uq.manual_bump = False
         return uq, job
 

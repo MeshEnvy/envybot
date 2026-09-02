@@ -117,22 +117,45 @@ While the companion worker is live:
 List cards expose **Refresh** only. Detail adds **Pull** and **Push** (Push
 is visually distinct; it rewrites passwords). CLI `--force` is Pull plus Push.
 
-### Console (detail card)
+### Console (header)
 
-**Console** on the detail card is a UI session. Opening it does not pause
-poll/apply. One panel at a time (switching units closes the previous).
+The header terminal icon opens a tabbed console modal. Opening a tab does
+not pause poll/apply. Hide (Esc, backdrop, icon) leaves tabs running.
+Each unit row has the same icon: opens the first tab for that unit, or
+creates one. Click it again while that unit's tab is showing to hide the
+console. The header icon also toggles.
 
+- **+** opens another tab. The same unit can have more than one session
+  (labels `Ophir`, `Ophir 2`). Tab `×` cancels that session only.
 - Typed lines are MeshCore CLI (`ota stats`, `get name`, …) with flood before
   each send. Login runs on the first send if that unit is not already authed
   (same `--attempts` cap as GET/SET).
-- That command jumps to the front of the radio and retries without rotating
-  to other units until heard, exhausted, or **Cancel**.
+- That command jumps to the front of the radio until heard, cancelled, or
+  it times out. **Cancel** is per tab and starts the next staged line.
+  A timeout or hard fail parks the line (no auto-retry, queue stays):
+  **Retry** sits next to the stopped error, including cancelled or
+  timeout rows already in history. Retry is hidden while that line is
+  still sending. **Continue** (only if the queue is nonempty) archives
+  it and starts the next staged cmd. Further lines stage behind the
+  current or parked line and can be edited or deleted.
 - An in-flight poll/apply wait finishes, then the console head runs.
-- Refresh / Pull / Push stay available. They sit behind a queued console
-  send on the same unit.
-- `--web-only` can open the panel; send returns 409 until a companion
-  worker is live.
-- URL: `?unit=me0032&console=1` for reload.
+- Refresh / Pull / Push stay available. They sit behind queued console
+  sends on the same unit.
+- `--web-only` can open tabs; send returns 409 until a companion worker is
+  live.
+- URL: `?console=1` reopens the modal (`&ctab=` selects a tab). `?unit=`
+  is only the detail card. Clicking a list row or map pin hides the
+  console and opens that unit's card.
+- Up/down in the input recalls commands sent on that tab. Separate from
+  the transcript: **Clear history** does not wipe recall. The clipboard
+  icon copies the transcript.
+- A red `*` on a tab means that session's transcript changed since you
+  last viewed it. The header icon shows the same `*` while the modal is
+  hidden. Opening the tab (or the modal onto that tab) clears it.
+- History, the staging queue, and a parked failed line survive browser
+  refresh and `fleet` restart in `localStorage` (`envybot.console.v1`).
+  After a process restart they reseed when this origin reconnects (a
+  parked line is not auto-sent).
 - Audit: `commands.source='console'` and `mesh_audit.source='console'` (same
   tables as `./envybot cmd`; redacted passwords).
 - Tracked poll CLI replies (`ota status`, `ota stats`, `ota self`, `ota ls`,

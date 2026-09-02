@@ -634,6 +634,7 @@ async def _execute_console_cli(
     if not cmd:
         return JobOutcome.HARD_FAIL, "empty command"
     cancel_gen = int(job.extra.get("cancel_gen") or 0)
+    tab_id = str(job.extra.get("tab_id") or "")
     if not ctx.session.is_authed(target.key):
         if not uq.jobs or uq.jobs[0].kind != "console:login":
             uq.jobs.insert(
@@ -643,18 +644,16 @@ async def _execute_console_cli(
                     unit_key=target.key,
                     manual=True,
                     manual_job="console",
-                    extra={"cancel_gen": cancel_gen},
+                    extra={"cancel_gen": cancel_gen, "tab_id": tab_id},
                 ),
             )
         return JobOutcome.TIMEOUT, "not authed"
     manager = uq.session_extra.get("console_manager")
 
     def cancel_check() -> bool:
-        if ctx.session.console_cli_cancel_gen > cancel_gen:
-            return True
-        if manager is not None and manager.cancel_check(cancel_gen):
-            return True
-        return False
+        if manager is None or not tab_id:
+            return False
+        return bool(manager.cancel_check(tab_id, cancel_gen))
 
     cancelled: list[bool] = []
     raw = await send_cmd_once(
@@ -684,7 +683,7 @@ async def _execute_console_cli(
                     unit_key=target.key,
                     manual=True,
                     manual_job="console",
-                    extra={"cancel_gen": cancel_gen},
+                    extra={"cancel_gen": cancel_gen, "tab_id": tab_id},
                 ),
             )
         return JobOutcome.TIMEOUT, "auth"
@@ -730,14 +729,13 @@ async def execute_job(
 
     if job.kind == "console:login":
         cancel_gen = int(job.extra.get("cancel_gen") or 0)
+        tab_id = str(job.extra.get("tab_id") or "")
         manager = uq.session_extra.get("console_manager")
 
         def cancel_check() -> bool:
-            if ctx.session.console_cli_cancel_gen > cancel_gen:
-                return True
-            if manager is not None and manager.cancel_check(cancel_gen):
-                return True
-            return False
+            if manager is None or not tab_id:
+                return False
+            return bool(manager.cancel_check(tab_id, cancel_gen))
 
         ok, err, clock = await admin_login_attempt(
             ctx.client,

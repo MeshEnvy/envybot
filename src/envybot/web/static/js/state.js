@@ -115,11 +115,23 @@ export function patchSession(poll) {
 
 /** @param {Record<string, unknown>} event */
 export function patchConsole(event) {
-  if (event.state === 'closed') {
-    delete fleetStore.poll.console
-  } else if (event.key) {
-    fleetStore.poll.console = { key: event.key, state: event.state }
+  const poll = fleetStore.poll
+  if (!poll.console || typeof poll.console !== 'object') {
+    poll.console = { tabs: [] }
   }
+  const console = /** @type {{ tabs?: Record<string, unknown>[] }} */ (poll.console)
+  const tabs = Array.isArray(console.tabs) ? console.tabs : []
+  const tabId = event.tab_id
+  if (event.state === 'closed' && typeof tabId === 'string') {
+    console.tabs = tabs.filter((t) => t.tab_id !== tabId)
+    return
+  }
+  if (typeof tabId !== 'string' || !tabId) return
+  const next = tabs.slice()
+  const i = next.findIndex((t) => t.tab_id === tabId)
+  if (i >= 0) next[i] = event
+  else next.push(event)
+  console.tabs = next
 }
 
 /** @param {string} key @param {UnitHistory} histories */
