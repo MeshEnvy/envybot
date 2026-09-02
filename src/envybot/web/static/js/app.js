@@ -58,9 +58,22 @@ const App = {
       acl: LOG_PAGE,
     })
     const consoleMode = ref(false)
-    /** @type {import('vue').Ref<{ cmd: string, reply?: string, error?: string, pending?: boolean }[]>} */
-    const consoleTranscript = ref([])
-    const consoleDraft = ref('')
+    /** @type {Record<string, { cmd: string, reply?: string, error?: string, pending?: boolean }[]>} */
+    const consoleHistoryByKey = reactive({})
+    /** @type {Record<string, string>} */
+    const consoleDraftByKey = reactive({})
+    const consoleTranscript = computed(() => transcriptFor(selectedKey.value))
+    const consoleDraft = computed({
+      get() {
+        const key = selectedKey.value
+        if (!key) return ''
+        return consoleDraftByKey[key] ?? ''
+      },
+      set(value) {
+        const key = selectedKey.value
+        if (key) consoleDraftByKey[key] = value
+      },
+    })
     /** @type {import('vue').Ref<Record<string, unknown> | null>} */
     const consoleLive = ref(null)
     /** @type {import('vue').Ref<HTMLElement | null>} */
@@ -170,6 +183,29 @@ const App = {
       return new URLSearchParams(location.search).get('console') === '1'
     }
 
+    function activeConsoleKey() {
+      const held = exclusiveConsoleKey.value
+      if (held) return held
+      if (consoleMode.value && selectedKey.value) return selectedKey.value
+      return null
+    }
+
+    /** @param {string | null | undefined} key */
+    function transcriptFor(key) {
+      const k = key ? String(key).toLowerCase() : ''
+      if (!k) return []
+      if (!consoleHistoryByKey[k]) consoleHistoryByKey[k] = []
+      return consoleHistoryByKey[k]
+    }
+
+    function clearConsoleHistory() {
+      const key = selectedKey.value
+      if (!key) return
+      const k = String(key).toLowerCase()
+      consoleHistoryByKey[k] = []
+      delete consoleDraftByKey[k]
+    }
+
     function scrollConsoleBottom() {
       requestAnimationFrame(() => {
         const el = consoleScroll.value
@@ -208,7 +244,6 @@ const App = {
     async function startConsole(unit) {
       if (!unit?.key) return
       consoleMode.value = true
-      consoleTranscript.value = []
       consoleLive.value = { state: 'acquiring', key: unit.key }
       syncLocation(String(unit.key), { console: true })
       try {
@@ -222,18 +257,18 @@ const App = {
     }
 
     async function exitConsole() {
-      const key = selectedKey.value
-      if (key && (consoleMode.value || exclusiveConsoleKey.value === key)) {
+      const key = activeConsoleKey()
+      if (key) {
         try {
           await apiCloseConsole(key)
         } catch (err) {
           console.error(err)
         }
       }
+      patchConsole({ state: 'closed' })
       consoleMode.value = false
-      consoleTranscript.value = []
       consoleLive.value = null
-      syncLocation(key, { console: false })
+      syncLocation(selectedKey.value, { console: false })
     }
 
     async function submitConsoleLine() {
@@ -598,17 +633,19 @@ const App = {
     }
 
     function openUnit(key, { fly = true } = {}) {
+      const keepConsole = consoleMode.value && selectedKey.value === key
       selectedKey.value = key
-      syncLocation(key, { console: consoleMode.value })
+      syncLocation(key, { console: keepConsole })
       if (fly) mapCtrl?.flyTo(key, fleet)
       mapCtrl?.sync(fleet, key, fleet.now)
       loadHistoriesFor(key)
     }
 
-    function applyLocationUnit() {
+    async function applyLocationUnit() {
       const key = unitKeyFromLocation()
       if (!key) {
         if (selectedKey.value) {
+          if (activeConsoleKey()) await exitConsole()
           selectedKey.value = null
           mapCtrl?.sync(fleet, null, fleet.now)
         }
@@ -616,22 +653,39 @@ const App = {
       }
       if (!fleet.units[key]) return
       if (selectedKey.value === key) return
+      if (activeConsoleKey()) await exitConsole()
       openUnit(key)
     }
 
-    function selectUnit(key) {
+    async function selectUnit(key) {
       if (selectedKey.value === key) {
-        clearSelection()
+        await clearSelection()
         return
       }
+      if (activeConsoleKey()) await exitConsole()
       openUnit(key)
     }
 
     async function clearSelection() {
-      if (consoleMode.value) await exitConsole()
+      if (activeConsoleKey()) await exitConsole()
       selectedKey.value = null
       syncLocation(null)
       mapCtrl?.sync(fleet, null, fleet.now)
+    }
+
+    const modalDownOnBackdrop = ref(false)
+
+    function onModalBackdropMouseDown() {
+      modalDownOnBackdrop.value = true
+    }
+
+    function onModalBackdropMouseUp() {
+      if (modalDownOnBackdrop.value) clearSelection()
+      modalDownOnBackdrop.value = false
+    }
+
+    function onModalPanelMouseUp() {
+      modalDownOnBackdrop.value = false
     }
 
     /** @param {Record<string, unknown> | undefined} unit */
@@ -670,7 +724,7 @@ const App = {
     }
 
     watch(selectedKey, async (key, prev) => {
-      if (prev && consoleMode.value && key !== prev) {
+      if (prev && key !== prev && activeConsoleKey()) {
         await exitConsole()
       }
       aliasEditing.value = false
@@ -816,6 +870,9 @@ const App = {
       runManualJob,
       selectUnit,
       clearSelection,
+      onModalBackdropMouseDown,
+      onModalBackdropMouseUp,
+      onModalPanelMouseUp,
       unitStatus,
       unitStage,
       isInFlight,
@@ -892,6 +949,7 @@ const App = {
       exclusiveConsoleKey,
       startConsole,
       exitConsole,
+      clearConsoleHistory,
       submitConsoleLine,
       cancelConsoleSend,
     }
@@ -928,7 +986,8 @@ const App = {
           v-if="selectedUnit"
           class="detail-modal"
           :class="{ 'detail-console-mode': consoleMode }"
-          @click.self="clearSelection"
+          @mousedown.self="onModalBackdropMouseDown"
+          @mouseup.self="onModalBackdropMouseUp"
         >
           <div
             id="detail"
@@ -937,6 +996,7 @@ const App = {
             role="dialog"
             aria-modal="true"
             aria-labelledby="detail-title"
+            @mouseup="onModalPanelMouseUp"
           >
           <div class="detail-head">
             <h2 id="detail-title">{{ unitTitle(selectedUnit) }}</h2>
@@ -1010,6 +1070,16 @@ const App = {
             </div>
           </div>
           <section v-if="consoleMode" class="console-panel">
+            <div class="console-toolbar">
+              <button
+                type="button"
+                class="console-clear"
+                :disabled="!consoleTranscript.length"
+                @click="clearConsoleHistory"
+              >
+                Clear history
+              </button>
+            </div>
             <div ref="consoleScroll" class="console-transcript">
               <div v-for="(row, i) in consoleTranscript" :key="i" class="console-block">
                 <div class="console-cmd">&gt; {{ row.cmd }}</div>
