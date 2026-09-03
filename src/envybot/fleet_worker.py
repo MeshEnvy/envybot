@@ -671,7 +671,8 @@ async def _execute_console_cli(
     if cancelled:
         return JobOutcome.CANCELLED, "cancelled"
     if raw is None:
-        _console_insert_command(ctx, target, cmd, "command timeout", ok=False)
+        if attempt_cap and attempt_num >= attempt_cap:
+            _console_insert_command(ctx, target, cmd, "command timeout", ok=False)
         return JobOutcome.TIMEOUT, "command timeout"
     if cli_suggests_auth_failure(raw):
         ctx.session.clear_auth(target.key)

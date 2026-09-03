@@ -140,9 +140,9 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
   Push is SET-only force.   **Console** (header or unit-row icon): tabbed modal, optional extra sessions to the
   same unit. Row icon focuses the first tab for that unit or opens one.
   Open is radio-free. CLI jumps that unit (login on first send).
-  A timeout parks that line (Retry beside the error; Continue if queued)
-  and does not auto-retry or drain. Per-tab Cancel while sending
-  (Retry only after the line has stopped, not during attempts).
+  Timeout retries `--attempts` (default 10) on that unit, then parks
+  (Retry beside the error; Continue if queued). Per-tab Cancel while
+  sending (Retry only after the line has stopped, not during attempts).
   Busy send stages the next line. Hide
   keeps running. List or map select closes the console and opens the card. Per-tab up/down command recall (survives Clear history).
   Clipboard copies the transcript.

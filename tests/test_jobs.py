@@ -248,6 +248,19 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(order[:3], ["me0001", "me0001", "me0001"])
         self.assertIn("me0002", order)
 
+    def test_console_timeout_stays_queued_until_max(self) -> None:
+        sched = FleetScheduler(max_attempts=10, retry_delay=0.0)
+        t = _target("me0001")
+        job = RadioJob(kind="console:cli", unit_key="me0001")
+        sched.enqueue_console(t, [job])
+        uq = sched.units["me0001"]
+        sched._settle_job(uq, job, JobOutcome.TIMEOUT, "command timeout", {})
+        self.assertTrue(any(j is job for j in uq.jobs))
+        self.assertEqual(job.attempt, 1)
+        for _ in range(9):
+            sched._settle_job(uq, job, JobOutcome.TIMEOUT, "command timeout", {})
+        self.assertFalse(any(j is job for j in uq.jobs))
+
     async def test_max_attempts_drops_job(self) -> None:
         sched = FleetScheduler(max_attempts=2, retry_delay=0.0)
         t = _target()

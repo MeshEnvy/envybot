@@ -474,6 +474,14 @@ const App = {
       await showConsole()
     }
 
+    function failConsoleLocal(tab, cmd, err) {
+      const msg = err?.message || String(err || 'send failed')
+      tab.state = 'failed'
+      tab.cmd = cmd
+      tab.error = msg
+      tab.history = [...(tab.history || []), { cmd, error: msg }]
+    }
+
     async function submitConsoleLine() {
       const tab = consoleActive.value
       const cmd = (tab?.draft || '').trim()
@@ -484,7 +492,7 @@ const App = {
       try {
         await apiSendConsole(tab.tab_id, cmd)
       } catch (err) {
-        console.error(err)
+        failConsoleLocal(tab, cmd, err)
       }
     }
 
@@ -518,7 +526,7 @@ const App = {
       try {
         await apiRetryConsole(tab.tab_id)
       } catch (err) {
-        console.error(err)
+        failConsoleLocal(tab, tab.cmd || '', err)
       }
     }
 
@@ -531,7 +539,7 @@ const App = {
         if (tab.state === 'failed' && tab.cmd === line) await apiRetryConsole(tab.tab_id)
         else await apiSendConsole(tab.tab_id, line)
       } catch (err) {
-        console.error(err)
+        failConsoleLocal(tab, line, err)
       }
     }
 

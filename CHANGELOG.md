@@ -16,8 +16,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   not take the radio. Typed lines jump that unit's queue and retry
   without rotating (flood + `--attempts`; Cancel is per tab). Send while
   a line is running stages the next one (edit or delete in the queue).
-  Timeout or hard fail parks that line (no auto-retry): Retry next to
-  the stopped error, including cancelled or timeout rows in history.
+  Timeout retries `--attempts` times (default 10) on that unit without
+  rotating. Exhausted timeout or hard fail parks that line: Retry next
+  to the stopped error, including cancelled or timeout rows in history.
   Retry is hidden while the line is still sending. Continue if anything
   is queued. The queue does not auto-advance.
   Hide leaves tabs running. A list or map pin click hides the console
@@ -53,6 +54,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   horizon line. Temperature displays as °F (radio still reports °C).
 
 ### Fixed
+
+- Console send no longer 409s during companion handshake. Jobs queue
+  until the radio is up. A failed send shows in the tab, not only
+  DevTools.
 
 - `ota config autofetch` on firmware without the CLI (`Unknown command`)
   stamps the field done. Non-OTA nodes no longer stay apply-due forever.

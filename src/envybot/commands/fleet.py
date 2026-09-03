@@ -314,6 +314,8 @@ async def run(args: argparse.Namespace) -> int:
 
     initial_units = scheduler.active_unit_count()
     if web_ctx:
+        web_ctx.set_worker_active(True)
+        web_ctx.console.bind_publish(web_ctx.hub.publish_console)
         await web_ctx.refresh_snapshot(
             session_states=session_states,
             poll={
@@ -377,9 +379,7 @@ async def run(args: argparse.Namespace) -> int:
     worker_ctx.skip_discover = args.no_discover
 
     if web_ctx:
-        web_ctx.set_worker_active(True)
         web_ctx._fleet_session = session
-        web_ctx.console.bind_publish(web_ctx.hub.publish_console)
     if initial_units:
         work_targets = [t for t in auto_targets if scheduler.units.get(t.key, None) and scheduler.units[t.key].jobs]
         if work_targets:
@@ -545,14 +545,17 @@ async def run(args: argparse.Namespace) -> int:
                         drain=False,
                     )
                 elif outcome == JobOutcome.TIMEOUT:
-                    drop_console_jobs(uq, tab_id or None)
-                    await web_ctx.console.on_cli_done(
-                        tab_id,
-                        ok=False,
-                        reply=None,
-                        error=str(payload or "command timeout"),
-                        drain=False,
-                    )
+                    # Settle already incremented attempt; job stays queued
+                    # until --attempts. Parking here used to drop after 1/10.
+                    if not any(j is job for j in uq.jobs):
+                        drop_console_jobs(uq, tab_id or None)
+                        await web_ctx.console.on_cli_done(
+                            tab_id,
+                            ok=False,
+                            reply=None,
+                            error=str(payload or "command timeout"),
+                            drain=False,
+                        )
         node_record = nodes.get(target.key) or {}
         guest_before = str(node_record.get("guest_password") or "")
 

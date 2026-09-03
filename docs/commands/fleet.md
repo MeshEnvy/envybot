@@ -128,22 +128,24 @@ console. The header icon also toggles.
 
 - **+** opens another tab. The same unit can have more than one session
   (labels `Ophir`, `Ophir 2`). Tab `×` cancels that session only.
-- Typed lines are MeshCore CLI (`ota stats`, `get name`, …) with flood before
+- Typed lines are MeshCore CLI (`ota status`, `get name`, …) with flood before
   each send. Login runs on the first send if that unit is not already authed
   (same `--attempts` cap as GET/SET).
 - That command jumps to the front of the radio until heard, cancelled, or
-  it times out. **Cancel** is per tab and starts the next staged line.
-  A timeout or hard fail parks the line (no auto-retry, queue stays):
-  **Retry** sits next to the stopped error, including cancelled or
-  timeout rows already in history. Retry is hidden while that line is
-  still sending. **Continue** (only if the queue is nonempty) archives
-  it and starts the next staged cmd. Further lines stage behind the
-  current or parked line and can be edited or deleted.
+  `--attempts` timeouts (default 10, same unit, no rotate). **Cancel** is
+  per tab and starts the next staged line. After the last timeout or a
+  hard fail, the line parks (queue stays): **Retry** sits next to the
+  stopped error, including cancelled or timeout rows already in history.
+  Retry is hidden while that line is still sending. **Continue** (only if
+  the queue is nonempty) archives it and starts the next staged cmd.
+  Further lines stage behind the current or parked line and can be edited
+  or deleted.
 - An in-flight poll/apply wait finishes, then the console head runs.
 - Refresh / Pull / Push stay available. They sit behind queued console
   sends on the same unit.
-- `--web-only` can open tabs; send returns 409 until a companion worker is
-  live.
+- `--web-only` can open tabs; send returns 409 (no radio). A normal
+  `fleet` start accepts console send during companion handshake and
+  holds the line until the radio is up.
 - URL: `?console=1` reopens the modal (`&ctab=` selects a tab). `?unit=`
   is only the detail card. Clicking a list row or map pin hides the
   console and opens that unit's card.
