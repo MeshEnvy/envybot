@@ -101,7 +101,7 @@ class HealthTests(unittest.TestCase):
         )
         cfg = next(i for i in health["issues"] if i["name"] == "Config")
         self.assertEqual(cfg["status"], "bad")
-        self.assertIn("advertising", cfg["reason"] or "")
+        self.assertIn("Last pull", cfg["reason"] or "")
 
     def test_reachability_never(self) -> None:
         health = compute_health(

@@ -505,12 +505,30 @@ class DriftStateTests(unittest.TestCase):
             "due",
         )
 
-    def test_heard_name_on_private_is_leak(self) -> None:
-        self.assertEqual(
+    def test_heard_name_on_private_is_not_leak(self) -> None:
+        self.assertIsNone(
             drift_state(
                 {"name": "Patrick"},
                 profile_ok=True,
                 seen={"name_heard": "Ophir Hill"},
+            )
+        )
+
+    def test_heard_gps_on_private_is_not_leak(self) -> None:
+        self.assertIsNone(
+            drift_state(
+                {"name": "Patrick"},
+                profile_ok=True,
+                seen={"lat_heard": 39.5, "lon_heard": -119.8, "gps_at": 10},
+            )
+        )
+
+    def test_heard_advert_on_private_is_leak(self) -> None:
+        self.assertEqual(
+            drift_state(
+                {"name": "Patrick"},
+                profile_ok=True,
+                seen={"advert_interval_min": 120, "advert_at": 10},
             ),
             "leak",
         )
@@ -543,7 +561,28 @@ class DriftStateTests(unittest.TestCase):
             drift_state(
                 {"name": "Patrick"},
                 profile_ok=False,
-                seen={"lat_heard": 39.5, "lon_heard": -119.8},
+                seen={"flood_advert_interval_h": 47, "flood_advert_at": 10},
+            ),
+            "leak",
+        )
+
+    def test_stale_flood_before_apply_is_not_leak(self) -> None:
+        self.assertIsNone(
+            drift_state(
+                {"name": "Patrick"},
+                profile_ok=True,
+                seen={"flood_advert_interval_h": 47, "flood_advert_at": 10},
+                apply_at={"flood": 20},
+            )
+        )
+
+    def test_flood_pull_after_apply_is_leak(self) -> None:
+        self.assertEqual(
+            drift_state(
+                {"name": "Patrick"},
+                profile_ok=True,
+                seen={"flood_advert_interval_h": 47, "flood_advert_at": 30},
+                apply_at={"flood": 20},
             ),
             "leak",
         )

@@ -674,6 +674,57 @@ def last_ok_apply(conn: sqlite3.Connection, unit: str, field: str) -> str | None
     return None if row is None else row["desired"]
 
 
+def last_ok_apply_times(
+    conn: sqlite3.Connection, unit: str | None = None
+) -> dict[str, dict[str, int]]:
+    """Latest ok apply ts per unit, per field."""
+    sql = "SELECT unit, field, MAX(ts) AS ts FROM applies WHERE ok = 1"
+    args: tuple[Any, ...] = ()
+    if unit is not None:
+        sql += " AND unit = ?"
+        args = (unit,)
+    sql += " GROUP BY unit, field"
+    out: dict[str, dict[str, int]] = {}
+    for row in conn.execute(sql, args):
+        out.setdefault(str(row["unit"]), {})[str(row["field"])] = int(row["ts"])
+    return out
+
+
+_IDENTITY_HEARD: dict[str, tuple[str, str, type]] = {
+    "name": ("name_heard", "name_at", str),
+    "lat": ("lat_heard", "gps_at", float),
+    "lon": ("lon_heard", "gps_at", float),
+    "advert": ("advert_interval_min", "advert_at", int),
+    "flood": ("flood_advert_interval_h", "flood_advert_at", int),
+}
+
+
+def stamp_apply(
+    conn: sqlite3.Connection,
+    *,
+    unit: str,
+    field: str,
+    desired: str | None,
+    ok: bool = True,
+    ts: int | None = None,
+) -> None:
+    """Record an apply stamp and, for identity fields, refresh last-seen."""
+    insert_apply(conn, unit=unit, field=field, desired=desired, ok=ok, ts=ts)
+    if not ok or desired is None:
+        return
+    spec = _IDENTITY_HEARD.get(field)
+    if spec is None:
+        return
+    col, at, caster = spec
+    try:
+        val = caster(desired)
+    except (TypeError, ValueError):
+        return
+    now = ts or int(time.time())
+    _upsert_last_seen(conn, unit, {col: val, at: now, "updated_at": now})
+    conn.commit()
+
+
 def clear_apply_stamps(
     conn: sqlite3.Connection,
     unit: str,

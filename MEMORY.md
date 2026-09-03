@@ -81,8 +81,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   A SET timeout still retries. Onboard stamps those after USB SET + ACL
   (private only). Legacy
   `profile` ok row still counts as fully synced. `--force` is Pull plus Push.
-  UI ``due`` is that stamp (apply needed). ``leak`` is heard identity on a
-  private node (name/GPS/advert), not a stale stamp. Poll default: status/telemetry every 1h
+  UI ``due`` is that stamp (apply needed). ``leak`` is a later pull that
+  still shows advert or flood advert on. Name or GPS is not an advert.
+  A last-seen interval older than the apply stamp is ignored. Poll default: status/telemetry every 1h
   (`--min-interval`); neighbors
   stay 24h (`discover.neighbors` + wait + GET; UI drops rows older
   than 7d). Long-running fleet re-checks due groups about every 60s
@@ -181,4 +182,4 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-02 (envybot seed USB mota relay)
+Last updated: 2026-09-02 (leak is last-pull advert interval only)

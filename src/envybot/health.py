@@ -113,6 +113,7 @@ def compute_health(
     status_rows: list[dict[str, Any]],
     reboot_count: int | None = None,
     paused: bool = False,
+    drift_detail: str | None = None,
 ) -> dict[str, Any]:
     """Return grade + component checks for a fleet unit."""
     checks: list[dict[str, Any]] = []
@@ -325,8 +326,8 @@ def compute_health(
             _check(
                 "Config",
                 "bad",
-                "Private node is advertising name, GPS, or adverts",
-                fix="Push the private mask (Repeater, 0,0, advert off). Pull first if last-seen is stale.",
+                drift_detail or "Last pull: advert interval is on",
+                fix="Push sets advert and flood advert to 0. Pull again to confirm. A leftover name or GPS is not an advert.",
             )
         )
     elif drift == "due":

@@ -12,6 +12,7 @@ from envybot.health import compute_health
 from envybot.history import (
     all_last_seen,
     interval_traffic,
+    last_ok_apply_times,
     latest_neighbors,
     latest_ota,
     latest_status,
@@ -22,7 +23,6 @@ from envybot.history import (
 from envybot.ota_parse import ota_badge
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
-    MASK_NAME,
     is_decommissioned,
     is_meshcore_platform,
     is_paused,
@@ -256,20 +256,74 @@ def _heard_nonzero(value: Any) -> bool:
         return False
 
 
-def heard_identity_leak(node: dict[str, Any], seen: dict[str, Any] | None) -> bool:
-    """True when a private radio is advertising name, GPS, or adverts."""
-    if is_public(node) or not seen:
+def _heard_after_apply(
+    seen: dict[str, Any],
+    *,
+    value_key: str,
+    at_key: str,
+    apply_field: str,
+    apply_at: dict[str, int] | None,
+) -> bool:
+    if not _heard_nonzero(seen.get(value_key)):
         return False
-    name = str(seen.get("name_heard") or "").strip()
-    if name and name.casefold() != MASK_NAME.casefold():
+    heard_at = seen.get(at_key)
+    if heard_at is None or heard_at == "":
+        return False
+    stamped = (apply_at or {}).get(apply_field)
+    if stamped is None:
         return True
-    if _heard_nonzero(seen.get("lat_heard")) or _heard_nonzero(seen.get("lon_heard")):
-        return True
-    if _heard_nonzero(seen.get("advert_interval_min")):
-        return True
-    if _heard_nonzero(seen.get("flood_advert_interval_h")):
-        return True
-    return False
+    try:
+        return int(heard_at) >= int(stamped)
+    except (TypeError, ValueError):
+        return False
+
+
+def identity_leak_parts(
+    node: dict[str, Any],
+    seen: dict[str, Any] | None,
+    apply_at: dict[str, int] | None = None,
+) -> list[str]:
+    """Last-pull advert intervals that are still current vs apply stamps."""
+    if is_public(node) or not seen:
+        return []
+    parts: list[str] = []
+    if _heard_after_apply(
+        seen,
+        value_key="advert_interval_min",
+        at_key="advert_at",
+        apply_field="advert",
+        apply_at=apply_at,
+    ):
+        parts.append(f"advert {int(float(seen['advert_interval_min']))} min")
+    if _heard_after_apply(
+        seen,
+        value_key="flood_advert_interval_h",
+        at_key="flood_advert_at",
+        apply_field="flood",
+        apply_at=apply_at,
+    ):
+        parts.append(f"flood advert {int(float(seen['flood_advert_interval_h']))} h")
+    return parts
+
+
+def identity_leak_reason(
+    node: dict[str, Any],
+    seen: dict[str, Any] | None,
+    apply_at: dict[str, int] | None = None,
+) -> str | None:
+    parts = identity_leak_parts(node, seen, apply_at)
+    if not parts:
+        return None
+    return "Last pull: " + ", ".join(parts)
+
+
+def heard_identity_leak(
+    node: dict[str, Any],
+    seen: dict[str, Any] | None,
+    apply_at: dict[str, int] | None = None,
+) -> bool:
+    """True when a later pull still shows a nonzero advert interval."""
+    return bool(identity_leak_parts(node, seen, apply_at))
 
 
 def drift_state(
@@ -277,9 +331,10 @@ def drift_state(
     *,
     profile_ok: bool,
     seen: dict[str, Any] | None = None,
+    apply_at: dict[str, int] | None = None,
 ) -> str | None:
-    """``leak`` = private node heard exposing identity. ``due`` = stamp stale."""
-    if heard_identity_leak(node, seen):
+    """``leak`` = last pull still has advert on. ``due`` = stamp stale."""
+    if heard_identity_leak(node, seen, apply_at):
         return "leak"
     if not profile_ok:
         return "due"
@@ -303,6 +358,7 @@ def sanitize_unit(
     traffic_window_6h: dict[str, Any] | None = None,
     profile_ok: bool = False,
     ota_raw: dict[str, Any] | None = None,
+    apply_at: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     normalize_fleet_node(node)
     heard = last_heard(node, seen)
@@ -358,7 +414,8 @@ def sanitize_unit(
         "path_hash_mode": node.get("path_hash_mode"),
         "dutycycle": node.get("dutycycle"),
         "node_clock": (seen or {}).get("node_clock"),
-        "drift": drift_state(node, profile_ok=profile_ok, seen=seen),
+        "drift": drift_state(node, profile_ok=profile_ok, seen=seen, apply_at=apply_at),
+        "drift_detail": identity_leak_reason(node, seen, apply_at),
     }
     if session:
         unit["session"] = session
@@ -395,11 +452,13 @@ def build_fleet_snapshot(
     interval_map: dict[str, dict[str, Any]] = {}
     window_map: dict[str, dict[str, Any]] = {}
     status_rows_map: dict[str, list[dict[str, Any]]] = {}
+    apply_at_map: dict[str, dict[str, int]] = {}
     conn = None
     try:
         conn = open_history(book_dir)
         if seen_map is None:
             seen_map = all_last_seen(conn)
+        apply_at_map = last_ok_apply_times(conn)
         for key in nodes:
             nbs = latest_neighbors(conn, key)
             if nbs is not None:
@@ -449,11 +508,13 @@ def build_fleet_snapshot(
                 traffic_window_6h=window_map.get(key),
                 profile_ok=profile_ok,
                 ota_raw=ota_map.get(key),
+                apply_at=apply_at_map.get(key),
             )
             units[key]["health"] = compute_health(
                 freshness=units[key]["freshness"],
                 session=states.get(key),
                 drift=units[key].get("drift"),
+                drift_detail=units[key].get("drift_detail"),
                 status=units[key].get("status"),
                 telemetry=units[key].get("telemetry"),
                 traffic_interval=interval_map.get(key),

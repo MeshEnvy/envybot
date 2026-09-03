@@ -72,9 +72,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
-- Fleet drift `due` is a stale apply stamp. `leak` is a private node
-  heard advertising name, GPS, or adverts. Stamp-due is no longer called
-  leak.
+- Fleet drift `due` is a stale apply stamp. `leak` is a later pull that
+  still shows advert or flood advert on. Leftover name or GPS is not an
+  advert. A last-seen interval older than the apply stamp is ignored.
 
 - `trust` no longer adds or updates the stock MeshCore Public channel.
   A `public` row in `channels.yaml` is ignored.

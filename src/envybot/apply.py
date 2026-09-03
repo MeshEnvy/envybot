@@ -8,7 +8,13 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Literal
 
-from envybot.history import clear_apply_stamps, get_last_seen, insert_apply, last_ok_apply
+from envybot.history import (
+    clear_apply_stamps,
+    get_last_seen,
+    insert_apply,
+    last_ok_apply,
+    stamp_apply,
+)
 from envybot.keys_doc import (
     UnknownPerson,
     grants_payload,
@@ -307,7 +313,7 @@ def stamp_profile_after_onboard(
         return None
     applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=unit)
     for field, des in applicable.items():
-        insert_apply(conn, unit=unit, field=field, desired=des, ok=True)
+        stamp_apply(conn, unit=unit, field=field, desired=des, ok=True)
     return profile_id(node, sites, doc=doc, keys=keys, key=unit)
 
 
@@ -446,7 +452,7 @@ async def apply_one(
     def stamp(field: str) -> None:
         des = applicable.get(field)
         if des is not None:
-            insert_apply(conn, unit=target.key, field=field, desired=des, ok=True)
+            stamp_apply(conn, unit=target.key, field=field, desired=des, ok=True)
 
     if not due:
         log.step(f"profile OK ({profile_id(node, sites, doc=doc, keys=keys, key=target.key)})")

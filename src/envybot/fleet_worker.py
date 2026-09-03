@@ -25,7 +25,7 @@ from envybot.apply import (
     _ensure_guest_password,
     _set_cli,
 )
-from envybot.history import get_last_seen, insert_apply, insert_command, record_poll
+from envybot.history import get_last_seen, insert_command, record_poll, stamp_apply
 from envybot.jobs import INVENTORY_GROUPS, JobOutcome, RadioJob, UnitQueue
 from envybot.keys_doc import UnknownPerson, parse_serial_acl, resolve_node_acl
 from envybot.nodes_doc import MASK_NAME, is_public
@@ -1123,7 +1123,7 @@ async def _execute_apply(
     def stamp(f: str) -> None:
         des = applicable.get(f)
         if des is not None:
-            insert_apply(ctx.conn, unit=target.key, field=f, desired=des, ok=True)
+            stamp_apply(ctx.conn, unit=target.key, field=f, desired=des, ok=True)
 
     def due_fields() -> frozenset[str]:
         return frozenset(

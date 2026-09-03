@@ -49,8 +49,9 @@ status/telemetry is ≥1h stale, neighbors ≥24h, or apply is due. UI
 freshness stays 24h.
 
 Default runs never GET sticky identity fields. UI ``due`` follows the
-apply profile stamp. ``leak`` is a private node whose last-seen name,
-GPS, or advert interval is unmasked (Pull / ``--group``).
+apply profile stamp. ``leak`` is a later pull that still shows advert
+or flood advert on. Leftover name or GPS is not an advert. A last-seen
+interval older than the apply stamp is ignored.
 
 `paused: true` on a node skips auto GET and apply. The unit stays on the
 map. **Refresh**, **Pull**, and **Push** still work from the UI. Unpause
@@ -229,8 +230,9 @@ device `0,0`. Pin color is last-heard age (green now, amber at 12h, red at
 24h+; never-heard is gray). Labels are `Site (3h)` when bound, else book
 alias, else unit id. Age ticks live from `last_heard`. Detail shows unit id and site name, editable **alias** and **notes**
 (when bag/bench, alias becomes the list title), a `public` toggle, and drift
-from the apply stamp (`due` when the profile is stale) or heard identity
-(`leak` when a private radio is advertising name, GPS, or adverts). List cards show the same primary label with unit id
+from the apply stamp (`due` when the profile is stale) or a later pull
+that still shows advert on (`leak`). Leftover name or GPS is not an advert.
+List cards show the same primary label with unit id
 as secondary when it differs. While the companion worker is live, **Refresh** on a
 unit pulls live telemetry now; **Pull** also GETs fw/name/GPS/advert/acl;
 **Push** force-SETs the book profile (overrides `--skip`, `paused`, and
