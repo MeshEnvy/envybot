@@ -34,6 +34,7 @@ from envybot.jobs import (
 )
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
+    is_flood,
     is_paused,
     load_nodes_doc,
     load_sites_for_book,
@@ -665,6 +666,7 @@ async def run(args: argparse.Namespace) -> int:
         if not await session.ensure_companion_connected(log=log):
             return JobOutcome.TIMEOUT, "companion disconnected"
         sync_paused(nodes_path, nodes)
+        uq.target.flood = is_flood(nodes.get(uq.target.key))
         if (
             is_paused(nodes.get(uq.target.key))
             and uq.target.key not in manual_keys

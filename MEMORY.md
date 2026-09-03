@@ -53,6 +53,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   edits. Blank platform = meshcore.
 - `paused: true` stays in the UI. Fleet skips auto poll/apply. Refresh,
   Pull, and Push still hit the radio. Trust/cmd ignore the flag.
+- `flood: true` forces flood path on bag/bench (default zero-hop direct).
+  Site-bound already floods. Detail **Flood** toggle next to Public/Pause.
 - `decommissioned:` (epoch) rows stay in `nodes.yaml` for the number
   but envybot ignores them: no UI, poll, apply, trust, cmd, or onboard.
 - `fleet` and `trust` poll every pollable MeshCore unit, including
@@ -111,7 +113,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   as they land (same beat as `login OK`).
   Every mesh send prepares companion route first: site-bound units flood
   (`mesh_audit.path` = ``flood``); unbound bag/bench use zero-hop direct
-  (``direct``). Hop strings on deployed sends indicate a firmware leak.
+  (``direct``) unless `flood: true`. Hop strings on deployed sends
+  indicate a firmware leak.
   Neighbor discover wait (default 12s) is a background timer, not radio hold.
   Manual Refresh/Pull/Push replace that unit's remaining jobs except a
   queued console send (stays in front). A click mid-GET supersedes the
@@ -161,6 +164,7 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
   **Pause** (detail checkbox) writes `paused: true` and drops the unit from
   auto poll/apply on the next job boundary (in-flight exchange finishes).
   Sidebar fades paused rows and shows a paused badge.
+  **Flood** writes `flood: true` (bench flood path; next send).
   Units carry `health` (worst-of component checks) and interval traffic
   deltas. Detail sparklines use native sqlite series; poll history is four
   always-open sections (status, telemetry, neighbors, ACL), 10 rows each
@@ -189,4 +193,4 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-03 (fleet duty cycle 50%; seeder 10%)
+Last updated: 2026-09-03 (bench flood toggle)

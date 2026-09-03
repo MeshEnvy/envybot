@@ -58,6 +58,11 @@ map. **Refresh**, **Pull**, and **Push** still work from the UI. Unpause
 (or delete the key) returns the unit to the next fleet run. Mid-run pause
 takes effect at the next job boundary. `trust` / `cmd` do not honor pause.
 
+`flood: true` forces flood path on bag/bench. Those units default to
+zero-hop direct. Site-bound units already flood (the stamp is a no-op
+until unbound). The detail **Flood** toggle writes the key. Mid-run
+change takes effect on the next mesh send.
+
 ## Job queue
 
 Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
@@ -80,7 +85,8 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
 - `--attempts` (default 10) caps retries **per command** at the scheduler.
   Logs show scheduler `N/max` (e.g. `8/10`), not inner one-shot `N/1`.
   Every mesh send prepares companion route first: site-bound units flood,
-  unbound bag/bench zero-hop direct (`mesh_audit.path` = ``direct``).
+  unbound bag/bench zero-hop direct (`mesh_audit.path` = ``direct``)
+  unless `flood: true`.
   `--retry-delay` (default 60s) parks auto poll/apply units after a timeout
   before retry; `--miss-cooldown` (default 3600s) skips re-seed after max
   attempts. Console and manual Refresh/Pull/Push are exempt; manual UI also
@@ -237,7 +243,8 @@ Map pins use **book** position (`sites.yaml` loc for the bound unit), never
 device `0,0`. Pin color is last-heard age (green now, amber at 12h, red at
 24h+; never-heard is gray). Labels are `Site (3h)` when bound, else book
 alias, else unit id. Age ticks live from `last_heard`. Detail shows unit id and site name, editable **alias** and **notes**
-(when bag/bench, alias becomes the list title), a `public` toggle, and drift
+(when bag/bench, alias becomes the list title), `public` / `pause` /
+`flood` toggles, and drift
 from the apply stamp (`due` when the profile is stale) or a later pull
 that still shows advert on (`leak`). Leftover name or GPS is not an advert.
 List cards show the same primary label with unit id
@@ -245,6 +252,7 @@ as secondary when it differs. While the companion worker is live, **Refresh** on
 unit pulls live telemetry now; **Pull** also GETs fw/name/GPS/advert/acl;
 **Push** force-SETs the book profile (overrides `--skip`, `paused`, and
 up-to-date skips). Pause is a checkbox on the detail card
-(`paused: true`). Sidebar rows fade and badge as paused. Rows with
+(`paused: true`). Flood (`flood: true`) makes bench units use flood
+instead of direct. Sidebar rows fade and badge as paused. Rows with
 `decommissioned:` or `firmware_platform: meshtastic` are omitted
 entirely.

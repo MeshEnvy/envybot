@@ -756,12 +756,25 @@ body {
   background: #f0b86e;
 }
 
+.book-toggle-flood input:checked + .switch {
+  background: #1a3d34;
+  border-color: #4ecf9e;
+}
+
+.book-toggle-flood input:checked + .switch::after {
+  background: #4ecf9e;
+}
+
 .book-toggle input:focus-visible + .switch {
   box-shadow: 0 0 0 2px rgba(78, 161, 255, 0.25);
 }
 
 .book-toggle-pause input:focus-visible + .switch {
   box-shadow: 0 0 0 2px rgba(240, 184, 110, 0.25);
+}
+
+.book-toggle-flood input:focus-visible + .switch {
+  box-shadow: 0 0 0 2px rgba(78, 207, 158, 0.25);
 }
 
 @keyframes pulse {

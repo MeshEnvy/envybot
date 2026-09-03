@@ -14,10 +14,11 @@ from envybot.radio import (
     log_contact_path,
     PollLog,
     prepare_send_route,
+    uses_flood_route,
 )
 
 
-def _target(*, site: str | None) -> RouterTarget:
+def _target(*, site: str | None, flood: bool = False) -> RouterTarget:
     return RouterTarget(
         key="me0003",
         unit_id="ME0003",
@@ -25,6 +26,7 @@ def _target(*, site: str | None) -> RouterTarget:
         site=site,
         pubkey_hex="b2f84713d830" + "0" * 52,
         admin_password="pw",
+        flood=flood,
     )
 
 
@@ -151,6 +153,25 @@ class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
         client.commands.update_contact.assert_awaited_once()
         client.commands.reset_path.assert_not_awaited()
         self.assertEqual(contact["out_path_len"], 0)
+
+    async def test_bench_flood_flag_resets_flood(self) -> None:
+        contact = {
+            "out_path_len": 0,
+            "out_path_hash_mode": 0,
+            "out_path": "",
+        }
+        client = MagicMock()
+        client.get_contact_by_key_prefix.return_value = contact
+        ok = MagicMock(type=EventType.OK)
+        client.commands.reset_path = AsyncMock(return_value=ok)
+        client.commands.update_contact = AsyncMock()
+        target = _target(site=None, flood=True)
+        self.assertTrue(uses_flood_route(target))
+        await prepare_send_route(client, target, log=PollLog())
+        client.commands.reset_path.assert_awaited_once()
+        client.commands.update_contact.assert_not_awaited()
+        self.assertEqual(contact["out_path_len"], -1)
+        self.assertEqual(contact["out_path"], "")
 
 
 if __name__ == "__main__":

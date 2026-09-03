@@ -19,6 +19,7 @@ from envybot.nodes_doc import (
     PLACEHOLDER_PW,
     UNIT_NUM_RE,
     is_decommissioned,
+    is_flood,
     is_meshcore_platform,
     load_nodes_doc,
     normalize_fleet_node,
@@ -758,6 +759,7 @@ class RouterTarget:
     pubkey_hex: str
     admin_password: str
     due_groups: list[str] = field(default_factory=list)
+    flood: bool = False
 
 
 def poll_staleness_key(target: RouterTarget) -> tuple[int, int, str]:
@@ -847,6 +849,7 @@ def load_targets(
                 site=site,
                 pubkey_hex=pubkey.strip().lower(),
                 admin_password=admin_pw,
+                flood=is_flood(node),
             )
         )
     out.sort(key=poll_staleness_key)
@@ -1580,8 +1583,13 @@ def contact_display_name(target: RouterTarget) -> str:
 
 
 def is_bench_target(target: RouterTarget) -> bool:
-    """Unbound bag/bench units (no sites.yaml ``node:`` bind) use zero-hop direct."""
+    """Unbound bag/bench units (no sites.yaml ``node:`` bind)."""
     return target.site is None
+
+
+def uses_flood_route(target: RouterTarget) -> bool:
+    """Site-bound units flood. Bench is zero-hop direct unless ``flood: true``."""
+    return not is_bench_target(target) or bool(target.flood)
 
 
 def contact_out_path_label(contact: dict[str, Any] | None) -> str | None:
@@ -1694,9 +1702,9 @@ def _audit_finish(
 
 
 def _default_out_path_fields(target: RouterTarget) -> dict[str, Any]:
-    if is_bench_target(target):
-        return {"out_path_len": 0, "out_path_hash_mode": 0, "out_path": ""}
-    return {"out_path_len": -1, "out_path_hash_mode": -1, "out_path": ""}
+    if uses_flood_route(target):
+        return {"out_path_len": -1, "out_path_hash_mode": -1, "out_path": ""}
+    return {"out_path_len": 0, "out_path_hash_mode": 0, "out_path": ""}
 
 
 def contact_stub_for_target(target: RouterTarget) -> dict[str, Any]:
@@ -1984,7 +1992,7 @@ async def prepare_send_route(
     log = log or PollLog()
     prefix = target.pubkey_hex[:12]
     contact = client.get_contact_by_key_prefix(prefix)
-    if is_bench_target(target):
+    if not uses_flood_route(target):
         if not isinstance(contact, dict):
             log.detail("prepare_route: no contact for bench direct")
             return

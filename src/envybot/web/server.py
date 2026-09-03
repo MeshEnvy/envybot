@@ -708,6 +708,11 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
             node["paused"] = True
         else:
             node.pop("paused", None)
+    if "flood" in body:
+        if body["flood"] is True:
+            node["flood"] = True
+        else:
+            node.pop("flood", None)
     if "alias" in body:
         alias = body["alias"]
         if isinstance(alias, str) and alias.strip():

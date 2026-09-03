@@ -24,6 +24,7 @@ from envybot.ota_parse import ota_badge
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
     is_decommissioned,
+    is_flood,
     is_meshcore_platform,
     is_paused,
     is_public,
@@ -386,6 +387,7 @@ def sanitize_unit(
         "alias": node_alias(node),
         "public": is_public(node),
         "paused": is_paused(node),
+        "flood": is_flood(node),
         "hardware": node.get("hardware"),
         "notes": node.get("notes"),
         "firmware_version": (seen or {}).get("firmware_version"),

@@ -241,6 +241,16 @@ class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
         body = await resp.json()
         self.assertFalse(body.get("paused"))
 
+    async def test_post_unit_flood(self) -> None:
+        resp = await self.client.post("/api/unit/me0003", json={"flood": True})
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertTrue(body.get("flood"))
+        resp = await self.client.post("/api/unit/me0003", json={"flood": False})
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertFalse(body.get("flood"))
+
     async def test_post_unit_alias_and_notes(self) -> None:
         resp = await self.client.post(
             "/api/unit/me0003",

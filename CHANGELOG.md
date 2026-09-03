@@ -19,9 +19,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 - Fleet/trust/cmd mesh sends: **site-bound** units still flood; **unbound**
   bag/bench units use zero-hop direct (`path: direct` in logs and
-  `mesh_audit.path`). No learned multi-hop paths.
+  `mesh_audit.path`) unless `flood: true`. No learned multi-hop paths.
 
 ### Added
+
+- Fleet detail **Flood** toggle (`flood: true`) so a benched unit uses
+  flood instead of zero-hop direct. Next to Public and Pause.
 
 - `envybot seed` — USB `.mota` folder relay. Launch sends `doctor gc`
   then `set dutycycle 10`, `log tail on`, and `ota folder on`.

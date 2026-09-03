@@ -1202,6 +1202,19 @@ const App = {
         console.error(err)
       }
     }
+
+    /** @param {Record<string, unknown>} unit @param {Event} [ev] */
+    async function toggleFlood(unit, ev) {
+      ev?.stopPropagation?.()
+      const next = ev && ev.target && 'checked' in ev.target ? !!ev.target.checked : !unit.flood
+      try {
+        const updated = await patchUnit(String(unit.key), { flood: next })
+        applyUnit(updated)
+        pushMap()
+      } catch (err) {
+        console.error(err)
+      }
+    }
     function pushMap() {
       mapCtrl?.sync(fleet, selectedKey.value, fleet.now)
     }
@@ -1343,6 +1356,7 @@ const App = {
       unitTitle,
       togglePublic,
       togglePaused,
+      toggleFlood,
       runManualJob,
       otaLocalLabel,
       otaHwLabel,
@@ -1480,6 +1494,14 @@ const App = {
               <input type="checkbox" :checked="!!selectedUnit.paused" @change="togglePaused(selectedUnit, $event)" />
               <span class="switch" aria-hidden="true"></span>
               Pause
+            </label>
+            <label
+              class="book-toggle book-toggle-flood"
+              title="Bench uses flood instead of zero-hop direct. Site-bound already floods."
+            >
+              <input type="checkbox" :checked="!!selectedUnit.flood" @change="toggleFlood(selectedUnit, $event)" />
+              <span class="switch" aria-hidden="true"></span>
+              Flood
             </label>
             <div v-if="manualAccepting" class="manual-actions">
               <button

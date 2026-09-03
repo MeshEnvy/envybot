@@ -141,3 +141,31 @@ class LoadTargetsTests(unittest.TestCase):
                 yaml.dump({"sites": {"ophir": {"node": "me0003", "loc": [39.3, -119.6]}}}, fh)
             targets = load_targets(nodes, deployed_only=False, include=None)
             self.assertEqual([t.key for t in targets], ["me0003"])
+
+    def test_includes_flood(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes = book / "nodes.yaml"
+            sites = book / "sites.yaml"
+            yaml = YAML()
+            with nodes.open("w") as fh:
+                yaml.dump(
+                    {
+                        "nodes": {
+                            "me0003": {
+                                "unit_id": "ME0003",
+                                "firmware_platform": "meshcore",
+                                "identity_pubkey": "b" * 64,
+                                "admin_password": "AdminTwoStrong2",
+                                "flood": True,
+                            },
+                        }
+                    },
+                    fh,
+                )
+            with sites.open("w") as fh:
+                yaml.dump({"sites": {}}, fh)
+            targets = load_targets(nodes, deployed_only=False, include=None)
+            self.assertEqual([t.key for t in targets], ["me0003"])
+            self.assertTrue(targets[0].flood)
+            self.assertIsNone(targets[0].site)

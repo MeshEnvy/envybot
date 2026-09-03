@@ -9,6 +9,7 @@ from pathlib import Path
 from envybot.nodes_doc import (
     MASK_NAME,
     is_decommissioned,
+    is_flood,
     is_paused,
     is_public,
     migrate_desired,
@@ -155,6 +156,37 @@ class PausedTests(unittest.TestCase):
             disk = load_nodes_doc(path)
             self.assertTrue(is_paused(disk["nodes"]["me0001"]))
             self.assertEqual(disk["nodes"]["me0001"]["guest_password"], "rolled")
+
+
+class FloodTests(unittest.TestCase):
+    def test_blank_is_direct(self) -> None:
+        self.assertFalse(is_flood(None))
+        self.assertFalse(is_flood({}))
+        self.assertFalse(is_flood({"flood": False}))
+        self.assertFalse(is_flood({"flood": None}))
+
+    def test_true_is_flood(self) -> None:
+        self.assertTrue(is_flood({"flood": True}))
+
+    def test_sync_flood_from_disk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "nodes.yaml"
+            disk = {
+                "next_unit": 3,
+                "nodes": {
+                    "me0001": {"unit_id": "ME0001", "flood": True},
+                    "me0002": {"unit_id": "ME0002"},
+                },
+            }
+            write_nodes_doc(path, disk)
+            mem = {
+                "me0001": {"unit_id": "ME0001", "guest_password": "new"},
+                "me0002": {"unit_id": "ME0002", "flood": True},
+            }
+            sync_paused(path, mem)
+            self.assertTrue(is_flood(mem["me0001"]))
+            self.assertEqual(mem["me0001"]["guest_password"], "new")
+            self.assertFalse(is_flood(mem["me0002"]))
 
 
 class DecommissionedTests(unittest.TestCase):
