@@ -8,6 +8,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- `envybot seed` — USB `.mota` folder relay. Launch sends `doctor gc`
+  then `set dutycycle 10`, `log tail on`, and `ota folder on`.
+
 - Fleet header **Console**: tabbed modal (not the unit card). Multiple
   tabs, including separate sessions to the same unit. Opening a tab does
   not take the radio. Typed lines jump that unit's queue and retry

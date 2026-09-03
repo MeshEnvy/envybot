@@ -8,6 +8,7 @@ export ENVYBOT_HOME=/path/to/book
 ./envybot fleet
 ./envybot fleet --web-only   # browse book without radio
 ./envybot onboard
+./envybot seed build/otatest
 ```
 
 Book is a private directory with `nodes.yaml`. Point with `--book` or

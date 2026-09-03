@@ -45,11 +45,18 @@ def cmd_cmd(book: Path, argv: list[str]) -> int:
     return cmd.main(_inject_flag(argv, "--nodes", str(nodes_path(book))))
 
 
+def cmd_seed(book: Path, argv: list[str]) -> int:
+    from envybot.commands import seed
+
+    return seed.main(argv)
+
+
 COMMANDS: dict[str, tuple[str, Command]] = {
     "fleet": ("Localhost fleet manager (map, poll, apply)", cmd_fleet),
     "trust": ("Companion contacts and keys.yaml ACL grant", cmd_trust),
     "onboard": ("USB-serial onboard a repeater (idempotent)", cmd_onboard),
     "cmd": ("Run remote MeshCore CLI on one unit", cmd_cmd),
+    "seed": ("USB-serial OTA seeder (.mota folder relay)", cmd_seed),
 }
 
 

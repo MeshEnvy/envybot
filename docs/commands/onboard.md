@@ -44,7 +44,7 @@ Idempotent on identity, creds, radio, name, and GPS:
 ## Radio
 
 The **DUT** on USB. Not the BLE companion used by [`fleet`](fleet.md).
-Not the USB OTA seeder used by `motatool serve`.
+Not the USB OTA seeder used by [`seed`](seed.md).
 
 ## Flags
 

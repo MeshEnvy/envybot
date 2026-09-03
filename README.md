@@ -15,6 +15,7 @@ export ENVYBOT_HOME=/path/to/book
 ./envybot trust
 ./envybot cmd me0016 ver
 ./envybot onboard
+./envybot seed build/otatest --only 'from-0.1.0-to-0.1.1*'
 ```
 
 ## Commands
@@ -25,6 +26,7 @@ export ENVYBOT_HOME=/path/to/book
 | [`trust`](docs/commands/trust.md) | [docs/commands/trust.md](docs/commands/trust.md) | Companion contacts, `channels.yaml` grants, plus `keys.yaml` / fleet ACL grant. |
 | [`cmd`](docs/commands/cmd.md) | [docs/commands/cmd.md](docs/commands/cmd.md) | Run remote MeshCore CLI on one unit (one-shot or REPL). |
 | [`onboard`](docs/commands/onboard.md) | [docs/commands/onboard.md](docs/commands/onboard.md) | USB text-CLI onboard of a repeater under test. |
+| [`seed`](docs/commands/seed.md) | [docs/commands/seed.md](docs/commands/seed.md) | USB OTA seeder — relay a folder of `.mota` to a repeater. |
 
 Global flags (before the command): `--book DIR`.
 

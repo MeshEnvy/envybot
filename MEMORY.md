@@ -8,7 +8,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | Repo | [MeshEnvy/envybot](https://github.com/MeshEnvy/envybot) |
 | Version | 0.1.0 |
 | Tooling | `uv` + `pyproject.toml` |
-| Commands | `fleet`, `trust`, `cmd`, `onboard` |
+| Commands | `fleet`, `trust`, `cmd`, `onboard`, `seed` |
 | Book | `--book` / `ENVYBOT_HOME` / cwd with `nodes.yaml` (+ `keys.yaml`, `channels.yaml`) |
 
 ## Layout
@@ -35,6 +35,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/commands/trust.py` | Contacts + channels + keys.yaml / ACL login |
 | `src/envybot/commands/cmd.py` | Remote MeshCore CLI |
 | `src/envybot/commands/onboard.py` | USB repeater text CLI onboard (`path.hash.mode` 1, `get acl` is `ACL:` dump). Stamps private `applies` so fleet is ready. |
+| `src/envybot/mota.py` | Light `.mota` parse for USB seeder catalog |
+| `src/envybot/seeder.py` | mota-seeder host (COUNT / DESCRIBE / READ); sets `dutycycle 10` on launch |
+| `src/envybot/commands/seed.py` | USB OTA folder relay (`envybot seed`) |
 | `src/envybot/web/` | Fleet UI (`:8787`); header **Console** (tabbed priority CLI) |
 
 ## Contract
@@ -125,7 +128,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 ## Desk radios
 
 BLE companion for `fleet` / `trust` / `cmd`. USB DUT for `onboard`.
-Separate USB OTA repeater for `motatool serve`.
+Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 
 - **Fleet UI:** `./envybot fleet` serves `127.0.0.1:8787` by default.
   Open card is `?unit=<key>` (`replaceState`; reload restores).
@@ -178,4 +181,4 @@ Separate USB OTA repeater for `motatool serve`.
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-02 (console copy transcript)
+Last updated: 2026-09-02 (envybot seed USB mota relay)
