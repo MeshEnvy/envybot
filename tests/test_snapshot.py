@@ -447,6 +447,75 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(interval["packets_recv"], 300)
             self.assertEqual(interval["recv_errors"], 60)
 
+    def test_sparks_in_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            yaml = YAML()
+            yaml.dump({"sites": {}}, sites_path.open("w", encoding="utf-8"))
+            yaml.dump(
+                {
+                    "next_unit": 2,
+                    "nodes": {
+                        "me0001": {
+                            "unit_id": "ME0001",
+                            "name": "Spark",
+                            "identity_pubkey": "a" * 64,
+                            "admin_password": "secret-admin",
+                            "guest_password": "secret-guest",
+                        },
+                    },
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            conn = open_history(book)
+            now = int(__import__("time").time())
+
+            class _Res:
+                polled_groups = frozenset({"status"})
+
+            _Res.status = {
+                "battery_mv": 4100,
+                "packets_recv": 100,
+                "packets_sent": 10,
+                "recv_errors": 5,
+                "uptime_secs": 100,
+            }
+            record_poll(conn, unit="me0001", res=_Res(), ts=now - 7200)
+            _Res.status = {
+                "battery_mv": 4050,
+                "packets_recv": 400,
+                "packets_sent": 20,
+                "recv_errors": 15,
+                "uptime_secs": 200,
+            }
+            record_poll(conn, unit="me0001", res=_Res(), ts=now - 3600)
+            conn.execute(
+                "INSERT INTO telemetry (unit, ts, type, value) VALUES (?, ?, ?, ?)",
+                ("me0001", now - 5400, "temperature", 22.5),
+            )
+            conn.execute(
+                "INSERT INTO telemetry (unit, ts, type, value) VALUES (?, ?, ?, ?)",
+                ("me0001", now - 1800, "temperature", 24.0),
+            )
+            conn.commit()
+            conn.close()
+            snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
+            sparks = snap["units"]["me0001"]["sparks"]
+            self.assertIn("battery_mv", sparks)
+            self.assertIn("temperature", sparks)
+            self.assertIn("recv_rate", sparks)
+            self.assertIn("unreadable_pct", sparks)
+            self.assertEqual(len(sparks["battery_mv"]), 2)
+            self.assertAlmostEqual(sparks["battery_mv"][0]["value"], 4.1)
+            self.assertAlmostEqual(sparks["battery_mv"][1]["value"], 4.05)
+            self.assertEqual(len(sparks["temperature"]), 2)
+            self.assertEqual(len(sparks["recv_rate"]), 1)
+            self.assertAlmostEqual(sparks["recv_rate"][0]["value"], 300.0)
+            self.assertEqual(len(sparks["unreadable_pct"]), 1)
+            self.assertAlmostEqual(sparks["unreadable_pct"][0]["value"], 3.23, places=1)
+
     def test_health_in_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             book = Path(tmp)

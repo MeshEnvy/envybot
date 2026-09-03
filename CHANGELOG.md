@@ -8,6 +8,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Fleet UI default is a **card dashboard** (batt / temp / traffic / err
+  sparklines, fetch stage, health). Header **Map** opens a modal with pins
+  + sidebar list (`?map=1` restores). Map first click fly/select; second
+  opens detail. Dashboard card click opens detail directly.
+
 - Fleet / onboard repeater duty cycle is **50%** (stock MeshCore). Seeder
   stays at 10%. Book `dutycycle: 50`. Next fleet apply SETs units still
   stamped at 100.

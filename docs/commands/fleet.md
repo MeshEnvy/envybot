@@ -1,14 +1,14 @@
 # `envybot fleet`
 
-Localhost fleet manager. Serves the map UI, GETs telemetry into
+Localhost fleet manager. Serves the dashboard UI, GETs telemetry into
 `data/fleet/history.sqlite`, and SETs radio policy.
 
 ```
 ./envybot [--book DIR] fleet [flags]
 ```
 
-Default: UI at `http://127.0.0.1:8787/` (`?unit=me0032` restores the open card)
-plus live GET (status/telemetry/neighbors),
+Default: UI at `http://127.0.0.1:8787/` (`?unit=me0032` restores the open
+card; `?map=1` reopens the map modal) plus live GET (status/telemetry/neighbors),
 inventory gaps (fw/bl/ota base hash), and apply when the profile hash misses.
 Refresh stores `ota status` (hw, target, this-fw, serving, keys, bl, seeder)
 plus `ota ls` for the detail OTA panel. Neighbor GET
@@ -54,7 +54,7 @@ or flood advert on. Leftover name or GPS is not an advert. A last-seen
 interval older than the apply stamp is ignored.
 
 `paused: true` on a node skips auto GET and apply. The unit stays on the
-map. **Refresh**, **Pull**, and **Push** still work from the UI. Unpause
+map modal. **Refresh**, **Pull**, and **Push** still work from the UI. Unpause
 (or delete the key) returns the unit to the next fleet run. Mid-run pause
 takes effect at the next job boundary. `trust` / `cmd` do not honor pause.
 
@@ -158,8 +158,9 @@ console. The header icon also toggles.
   `fleet` start accepts console send during companion handshake and
   holds the line until the radio is up.
 - URL: `?console=1` reopens the modal (`&ctab=` selects a tab). `?unit=`
-  is only the detail card. Clicking a list row or map pin hides the
-  console and opens that unit's card.
+  is only the detail card. `?map=1` reopens the map modal.
+- Map sidebar row or pin: first click selects and flies; second click on the
+  same unit opens detail and hides the map. Dashboard card click opens detail.
 - Up/down in the input recalls commands sent on that tab. Separate from
   the transcript: **Clear history** does not wipe recall. The clipboard
   icon copies the transcript.

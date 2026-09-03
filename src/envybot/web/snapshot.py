@@ -11,6 +11,7 @@ from envybot.apply import apply_is_due
 from envybot.health import compute_health
 from envybot.history import (
     all_last_seen,
+    compact_sparks,
     interval_traffic,
     last_ok_apply_times,
     latest_neighbors,
@@ -512,6 +513,7 @@ def build_fleet_snapshot(
                 ota_raw=ota_map.get(key),
                 apply_at=apply_at_map.get(key),
             )
+            status_rows = status_rows_map.get(key, [])
             units[key]["health"] = compute_health(
                 freshness=units[key]["freshness"],
                 session=states.get(key),
@@ -521,9 +523,10 @@ def build_fleet_snapshot(
                 telemetry=units[key].get("telemetry"),
                 traffic_interval=interval_map.get(key),
                 traffic_window=window_map.get(key),
-                status_rows=status_rows_map.get(key, []),
+                status_rows=status_rows,
                 paused=units[key]["paused"],
             )
+            units[key]["sparks"] = compact_sparks(status_rows, conn=conn, unit=key, now=now)
     finally:
         if conn is not None:
             conn.close()

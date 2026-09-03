@@ -1,5 +1,34 @@
-import { createApp, computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { connectEvents, fetchFleet, fetchPolls, installUnit, patchUnit, pullUnit, pushUnit, refreshUnit, stageUnit, openConsole as apiOpenConsole, sendConsole as apiSendConsole, cancelConsole as apiCancelConsole, closeConsole as apiCloseConsole, parkConsole as apiParkConsole, retryConsole as apiRetryConsole, skipConsole as apiSkipConsole, patchConsolePending as apiPatchPending, deleteConsolePending as apiDeletePending, clearConsoleHistory as apiClearHistory } from './api.js'
+import {
+  createApp,
+  computed,
+  nextTick,
+  onMounted,
+  onUnmounted,
+  reactive,
+  ref,
+  watch,
+} from "vue";
+import {
+  connectEvents,
+  fetchFleet,
+  fetchPolls,
+  installUnit,
+  patchUnit,
+  pullUnit,
+  pushUnit,
+  refreshUnit,
+  stageUnit,
+  openConsole as apiOpenConsole,
+  sendConsole as apiSendConsole,
+  cancelConsole as apiCancelConsole,
+  closeConsole as apiCloseConsole,
+  parkConsole as apiParkConsole,
+  retryConsole as apiRetryConsole,
+  skipConsole as apiSkipConsole,
+  patchConsolePending as apiPatchPending,
+  deleteConsolePending as apiDeletePending,
+  clearConsoleHistory as apiClearHistory,
+} from "./api.js";
 import {
   clearHistories,
   fleetStore,
@@ -10,7 +39,7 @@ import {
   replaceSnapshot,
   startClock,
   stopClock,
-} from './state.js?v=5'
+} from "./state.js?v=8";
 import {
   formatAgo,
   formatBattery,
@@ -35,247 +64,284 @@ import {
   compareUnits,
   unitLabel,
   unitTitle,
-} from './format.js?v=23'
-import { buildNeighborEdges, createMapController, unitStage, unitStatus } from './map.js?v=28'
-import { seriesFromHistories, sparklineWallTime, SPARK_MIN_SPAN } from './sparklines.js?v=9'
+} from "./format.js?v=23";
+import {
+  buildNeighborEdges,
+  createMapController,
+  unitStage,
+  unitStatus,
+} from "./map.js?v=29";
+import {
+  seriesFromHistories,
+  sparklineWallTime,
+  SPARK_MIN_SPAN,
+} from "./sparklines.js?v=10";
+
+const DASH_SPARK_W = 96;
+const DASH_SPARK_H = 18;
 
 const App = {
   setup() {
-    const fleet = fleetStore
-    const selectedKey = ref(null)
-    const search = ref('')
-    const listFilter = ref('all')
-    const aliasDraft = ref('')
-    const notesDraft = ref('')
-    const aliasEditing = ref(false)
-    const notesEditing = ref(false)
-    const historyHours = 72
-    const LOG_PAGE = 10
+    const fleet = fleetStore;
+    const selectedKey = ref(null);
+    const mapOpen = ref(false);
+    const mapHighlightKey = ref(/** @type {string | null} */ (null));
+    const search = ref("");
+    const listFilter = ref("all");
+    const aliasDraft = ref("");
+    const notesDraft = ref("");
+    const aliasEditing = ref(false);
+    const notesEditing = ref(false);
+    const historyHours = 72;
+    const LOG_PAGE = 10;
     const logShown = reactive({
       status: LOG_PAGE,
       telemetry: LOG_PAGE,
       neighbors: LOG_PAGE,
       acl: LOG_PAGE,
-    })
-    const CONSOLE_STORE_KEY = 'envybot.console.v1'
-    const CMD_HISTORY_CAP = 100
-    const consoleOpen = ref(false)
-    const consoleActiveId = ref(/** @type {string | null} */ (null))
-    const consolePickerOpen = ref(false)
-    const consolePickerQuery = ref('')
+    });
+    const CONSOLE_STORE_KEY = "envybot.console.v1";
+    const CMD_HISTORY_CAP = 100;
+    const consoleOpen = ref(false);
+    const consoleActiveId = ref(/** @type {string | null} */ (null));
+    const consolePickerOpen = ref(false);
+    const consolePickerQuery = ref("");
     /** @type {import('vue').Ref<HTMLElement | null>} */
-    const consoleScroll = ref(null)
+    const consoleScroll = ref(null);
     /** @type {import('vue').Ref<HTMLInputElement | null>} */
-    const consolePickerSearch = ref(null)
+    const consolePickerSearch = ref(null);
     /** @typedef {{ tab_id: string, key: string, state: string, attempt?: number, max_attempts?: number, cmd?: string | null, error?: string | null, history: { cmd: string, reply?: string, error?: string }[], pending: { id: string, cmd: string }[], draft: string, unread?: boolean, cmds?: string[], cmdIndex?: number | null, cmdHold?: string }} ConsoleTab */
-    const consoleTabs = reactive(/** @type {ConsoleTab[]} */ ([]))
-    let consoleSeeding = false
-    const consoleCopied = ref(false)
-    let consoleCopyTimer = 0
+    const consoleTabs = reactive(/** @type {ConsoleTab[]} */ ([]));
+    let consoleSeeding = false;
+    const consoleCopied = ref(false);
+    let consoleCopyTimer = 0;
 
     function resetLogShown() {
-      logShown.status = LOG_PAGE
-      logShown.telemetry = LOG_PAGE
-      logShown.neighbors = LOG_PAGE
-      logShown.acl = LOG_PAGE
+      logShown.status = LOG_PAGE;
+      logShown.telemetry = LOG_PAGE;
+      logShown.neighbors = LOG_PAGE;
+      logShown.acl = LOG_PAGE;
     }
 
     /** @param {'status' | 'telemetry' | 'neighbors' | 'acl'} source */
     function logSlice(source) {
-      const list = unitHistory.value?.[source]
-      if (!Array.isArray(list)) return []
-      return list.slice(0, logShown[source])
+      const list = unitHistory.value?.[source];
+      if (!Array.isArray(list)) return [];
+      return list.slice(0, logShown[source]);
     }
 
     /** @param {'status' | 'telemetry' | 'neighbors' | 'acl'} source */
     function logHasMore(source) {
-      const list = unitHistory.value?.[source]
-      return Array.isArray(list) && list.length > logShown[source]
+      const list = unitHistory.value?.[source];
+      return Array.isArray(list) && list.length > logShown[source];
     }
 
     /** @param {'status' | 'telemetry' | 'neighbors' | 'acl'} source */
     function loadMoreLog(source) {
-      logShown[source] += LOG_PAGE
+      logShown[source] += LOG_PAGE;
     }
 
     const METRIC_ROWS = [
-      { key: 'sun', label: 'Sun', stroke: '#f5c14a', wave: true },
-      { key: 'battery_mv', label: 'Voltage', stroke: '#6ee7a0' },
-      { key: 'temperature', label: 'Temp', stroke: '#f0b86e' },
-      { key: 'unreadable_pct', label: 'Unreadable', stroke: '#f06e6e' },
-      { key: 'recv_rate', label: 'In / h', stroke: '#4ea1ff' },
-      { key: 'noise_floor', label: 'Noise', stroke: '#a78bfa' },
-    ]
+      { key: "sun", label: "Sun", stroke: "#f5c14a", wave: true },
+      { key: "battery_mv", label: "Voltage", stroke: "#6ee7a0" },
+      { key: "temperature", label: "Temp", stroke: "#f0b86e" },
+      { key: "unreadable_pct", label: "Unreadable", stroke: "#f06e6e" },
+      { key: "recv_rate", label: "In / h", stroke: "#4ea1ff" },
+      { key: "noise_floor", label: "Noise", stroke: "#a78bfa" },
+    ];
     /** @type {ReturnType<typeof createMapController> | null} */
-    let mapCtrl = null
+    let mapCtrl = null;
     /** @type {EventSource | null} */
-    let es = null
+    let es = null;
 
     function applyHello(snap) {
-      replaceSnapshot(snap)
-      reconcileConsole(snap)
+      replaceSnapshot(snap);
+      reconcileConsole(snap);
     }
 
     function applyUnit(unit) {
-      storePatchUnit(unit)
+      storePatchUnit(unit);
     }
 
     function applySession(poll) {
-      patchSession(poll)
+      patchSession(poll);
     }
 
-    const manualAccepting = computed(() => !!fleet.poll?.accepting)
+    const manualAccepting = computed(() => !!fleet.poll?.accepting);
 
-    const consoleActive = computed(() => consoleTabs.find((t) => t.tab_id === consoleActiveId.value) || null)
-    const consoleBusy = computed(() => consoleActive.value?.state === 'sending')
-    const consoleFailed = computed(() => consoleActive.value?.state === 'failed')
+    const consoleActive = computed(
+      () => consoleTabs.find((t) => t.tab_id === consoleActiveId.value) || null,
+    );
+    const consoleBusy = computed(
+      () => consoleActive.value?.state === "sending",
+    );
+    const consoleFailed = computed(
+      () => consoleActive.value?.state === "failed",
+    );
     const consoleStatusLine = computed(() => {
-      const tab = consoleActive.value
-      if (!tab || tab.state !== 'sending') return ''
-      const n = tab.attempt || 1
-      const max = tab.max_attempts || 10
-      return `(attempt ${n}/${max}…)`
-    })
-    const consoleBadgeBusy = computed(
-      () =>
-        consoleTabs.some(
-          (t) => t.state === 'sending' || t.state === 'failed' || (t.pending && t.pending.length)
-        )
-    )
+      const tab = consoleActive.value;
+      if (!tab || tab.state !== "sending") return "";
+      const n = tab.attempt || 1;
+      const max = tab.max_attempts || 10;
+      return `(attempt ${n}/${max}…)`;
+    });
+    const consoleBadgeBusy = computed(() =>
+      consoleTabs.some(
+        (t) =>
+          t.state === "sending" ||
+          t.state === "failed" ||
+          (t.pending && t.pending.length),
+      ),
+    );
     const consoleUnread = computed(
-      () => !consoleOpen.value && consoleTabs.some((t) => t.unread)
-    )
+      () => !consoleOpen.value && consoleTabs.some((t) => t.unread),
+    );
     const consolePickerUnits = computed(() => {
-      const q = consolePickerQuery.value.trim().toLowerCase()
-      let units = Object.values(fleet.units || {})
+      const q = consolePickerQuery.value.trim().toLowerCase();
+      let units = Object.values(fleet.units || {});
       if (q) {
         units = units.filter((u) => {
-          const hay = [u.key, u.unit_id, u.site, u.site_name, u.alias, u.label, u.notes]
+          const hay = [
+            u.key,
+            u.unit_id,
+            u.site,
+            u.site_name,
+            u.alias,
+            u.label,
+            u.notes,
+          ]
             .filter(Boolean)
-            .join(' ')
-            .toLowerCase()
-          return hay.includes(q)
-        })
+            .join(" ")
+            .toLowerCase();
+          return hay.includes(q);
+        });
       }
-      return units.sort(compareUnits)
-    })
+      return units.sort(compareUnits);
+    });
 
     const MANUAL_BUSY = new Set([
-      'queued',
-      'refreshing',
-      'pulling',
-      'pushing',
-      'staging',
-      'installing',
-      'polling',
-    ])
+      "queued",
+      "refreshing",
+      "pulling",
+      "pushing",
+      "staging",
+      "installing",
+      "polling",
+    ]);
 
     /** @param {Record<string, unknown> | undefined} unit */
     function isInFlight(unit) {
-      const s = unit?.session
-      const state = s && typeof s === 'object' && 'state' in s ? s.state : null
-      return MANUAL_BUSY.has(state)
+      const s = unit?.session;
+      const state = s && typeof s === "object" && "state" in s ? s.state : null;
+      return MANUAL_BUSY.has(state);
     }
 
     /** @param {Record<string, unknown> | undefined} unit @param {'refresh' | 'pull' | 'push'} [job] */
     function canManualUnit(unit, job) {
-      if (!unit || !manualAccepting.value) return false
-      return true
+      if (!unit || !manualAccepting.value) return false;
+      return true;
     }
 
     function newConsoleTabId() {
-      if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
-      return `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+      if (typeof crypto !== "undefined" && crypto.randomUUID)
+        return crypto.randomUUID();
+      return `tab-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     }
 
     function loadConsoleStore() {
       try {
-        const raw = localStorage.getItem(CONSOLE_STORE_KEY)
-        if (!raw) return { tabs: [], active: null }
-        const parsed = JSON.parse(raw)
-        if (!parsed || !Array.isArray(parsed.tabs)) return { tabs: [], active: null }
-        return parsed
+        const raw = localStorage.getItem(CONSOLE_STORE_KEY);
+        if (!raw) return { tabs: [], active: null };
+        const parsed = JSON.parse(raw);
+        if (!parsed || !Array.isArray(parsed.tabs))
+          return { tabs: [], active: null };
+        return parsed;
       } catch {
-        return { tabs: [], active: null }
+        return { tabs: [], active: null };
       }
     }
 
     function historySig(history) {
-      if (!Array.isArray(history) || !history.length) return '0'
-      const last = history[history.length - 1]
-      return `${history.length}:${last.cmd || ''}:${last.reply || ''}:${last.error || ''}`
+      if (!Array.isArray(history) || !history.length) return "0";
+      const last = history[history.length - 1];
+      return `${history.length}:${last.cmd || ""}:${last.reply || ""}:${last.error || ""}`;
     }
 
     function consoleTabWatched(tabId) {
-      return consoleOpen.value && consoleActiveId.value === tabId
+      return consoleOpen.value && consoleActiveId.value === tabId;
     }
 
     function seeConsoleTab(tabId) {
-      const tab = consoleTabs.find((t) => t.tab_id === tabId)
-      if (!tab?.unread) return
-      tab.unread = false
-      persistConsole()
+      const tab = consoleTabs.find((t) => t.tab_id === tabId);
+      if (!tab?.unread) return;
+      tab.unread = false;
+      persistConsole();
     }
 
     function selectConsoleTab(tabId) {
-      consoleActiveId.value = tabId
-      seeConsoleTab(tabId)
+      consoleActiveId.value = tabId;
+      seeConsoleTab(tabId);
     }
 
     function unreadFromStore(tabId) {
-      return !!(loadConsoleStore().tabs || []).find((t) => t.tab_id === tabId)?.unread
+      return !!(loadConsoleStore().tabs || []).find((t) => t.tab_id === tabId)
+        ?.unread;
     }
 
     function cmdsFromHistory(history) {
-      const out = []
+      const out = [];
       for (const row of history || []) {
-        const cmd = String(row?.cmd || '').trim()
-        if (!cmd) continue
-        if (out[out.length - 1] !== cmd) out.push(cmd)
+        const cmd = String(row?.cmd || "").trim();
+        if (!cmd) continue;
+        if (out[out.length - 1] !== cmd) out.push(cmd);
       }
-      return out.slice(-CMD_HISTORY_CAP)
+      return out.slice(-CMD_HISTORY_CAP);
     }
 
     function loadCmds(tabId, history) {
-      const stored = (loadConsoleStore().tabs || []).find((t) => t.tab_id === tabId)
-      if (stored && Array.isArray(stored.cmds)) return stored.cmds.slice(-CMD_HISTORY_CAP)
-      return cmdsFromHistory(history)
+      const stored = (loadConsoleStore().tabs || []).find(
+        (t) => t.tab_id === tabId,
+      );
+      if (stored && Array.isArray(stored.cmds))
+        return stored.cmds.slice(-CMD_HISTORY_CAP);
+      return cmdsFromHistory(history);
     }
 
     function rememberCmd(tab, cmd) {
-      const line = String(cmd || '').trim()
-      if (!tab || !line) return
-      const list = Array.isArray(tab.cmds) ? tab.cmds : (tab.cmds = [])
-      if (list[list.length - 1] !== line) list.push(line)
-      if (list.length > CMD_HISTORY_CAP) tab.cmds = list.slice(-CMD_HISTORY_CAP)
-      tab.cmdIndex = null
-      tab.cmdHold = ''
+      const line = String(cmd || "").trim();
+      if (!tab || !line) return;
+      const list = Array.isArray(tab.cmds) ? tab.cmds : (tab.cmds = []);
+      if (list[list.length - 1] !== line) list.push(line);
+      if (list.length > CMD_HISTORY_CAP)
+        tab.cmds = list.slice(-CMD_HISTORY_CAP);
+      tab.cmdIndex = null;
+      tab.cmdHold = "";
     }
 
     function recallConsoleCmd(dir) {
-      const tab = consoleActive.value
-      const list = tab?.cmds || []
-      if (!tab || !list.length) return
+      const tab = consoleActive.value;
+      const list = tab?.cmds || [];
+      if (!tab || !list.length) return;
       if (tab.cmdIndex == null) {
-        tab.cmdHold = tab.draft || ''
-        tab.cmdIndex = list.length
+        tab.cmdHold = tab.draft || "";
+        tab.cmdIndex = list.length;
       }
-      const next = tab.cmdIndex + dir
-      if (next < 0) return
+      const next = tab.cmdIndex + dir;
+      if (next < 0) return;
       if (next >= list.length) {
-        tab.cmdIndex = null
-        tab.draft = tab.cmdHold || ''
-        return
+        tab.cmdIndex = null;
+        tab.draft = tab.cmdHold || "";
+        return;
       }
-      tab.cmdIndex = next
-      tab.draft = list[next]
+      tab.cmdIndex = next;
+      tab.draft = list[next];
     }
 
     function onConsoleDraftInput() {
-      const tab = consoleActive.value
-      if (!tab || tab.cmdIndex == null) return
-      tab.cmdIndex = null
-      tab.cmdHold = ''
+      const tab = consoleActive.value;
+      if (!tab || tab.cmdIndex == null) return;
+      tab.cmdIndex = null;
+      tab.cmdHold = "";
     }
 
     function persistConsole() {
@@ -284,18 +350,18 @@ const App = {
         key: t.key,
         history: t.history || [],
         pending: t.pending || [],
-        draft: t.draft || '',
-        inflight: t.state === 'sending' && t.cmd ? t.cmd : undefined,
-        failed: t.state === 'failed' && t.cmd ? t.cmd : undefined,
-        error: t.state === 'failed' ? t.error || '' : undefined,
+        draft: t.draft || "",
+        inflight: t.state === "sending" && t.cmd ? t.cmd : undefined,
+        failed: t.state === "failed" && t.cmd ? t.cmd : undefined,
+        error: t.state === "failed" ? t.error || "" : undefined,
         unread: !!t.unread,
         cmds: Array.isArray(t.cmds) ? t.cmds.slice(-CMD_HISTORY_CAP) : [],
-      }))
+      }));
       try {
         localStorage.setItem(
           CONSOLE_STORE_KEY,
-          JSON.stringify({ tabs, active: consoleActiveId.value })
-        )
+          JSON.stringify({ tabs, active: consoleActiveId.value }),
+        );
       } catch {
         /* ignore quota */
       }
@@ -303,629 +369,735 @@ const App = {
 
     /** @param {Record<string, unknown>} event @param {string} [draft] */
     function upsertConsoleTab(event, draft) {
-      const tabId = String(event.tab_id || '')
-      if (!tabId || event.state === 'closed') {
-        const idx = consoleTabs.findIndex((t) => t.tab_id === tabId)
-        if (idx >= 0) consoleTabs.splice(idx, 1)
+      const tabId = String(event.tab_id || "");
+      if (!tabId || event.state === "closed") {
+        const idx = consoleTabs.findIndex((t) => t.tab_id === tabId);
+        if (idx >= 0) consoleTabs.splice(idx, 1);
         if (consoleActiveId.value === tabId) {
-          consoleActiveId.value = consoleTabs[0]?.tab_id || null
+          consoleActiveId.value = consoleTabs[0]?.tab_id || null;
         }
-        persistConsole()
-        return
+        persistConsole();
+        return;
       }
-      const existing = consoleTabs.find((t) => t.tab_id === tabId)
-      const keepDraft = draft ?? existing?.draft ?? ''
-      const nextHistory = Array.isArray(event.history) ? event.history : existing?.history || []
-      const watched = consoleTabWatched(tabId)
-      let unread = existing ? !!existing.unread : unreadFromStore(tabId)
+      const existing = consoleTabs.find((t) => t.tab_id === tabId);
+      const keepDraft = draft ?? existing?.draft ?? "";
+      const nextHistory = Array.isArray(event.history)
+        ? event.history
+        : existing?.history || [];
+      const watched = consoleTabWatched(tabId);
+      let unread = existing ? !!existing.unread : unreadFromStore(tabId);
       if (
         existing &&
         !consoleSeeding &&
         !watched &&
         (historySig(existing.history) !== historySig(nextHistory) ||
-          (String(event.state || '') === 'failed' && existing.state !== 'failed'))
+          (String(event.state || "") === "failed" &&
+            existing.state !== "failed"))
       ) {
-        unread = true
+        unread = true;
       }
-      if (watched) unread = false
-      const cmds = Array.isArray(existing?.cmds) ? existing.cmds : loadCmds(tabId, nextHistory)
+      if (watched) unread = false;
+      const cmds = Array.isArray(existing?.cmds)
+        ? existing.cmds
+        : loadCmds(tabId, nextHistory);
       const next = {
         tab_id: tabId,
-        key: String(event.key || existing?.key || ''),
-        state: String(event.state || 'ready'),
+        key: String(event.key || existing?.key || ""),
+        state: String(event.state || "ready"),
         attempt: Number(event.attempt || 0),
         max_attempts: Number(event.max_attempts || 10),
         cmd: event.cmd == null ? null : String(event.cmd),
         error: event.error == null ? null : String(event.error),
         history: nextHistory,
-        pending: Array.isArray(event.pending) ? event.pending : existing?.pending || [],
+        pending: Array.isArray(event.pending)
+          ? event.pending
+          : existing?.pending || [],
         draft: keepDraft,
         unread,
         cmds,
         cmdIndex: existing?.cmdIndex ?? null,
-        cmdHold: existing?.cmdHold ?? '',
-      }
-      if (existing) Object.assign(existing, next)
-      else consoleTabs.push(next)
-      persistConsole()
+        cmdHold: existing?.cmdHold ?? "",
+      };
+      if (existing) Object.assign(existing, next);
+      else consoleTabs.push(next);
+      persistConsole();
     }
 
     function scrollConsoleBottom() {
       requestAnimationFrame(() => {
-        const el = consoleScroll.value
-        if (el) el.scrollTop = el.scrollHeight
-      })
+        const el = consoleScroll.value;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
     }
 
     /** @param {Record<string, unknown>} event */
     function applyConsoleEvent(event) {
-      patchConsole(event)
-      upsertConsoleTab(event)
-      if (event.tab_id === consoleActiveId.value) scrollConsoleBottom()
+      patchConsole(event);
+      upsertConsoleTab(event);
+      if (event.tab_id === consoleActiveId.value) scrollConsoleBottom();
     }
 
     function consoleTabLabel(tab) {
-      const unit = fleet.units[tab.key]
-      const base = unit ? unitTitle(unit) : tab.key
-      const same = consoleTabs.filter((t) => t.key === tab.key)
-      if (same.length < 2) return base
-      const n = same.findIndex((t) => t.tab_id === tab.tab_id) + 1
-      return n === 1 ? base : `${base} ${n}`
+      const unit = fleet.units[tab.key];
+      const base = unit ? unitTitle(unit) : tab.key;
+      const same = consoleTabs.filter((t) => t.key === tab.key);
+      if (same.length < 2) return base;
+      const n = same.findIndex((t) => t.tab_id === tab.tab_id) + 1;
+      return n === 1 ? base : `${base} ${n}`;
     }
 
     async function addConsoleTab(key) {
-      const tabId = newConsoleTabId()
+      const tabId = newConsoleTabId();
       const tab = {
         tab_id: tabId,
         key: String(key).toLowerCase(),
-        state: 'ready',
+        state: "ready",
         history: [],
         pending: [],
-        draft: '',
+        draft: "",
         unread: false,
         cmds: [],
         cmdIndex: null,
-        cmdHold: '',
-      }
-      consoleTabs.push(tab)
-      consoleActiveId.value = tabId
-      consolePickerOpen.value = false
-      consolePickerQuery.value = ''
-      persistConsole()
+        cmdHold: "",
+      };
+      consoleTabs.push(tab);
+      consoleActiveId.value = tabId;
+      consolePickerOpen.value = false;
+      consolePickerQuery.value = "";
+      persistConsole();
       try {
-        const ev = await apiOpenConsole(tab.key, tabId)
-        upsertConsoleTab(ev, tab.draft)
-        patchConsole(ev)
+        const ev = await apiOpenConsole(tab.key, tabId);
+        upsertConsoleTab(ev, tab.draft);
+        patchConsole(ev);
       } catch (err) {
-        console.error(err)
+        console.error(err);
       }
-      syncLocation(selectedKey.value)
+      syncLocation(selectedKey.value);
     }
 
     async function closeConsoleTab(tabId) {
       try {
-        await apiCloseConsole(tabId)
+        await apiCloseConsole(tabId);
       } catch (err) {
-        console.error(err)
+        console.error(err);
       }
-      upsertConsoleTab({ tab_id: tabId, state: 'closed' })
-      persistConsole()
-      syncLocation(selectedKey.value)
+      upsertConsoleTab({ tab_id: tabId, state: "closed" });
+      persistConsole();
+      syncLocation(selectedKey.value);
     }
 
     function hideConsole() {
-      consoleOpen.value = false
-      consolePickerOpen.value = false
-      syncLocation(selectedKey.value)
+      consoleOpen.value = false;
+      consolePickerOpen.value = false;
+      syncLocation(selectedKey.value);
+    }
+
+    function hideMap() {
+      mapOpen.value = false;
+      syncLocation(selectedKey.value);
+    }
+
+    async function initMapIfNeeded() {
+      if (mapCtrl) {
+        pushMap();
+        return;
+      }
+      await new Promise((r) =>
+        requestAnimationFrame(() => requestAnimationFrame(r)),
+      );
+      mapCtrl = createMapController("map", selectFromMap, clearMapHighlight);
+      pushMap();
+      requestAnimationFrame(() => pushMap());
+    }
+
+    function clearMapHighlight() {
+      mapHighlightKey.value = null;
+      pushMap();
+    }
+
+    async function showMap() {
+      hideConsole();
+      mapOpen.value = true;
+      syncLocation(selectedKey.value);
+      await nextTick();
+      await initMapIfNeeded();
+    }
+
+    function toggleMap() {
+      if (mapOpen.value) hideMap();
+      else showMap();
+    }
+
+    function mapFromLocation() {
+      return new URLSearchParams(location.search).get("map") === "1";
+    }
+
+    async function maybeReopenMap() {
+      if (!mapFromLocation()) return;
+      await showMap();
     }
 
     function toggleConsolePicker() {
-      consolePickerOpen.value = !consolePickerOpen.value
+      consolePickerOpen.value = !consolePickerOpen.value;
       if (!consolePickerOpen.value) {
-        consolePickerQuery.value = ''
-        return
+        consolePickerQuery.value = "";
+        return;
       }
-      nextTick(() => consolePickerSearch.value?.focus())
+      nextTick(() => consolePickerSearch.value?.focus());
     }
 
     async function showConsole() {
-      consoleOpen.value = true
+      hideMap();
+      consoleOpen.value = true;
       if (!consoleTabs.length && selectedKey.value) {
-        await addConsoleTab(selectedKey.value)
+        await addConsoleTab(selectedKey.value);
       } else if (!consoleActiveId.value && consoleTabs[0]) {
-        consoleActiveId.value = consoleTabs[0].tab_id
+        consoleActiveId.value = consoleTabs[0].tab_id;
       }
-      if (consoleActiveId.value) seeConsoleTab(consoleActiveId.value)
-      syncLocation(selectedKey.value)
-      scrollConsoleBottom()
+      if (consoleActiveId.value) seeConsoleTab(consoleActiveId.value);
+      syncLocation(selectedKey.value);
+      scrollConsoleBottom();
     }
 
     async function toggleConsole() {
-      if (consoleOpen.value) hideConsole()
-      else await showConsole()
+      if (consoleOpen.value) hideConsole();
+      else await showConsole();
     }
 
     function consoleTabsForUnit(key) {
-      const k = String(key || '').toLowerCase()
-      return consoleTabs.filter((t) => t.key === k)
+      const k = String(key || "").toLowerCase();
+      return consoleTabs.filter((t) => t.key === k);
     }
 
     function unitConsoleUnread(unit) {
-      return consoleTabsForUnit(unit?.key).some((t) => t.unread)
+      return consoleTabsForUnit(unit?.key).some((t) => t.unread);
     }
 
     function unitConsoleBusy(unit) {
       return consoleTabsForUnit(unit?.key).some(
-        (t) => t.state === 'sending' || t.state === 'failed' || (t.pending && t.pending.length)
-      )
+        (t) =>
+          t.state === "sending" ||
+          t.state === "failed" ||
+          (t.pending && t.pending.length),
+      );
     }
 
     async function openConsoleForUnit(unit, ev) {
-      ev?.stopPropagation?.()
-      const key = String(unit?.key || '').toLowerCase()
-      if (!key) return
+      ev?.stopPropagation?.();
+      const key = String(unit?.key || "").toLowerCase();
+      if (!key) return;
       if (consoleOpen.value && consoleActive.value?.key === key) {
-        hideConsole()
-        return
+        hideConsole();
+        return;
       }
-      const existing = consoleTabs.find((t) => t.key === key)
-      if (existing) selectConsoleTab(existing.tab_id)
-      else await addConsoleTab(key)
-      await showConsole()
+      const existing = consoleTabs.find((t) => t.key === key);
+      if (existing) selectConsoleTab(existing.tab_id);
+      else await addConsoleTab(key);
+      await showConsole();
     }
 
     function failConsoleLocal(tab, cmd, err) {
-      const msg = err?.message || String(err || 'send failed')
-      tab.state = 'failed'
-      tab.cmd = cmd
-      tab.error = msg
-      tab.history = [...(tab.history || []), { cmd, error: msg }]
+      const msg = err?.message || String(err || "send failed");
+      tab.state = "failed";
+      tab.cmd = cmd;
+      tab.error = msg;
+      tab.history = [...(tab.history || []), { cmd, error: msg }];
     }
 
     async function submitConsoleLine() {
-      const tab = consoleActive.value
-      const cmd = (tab?.draft || '').trim()
-      if (!tab || !cmd) return
-      rememberCmd(tab, cmd)
-      tab.draft = ''
-      persistConsole()
+      const tab = consoleActive.value;
+      const cmd = (tab?.draft || "").trim();
+      if (!tab || !cmd) return;
+      rememberCmd(tab, cmd);
+      tab.draft = "";
+      persistConsole();
       try {
-        await apiSendConsole(tab.tab_id, cmd)
+        await apiSendConsole(tab.tab_id, cmd);
       } catch (err) {
-        failConsoleLocal(tab, cmd, err)
+        failConsoleLocal(tab, cmd, err);
       }
     }
 
     async function cancelConsoleSend() {
-      const tab = consoleActive.value
-      if (!tab) return
+      const tab = consoleActive.value;
+      if (!tab) return;
       try {
-        await apiCancelConsole(tab.tab_id)
+        await apiCancelConsole(tab.tab_id);
       } catch (err) {
-        console.error(err)
+        console.error(err);
       }
     }
 
     function consoleIsStopped(error) {
-      const text = String(error || '').toLowerCase()
-      return text.includes('timeout') || text.includes('cancelled') || text.includes('canceled')
+      const text = String(error || "").toLowerCase();
+      return (
+        text.includes("timeout") ||
+        text.includes("cancelled") ||
+        text.includes("canceled")
+      );
     }
 
     function consoleHistoryRetry(row) {
-      if (!consoleIsStopped(row?.error)) return false
-      const tab = consoleActive.value
-      if (!tab) return false
-      if (tab.state === 'sending') return false
-      if (tab.state === 'failed' && tab.cmd === row.cmd) return false
-      return true
+      if (!consoleIsStopped(row?.error)) return false;
+      const tab = consoleActive.value;
+      if (!tab) return false;
+      if (tab.state === "sending") return false;
+      if (tab.state === "failed" && tab.cmd === row.cmd) return false;
+      return true;
     }
 
     async function retryConsoleSend() {
-      const tab = consoleActive.value
-      if (!tab) return
+      const tab = consoleActive.value;
+      if (!tab) return;
       try {
-        await apiRetryConsole(tab.tab_id)
+        await apiRetryConsole(tab.tab_id);
       } catch (err) {
-        failConsoleLocal(tab, tab.cmd || '', err)
+        failConsoleLocal(tab, tab.cmd || "", err);
       }
     }
 
     async function retryConsoleCmd(cmd) {
-      const tab = consoleActive.value
-      const line = String(cmd || '').trim()
-      if (!tab || !line) return
-      rememberCmd(tab, line)
+      const tab = consoleActive.value;
+      const line = String(cmd || "").trim();
+      if (!tab || !line) return;
+      rememberCmd(tab, line);
       try {
-        if (tab.state === 'failed' && tab.cmd === line) await apiRetryConsole(tab.tab_id)
-        else await apiSendConsole(tab.tab_id, line)
+        if (tab.state === "failed" && tab.cmd === line)
+          await apiRetryConsole(tab.tab_id);
+        else await apiSendConsole(tab.tab_id, line);
       } catch (err) {
-        failConsoleLocal(tab, line, err)
+        failConsoleLocal(tab, line, err);
       }
     }
 
     async function skipConsoleFailed() {
-      const tab = consoleActive.value
-      if (!tab || !tab.pending?.length) return
+      const tab = consoleActive.value;
+      if (!tab || !tab.pending?.length) return;
       try {
-        await apiSkipConsole(tab.tab_id)
+        await apiSkipConsole(tab.tab_id);
       } catch (err) {
-        console.error(err)
+        console.error(err);
       }
     }
 
     async function clearConsoleHistory() {
-      const tab = consoleActive.value
-      if (!tab) return
+      const tab = consoleActive.value;
+      if (!tab) return;
       try {
-        const ev = await apiClearHistory(tab.tab_id)
-        upsertConsoleTab(ev, tab.draft)
+        const ev = await apiClearHistory(tab.tab_id);
+        upsertConsoleTab(ev, tab.draft);
       } catch (err) {
-        console.error(err)
+        console.error(err);
       }
     }
 
     function consoleTranscriptText(tab) {
-      if (!tab) return ''
-      const blocks = []
+      if (!tab) return "";
+      const blocks = [];
       for (const row of tab.history || []) {
-        const parts = [`> ${row.cmd}`]
-        if (row.reply) parts.push(String(row.reply).replace(/\s+$/g, ''))
-        if (row.error) parts.push(String(row.error).replace(/\s+$/g, ''))
-        blocks.push(parts.join('\n'))
+        const parts = [`> ${row.cmd}`];
+        if (row.reply) parts.push(String(row.reply).replace(/\s+$/g, ""));
+        if (row.error) parts.push(String(row.error).replace(/\s+$/g, ""));
+        blocks.push(parts.join("\n"));
       }
-      if ((tab.state === 'sending' || tab.state === 'failed') && tab.cmd) {
-        const parts = [`> ${tab.cmd}`]
-        if (tab.error) parts.push(String(tab.error).replace(/\s+$/g, ''))
-        blocks.push(parts.join('\n'))
+      if ((tab.state === "sending" || tab.state === "failed") && tab.cmd) {
+        const parts = [`> ${tab.cmd}`];
+        if (tab.error) parts.push(String(tab.error).replace(/\s+$/g, ""));
+        blocks.push(parts.join("\n"));
       }
-      return blocks.join('\n\n')
+      return blocks.join("\n\n");
     }
 
-    const consoleCanCopy = computed(() => !!consoleTranscriptText(consoleActive.value))
+    const consoleCanCopy = computed(
+      () => !!consoleTranscriptText(consoleActive.value),
+    );
 
     async function copyConsoleHistory() {
-      const text = consoleTranscriptText(consoleActive.value)
-      if (!text) return
+      const text = consoleTranscriptText(consoleActive.value);
+      if (!text) return;
       try {
-        if (!navigator.clipboard?.writeText) throw new Error('no clipboard')
-        await navigator.clipboard.writeText(text)
+        if (!navigator.clipboard?.writeText) throw new Error("no clipboard");
+        await navigator.clipboard.writeText(text);
       } catch {
-        const ta = document.createElement('textarea')
-        ta.value = text
-        ta.setAttribute('readonly', '')
-        ta.style.position = 'fixed'
-        ta.style.left = '-9999px'
-        document.body.appendChild(ta)
-        ta.select()
-        document.execCommand('copy')
-        ta.remove()
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.setAttribute("readonly", "");
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
       }
-      consoleCopied.value = true
-      window.clearTimeout(consoleCopyTimer)
+      consoleCopied.value = true;
+      window.clearTimeout(consoleCopyTimer);
       consoleCopyTimer = window.setTimeout(() => {
-        consoleCopied.value = false
-      }, 1200)
+        consoleCopied.value = false;
+      }, 1200);
     }
 
     async function savePendingCmd(tab, item) {
-      const cmd = String(item.cmd || '').trim()
-      if (!cmd) return
+      const cmd = String(item.cmd || "").trim();
+      if (!cmd) return;
       try {
-        const ev = await apiPatchPending(tab.tab_id, item.id, cmd)
-        upsertConsoleTab(ev, tab.draft)
+        const ev = await apiPatchPending(tab.tab_id, item.id, cmd);
+        upsertConsoleTab(ev, tab.draft);
       } catch (err) {
-        console.error(err)
+        console.error(err);
       }
     }
 
     async function dropPendingCmd(tab, item) {
       try {
-        const ev = await apiDeletePending(tab.tab_id, item.id)
-        upsertConsoleTab(ev, tab.draft)
+        const ev = await apiDeletePending(tab.tab_id, item.id);
+        upsertConsoleTab(ev, tab.draft);
       } catch (err) {
-        console.error(err)
+        console.error(err);
       }
     }
 
     async function clearPendingAll() {
-      const tab = consoleActive.value
-      if (!tab) return
+      const tab = consoleActive.value;
+      if (!tab) return;
       try {
-        const ev = await apiDeletePending(tab.tab_id)
-        upsertConsoleTab(ev, tab.draft)
+        const ev = await apiDeletePending(tab.tab_id);
+        upsertConsoleTab(ev, tab.draft);
       } catch (err) {
-        console.error(err)
+        console.error(err);
       }
     }
 
     async function reconcileConsole(snap) {
-      const serverTabs = snap?.poll?.console?.tabs
+      const serverTabs = snap?.poll?.console?.tabs;
       if (Array.isArray(serverTabs) && serverTabs.length) {
-        const drafts = Object.fromEntries(consoleTabs.map((t) => [t.tab_id, t.draft]))
-        const stored = loadConsoleStore()
+        const drafts = Object.fromEntries(
+          consoleTabs.map((t) => [t.tab_id, t.draft]),
+        );
+        const stored = loadConsoleStore();
         for (const t of stored.tabs || []) {
-          if (t.tab_id && t.draft && drafts[t.tab_id] == null) drafts[t.tab_id] = t.draft
+          if (t.tab_id && t.draft && drafts[t.tab_id] == null)
+            drafts[t.tab_id] = t.draft;
         }
-        for (const ev of serverTabs) upsertConsoleTab(ev, drafts[ev.tab_id])
-        const ids = new Set(serverTabs.map((t) => t.tab_id))
+        for (const ev of serverTabs) upsertConsoleTab(ev, drafts[ev.tab_id]);
+        const ids = new Set(serverTabs.map((t) => t.tab_id));
         if (!consoleActiveId.value || !ids.has(consoleActiveId.value)) {
-          consoleActiveId.value = serverTabs[0].tab_id
+          consoleActiveId.value = serverTabs[0].tab_id;
         }
-        persistConsole()
-        return
+        persistConsole();
+        return;
       }
-      if (consoleSeeding) return
-      const stored = loadConsoleStore()
-      if (!stored.tabs?.length) return
-      consoleSeeding = true
+      if (consoleSeeding) return;
+      const stored = loadConsoleStore();
+      if (!stored.tabs?.length) return;
+      consoleSeeding = true;
       try {
         for (const t of stored.tabs) {
-          if (!t.tab_id || !t.key) continue
+          if (!t.tab_id || !t.key) continue;
           if (!consoleTabs.some((x) => x.tab_id === t.tab_id)) {
             consoleTabs.push({
               tab_id: t.tab_id,
               key: t.key,
-              state: 'ready',
+              state: "ready",
               history: t.history || [],
               pending: t.pending || [],
-              draft: t.draft || '',
+              draft: t.draft || "",
               unread: !!t.unread,
               cmds: Array.isArray(t.cmds) ? t.cmds : cmdsFromHistory(t.history),
               cmdIndex: null,
-              cmdHold: '',
-            })
+              cmdHold: "",
+            });
           }
           try {
-            await apiOpenConsole(t.key, t.tab_id)
-            if (t.failed) await apiParkConsole(t.tab_id, t.failed, t.error)
-            else if (t.inflight) await apiSendConsole(t.tab_id, t.inflight)
+            await apiOpenConsole(t.key, t.tab_id);
+            if (t.failed) await apiParkConsole(t.tab_id, t.failed, t.error);
+            else if (t.inflight) await apiSendConsole(t.tab_id, t.inflight);
             for (const p of t.pending || []) {
-              if (p?.cmd) await apiSendConsole(t.tab_id, p.cmd)
+              if (p?.cmd) await apiSendConsole(t.tab_id, p.cmd);
             }
           } catch (err) {
-            console.error(err)
+            console.error(err);
           }
         }
-        consoleActiveId.value = stored.active || consoleTabs[0]?.tab_id || null
-        persistConsole()
+        consoleActiveId.value = stored.active || consoleTabs[0]?.tab_id || null;
+        persistConsole();
       } finally {
-        consoleSeeding = false
+        consoleSeeding = false;
       }
     }
 
     function consoleFromLocation() {
-      return new URLSearchParams(location.search).get('console') === '1'
+      return new URLSearchParams(location.search).get("console") === "1";
     }
 
     async function maybeReopenConsole() {
-      if (!consoleFromLocation()) return
-      const ctab = new URLSearchParams(location.search).get('ctab')
-      if (ctab && consoleTabs.some((t) => t.tab_id === ctab)) consoleActiveId.value = ctab
-      await showConsole()
+      if (!consoleFromLocation()) return;
+      const ctab = new URLSearchParams(location.search).get("ctab");
+      if (ctab && consoleTabs.some((t) => t.tab_id === ctab))
+        consoleActiveId.value = ctab;
+      await showConsole();
     }
 
     /** @param {Record<string, unknown> | null | undefined} ota */
     function otaLocalLabel(ota) {
-      if (!ota || typeof ota !== 'object') return '—'
+      if (!ota || typeof ota !== "object") return "—";
       const local =
         /** @type {{ state?: string, mid?: string, pct?: number, have?: number, total?: number, age_s?: number, status_word?: string }} */ (
           ota
-        ).local
-      if (!local || !local.state || local.state === 'none') return 'no download'
-      const bits = []
-      if (local.status_word) bits.push(local.status_word)
-      else bits.push(local.state)
-      if (local.have != null && local.total != null) bits.push(`${local.have}/${local.total}`)
-      if (local.pct != null) bits.push(`${local.pct}%`)
-      if (local.mid) bits.push(`id=${local.mid}`)
-      if (local.age_s != null) bits.push(`${local.age_s}s`)
-      return bits.join(' ')
+        ).local;
+      if (!local || !local.state || local.state === "none")
+        return "no download";
+      const bits = [];
+      if (local.status_word) bits.push(local.status_word);
+      else bits.push(local.state);
+      if (local.have != null && local.total != null)
+        bits.push(`${local.have}/${local.total}`);
+      if (local.pct != null) bits.push(`${local.pct}%`);
+      if (local.mid) bits.push(`id=${local.mid}`);
+      if (local.age_s != null) bits.push(`${local.age_s}s`);
+      return bits.join(" ");
     }
 
     /** @param {Record<string, unknown> | null | undefined} running */
     function otaHwLabel(running) {
-      if (!running || typeof running !== 'object') return '—'
-      const hw = /** @type {{ hw_id?: string | null }} */ (running).hw_id
-      if (hw == null || hw === '') return '—'
-      return hw
+      if (!running || typeof running !== "object") return "—";
+      const hw = /** @type {{ hw_id?: string | null }} */ (running).hw_id;
+      if (hw == null || hw === "") return "—";
+      return hw;
     }
 
     /** @param {Record<string, unknown> | null | undefined} running */
     function otaTargetLabel(running) {
-      if (!running || typeof running !== 'object') return '—'
-      const r = /** @type {{ target_env?: string, target_id?: string }} */ (running)
-      const env = r.target_env && r.target_env !== '?' ? r.target_env : ''
-      if (env && r.target_id) return `${env} (${r.target_id})`
-      return env || r.target_id || '—'
+      if (!running || typeof running !== "object") return "—";
+      const r = /** @type {{ target_env?: string, target_id?: string }} */ (
+        running
+      );
+      const env = r.target_env && r.target_env !== "?" ? r.target_env : "";
+      if (env && r.target_id) return `${env} (${r.target_id})`;
+      return env || r.target_id || "—";
     }
 
     /** @param {Record<string, unknown> | undefined} unit */
     function otaBodyLabel(unit) {
-      if (!unit) return '—'
+      if (!unit) return "—";
       const running =
-        unit.ota && typeof unit.ota === 'object'
-          ? /** @type {{ running?: { body_hash?: string, image_kib?: number } }} */ (unit.ota).running
-          : null
-      const full = typeof unit.base_hash === 'string' ? unit.base_hash : ''
-      const prefix = running?.body_hash || ''
-      const hash = full || prefix || ''
-      if (!hash) return '—'
-      const kib = running?.image_kib
-      return kib != null ? `${hash} (${kib}K)` : hash
+        unit.ota && typeof unit.ota === "object"
+          ? /** @type {{ running?: { body_hash?: string, image_kib?: number } }} */ (
+              unit.ota
+            ).running
+          : null;
+      const full = typeof unit.base_hash === "string" ? unit.base_hash : "";
+      const prefix = running?.body_hash || "";
+      const hash = full || prefix || "";
+      if (!hash) return "—";
+      const kib = running?.image_kib;
+      return kib != null ? `${hash} (${kib}K)` : hash;
     }
 
     /** @param {Record<string, unknown> | null | undefined} running */
     function otaServingLabel(running) {
-      if (!running || typeof running !== 'object' || !('serving' in running)) return '—'
-      const r = /** @type {{ serving?: boolean, serving_count?: number }} */ (running)
-      const on = r.serving ? 'on' : 'off'
-      return r.serving_count != null ? `${on} (${r.serving_count})` : on
+      if (!running || typeof running !== "object" || !("serving" in running))
+        return "—";
+      const r = /** @type {{ serving?: boolean, serving_count?: number }} */ (
+        running
+      );
+      const on = r.serving ? "on" : "off";
+      return r.serving_count != null ? `${on} (${r.serving_count})` : on;
     }
 
     /** @param {Record<string, unknown> | null | undefined} running */
     function otaBlLabel(running) {
-      if (!running || typeof running !== 'object' || !('bl_apply' in running)) return '—'
-      const r = /** @type {{ bl_apply?: boolean, bl_rc?: string }} */ (running)
-      const apply = r.bl_apply ? 'apply' : 'NONE'
-      return r.bl_rc ? `${apply} rc=${r.bl_rc}` : apply
+      if (!running || typeof running !== "object" || !("bl_apply" in running))
+        return "—";
+      const r = /** @type {{ bl_apply?: boolean, bl_rc?: string }} */ (running);
+      const apply = r.bl_apply ? "apply" : "NONE";
+      return r.bl_rc ? `${apply} rc=${r.bl_rc}` : apply;
     }
 
     /** @param {Record<string, unknown> | undefined} unit */
     function canInstallUnit(unit) {
-      if (!unit || isInFlight(unit) || !manualAccepting.value) return false
-      const ota = unit.ota
-      if (!ota || typeof ota !== 'object') return false
-      const local = /** @type {{ state?: string }} */ (ota).local
-      const running = /** @type {{ bl_apply?: boolean }} */ (ota).running
-      if (local?.state !== 'ready') return false
-      if (running && running.bl_apply === false) return false
-      return true
+      if (!unit || isInFlight(unit) || !manualAccepting.value) return false;
+      const ota = unit.ota;
+      if (!ota || typeof ota !== "object") return false;
+      const local = /** @type {{ state?: string }} */ (ota).local;
+      const running = /** @type {{ bl_apply?: boolean }} */ (ota).running;
+      if (local?.state !== "ready") return false;
+      if (running && running.bl_apply === false) return false;
+      return true;
     }
 
     /** @param {Record<string, unknown> | undefined} unit @param {Record<string, unknown>} row */
     function canStageRow(unit, row) {
-      if (!unit || isInFlight(unit) || !manualAccepting.value) return false
-      const ota = unit.ota
-      const local = ota && typeof ota === 'object' ? /** @type {{ state?: string }} */ (ota).local : null
-      if (local?.state === 'downloading' || local?.state === 'ready') return false
-      return typeof row.index === 'number' || typeof row.index === 'string'
+      if (!unit || isInFlight(unit) || !manualAccepting.value) return false;
+      const ota = unit.ota;
+      const local =
+        ota && typeof ota === "object"
+          ? /** @type {{ state?: string }} */ (ota).local
+          : null;
+      if (local?.state === "downloading" || local?.state === "ready")
+        return false;
+      return typeof row.index === "number" || typeof row.index === "string";
     }
 
     /** @param {Record<string, unknown>} unit @param {'refresh' | 'pull' | 'push' | 'stage' | 'install'} job */
     function markOptimistic(unit, job) {
-      const key = String(unit.key)
-      const prev = fleet.units[key] || unit
+      const key = String(unit.key);
+      const prev = fleet.units[key] || unit;
       const stateMap = {
-        refresh: 'refreshing',
-        pull: 'pulling',
-        push: 'pushing',
-        stage: 'staging',
-        install: 'installing',
-      }
-      const state = stateMap[job] || 'polling'
+        refresh: "refreshing",
+        pull: "pulling",
+        push: "pushing",
+        stage: "staging",
+        install: "installing",
+      };
+      const state = stateMap[job] || "polling";
       fleet.units[key] = {
         ...prev,
         session: {
-          ...(typeof prev.session === 'object' && prev.session ? prev.session : {}),
+          ...(typeof prev.session === "object" && prev.session
+            ? prev.session
+            : {}),
           state,
-          stage: 'Logging in',
-          kind: 'login',
+          stage: "Logging in",
+          kind: "login",
           manual: true,
           job,
         },
-      }
+      };
     }
 
     /** @param {Record<string, unknown>} unit @param {'refresh' | 'pull' | 'push'} job @param {Event} [ev] */
     async function runManualJob(unit, job, ev) {
-      ev?.stopPropagation?.()
-      if (!canManualUnit(unit, job)) return
-      markOptimistic(unit, job)
-      pushMap()
-      const fn = job === 'refresh' ? refreshUnit : job === 'pull' ? pullUnit : pushUnit
+      ev?.stopPropagation?.();
+      if (!canManualUnit(unit, job)) return;
+      markOptimistic(unit, job);
+      pushMap();
+      const fn =
+        job === "refresh" ? refreshUnit : job === "pull" ? pullUnit : pushUnit;
       try {
-        const updated = await fn(String(unit.key))
-        applyUnit(updated)
-        pushMap()
+        const updated = await fn(String(unit.key));
+        applyUnit(updated);
+        pushMap();
       } catch (err) {
-        console.error(err)
+        console.error(err);
       }
     }
 
     /** @param {Record<string, unknown>} unit @param {Record<string, unknown>} row @param {Event} [ev] */
     async function runStage(unit, row, ev) {
-      ev?.stopPropagation?.()
-      if (!canStageRow(unit, row)) return
-      markOptimistic(unit, 'stage')
-      pushMap()
+      ev?.stopPropagation?.();
+      if (!canStageRow(unit, row)) return;
+      markOptimistic(unit, "stage");
+      pushMap();
       try {
-        const updated = await stageUnit(String(unit.key), row.index)
-        applyUnit(updated)
-        pushMap()
+        const updated = await stageUnit(String(unit.key), row.index);
+        applyUnit(updated);
+        pushMap();
       } catch (err) {
-        console.error(err)
+        console.error(err);
       }
     }
 
     /** @param {Record<string, unknown>} unit @param {Event} [ev] */
     async function runInstall(unit, ev) {
-      ev?.stopPropagation?.()
-      if (!canInstallUnit(unit)) return
-      const local = unit.ota && typeof unit.ota === 'object' ? /** @type {{ mid?: string }} */ (unit.ota).local : null
-      const mid = local?.mid || 'staged update'
+      ev?.stopPropagation?.();
+      if (!canInstallUnit(unit)) return;
+      const local =
+        unit.ota && typeof unit.ota === "object"
+          ? /** @type {{ mid?: string }} */ (unit.ota).local
+          : null;
+      const mid = local?.mid || "staged update";
       if (
         !window.confirm(
-          `Install OTA on ${unit.label || unit.key}? Node will reboot (${mid}). Wrong image can brick until USB recovery.`
+          `Install OTA on ${unit.label || unit.key}? Node will reboot (${mid}). Wrong image can brick until USB recovery.`,
         )
       ) {
-        return
+        return;
       }
-      markOptimistic(unit, 'install')
-      pushMap()
+      markOptimistic(unit, "install");
+      pushMap();
       try {
-        const updated = await installUnit(String(unit.key))
-        applyUnit(updated)
-        pushMap()
+        const updated = await installUnit(String(unit.key));
+        applyUnit(updated);
+        pushMap();
       } catch (err) {
-        console.error(err)
+        console.error(err);
       }
     }
 
-    const activeCount = computed(() => Object.values(fleet.units || {}).filter(isInFlight).length)
+    const activeCount = computed(
+      () => Object.values(fleet.units || {}).filter(isInFlight).length,
+    );
 
     const sortedUnits = computed(() => {
-      const q = search.value.trim().toLowerCase()
-      let units = Object.values(fleet.units || {})
-      if (listFilter.value === 'active') {
-        units = units.filter(isInFlight)
+      const q = search.value.trim().toLowerCase();
+      let units = Object.values(fleet.units || {});
+      if (listFilter.value === "active") {
+        units = units.filter(isInFlight);
       }
       if (q) {
         units = units.filter((u) => {
-          const hay = [u.key, u.unit_id, u.site, u.site_name, u.alias, u.label, u.notes]
+          const hay = [
+            u.key,
+            u.unit_id,
+            u.site,
+            u.site_name,
+            u.alias,
+            u.label,
+            u.notes,
+          ]
             .filter(Boolean)
-            .join(' ')
-            .toLowerCase()
-          return hay.includes(q)
-        })
+            .join(" ")
+            .toLowerCase();
+          return hay.includes(q);
+        });
       }
-      return units.sort(compareUnits)
-    })
+      return units.sort(compareUnits);
+    });
 
-    const selectedUnit = computed(() => (selectedKey.value ? fleet.units[selectedKey.value] : null))
+    const selectedUnit = computed(() =>
+      selectedKey.value ? fleet.units[selectedKey.value] : null,
+    );
 
-    const unitHistory = computed(() => selectedUnit.value?.history || null)
+    const unitHistory = computed(() => selectedUnit.value?.history || null);
 
     async function loadHistoriesFor(key) {
       try {
-        const res = await fetchPolls(key, historyHours)
-        loadHistories(key, res.histories || {})
+        const res = await fetchPolls(key, historyHours);
+        loadHistories(key, res.histories || {});
       } catch {
-        clearHistories(key)
+        clearHistories(key);
       }
     }
 
-    const sparkSeries = computed(() => seriesFromHistories(unitHistory.value || {}))
+    const sparkSeries = computed(() =>
+      seriesFromHistories(unitHistory.value || {}),
+    );
 
     const sparkDomain = computed(() => {
-      const now = Math.floor(Date.now() / 1000)
-      return { tMin: now - historyHours * 3600, tMax: now }
-    })
+      const now = Math.floor(Date.now() / 1000);
+      return { tMin: now - historyHours * 3600, tMax: now };
+    });
 
     const sparkModels = computed(() => {
       /** @type {Record<string, ReturnType<typeof sparklineWallTime>>} */
-      const out = {}
-      const domain = sparkDomain.value
+      const out = {};
+      const domain = sparkDomain.value;
       for (const row of METRIC_ROWS) {
-        const wave = !!row.wave
-        out[row.key] = sparklineWallTime(sparkSeries.value[row.key] || [], 168, 22, {
-          minSpan: SPARK_MIN_SPAN[row.key] || 0,
-          tMin: domain.tMin,
-          tMax: domain.tMax,
-          ...(wave ? { yMin: -90, yMax: 90, dots: false } : {}),
-        })
+        const wave = !!row.wave;
+        out[row.key] = sparklineWallTime(
+          sparkSeries.value[row.key] || [],
+          168,
+          22,
+          {
+            minSpan: SPARK_MIN_SPAN[row.key] || 0,
+            tMin: domain.tMin,
+            tMax: domain.tMax,
+            ...(wave ? { yMin: -90, yMax: 90, dots: false } : {}),
+          },
+        );
       }
-      return out
-    })
+      return out;
+    });
 
     const SPARK_VALUE_FORMAT = {
       battery_mv: (v) => `${v.toFixed(2)} V`,
@@ -933,357 +1105,485 @@ const App = {
       unreadable_pct: (v) => `${v.toFixed(1)}%`,
       recv_rate: (v) => `${v.toFixed(1)}/h`,
       noise_floor: (v) => `${Math.trunc(v)} dBm`,
-    }
+    };
 
     function metricNow(metric) {
-      const unit = selectedUnit.value
-      if (metric === 'sun') {
-        const points = sparkSeries.value.sun || []
-        const last = points[points.length - 1]
-        if (!last || last.value == null) return '—'
-        const elev = Number(last.value)
-        return `${elev >= 0 ? '☀️' : '🌙'} ${elev.toFixed(0)}∠`
+      const unit = selectedUnit.value;
+      if (metric === "sun") {
+        const points = sparkSeries.value.sun || [];
+        const last = points[points.length - 1];
+        if (!last || last.value == null) return "—";
+        const elev = Number(last.value);
+        return `${elev >= 0 ? "☀️" : "🌙"} ${elev.toFixed(0)}∠`;
       }
-      if (metric === 'battery_mv') {
-        const mv = unit?.status?.battery_mv
-        if (mv != null) return formatBattery(mv)
+      if (metric === "battery_mv") {
+        const mv = unit?.status?.battery_mv;
+        if (mv != null) return formatBattery(mv);
       }
-      if (metric === 'temperature') {
-        const t = unit?.telemetry?.temperature
-        if (t != null) return formatTemp(t)
+      if (metric === "temperature") {
+        const t = unit?.telemetry?.temperature;
+        if (t != null) return formatTemp(t);
       }
-      const points = sparkSeries.value[metric] || []
-      const last = [...points].reverse().find((p) => p.value != null && Number.isFinite(Number(p.value)))
-      if (!last) return '—'
-      const fmt = SPARK_VALUE_FORMAT[metric] || ((v) => String(v))
-      return fmt(Number(last.value))
+      const points = sparkSeries.value[metric] || [];
+      const last = [...points]
+        .reverse()
+        .find((p) => p.value != null && Number.isFinite(Number(p.value)));
+      if (!last) return "—";
+      const fmt = SPARK_VALUE_FORMAT[metric] || ((v) => String(v));
+      return fmt(Number(last.value));
     }
 
     /** Latest value as text when there are too few points for a line. */
     function sparkFallback(metric) {
-      return metricNow(metric)
+      return metricNow(metric);
     }
 
     function formatPollDelta(recv, sent) {
-      const parts = []
-      if (recv != null) parts.push(`+${recv}`)
-      if (sent != null) parts.push(`+${sent}`)
-      return parts.length ? parts.join(' / ') : '—'
+      const parts = [];
+      if (recv != null) parts.push(`+${recv}`);
+      if (sent != null) parts.push(`+${sent}`);
+      return parts.length ? parts.join(" / ") : "—";
     }
 
     function formatPollVoltage(poll) {
-      if (poll?.battery_mv != null) return formatBattery(poll.battery_mv)
-      return '—'
+      if (poll?.battery_mv != null) return formatBattery(poll.battery_mv);
+      return "—";
     }
 
     function formatPollTemp(poll) {
-      return poll?.temperature != null ? formatTemp(poll.temperature) : '—'
+      return poll?.temperature != null ? formatTemp(poll.temperature) : "—";
     }
 
     function voltageStock(poll) {
-      return formatSignedDelta(poll?.delta_voltage, 2)
+      return formatSignedDelta(poll?.delta_voltage, 2);
     }
 
     function tempStock(poll) {
-      const d = poll?.delta_temperature
-      if (d == null || !Number.isFinite(Number(d))) return null
-      return formatSignedDelta((Number(d) * 9) / 5, 0)
+      const d = poll?.delta_temperature;
+      if (d == null || !Number.isFinite(Number(d))) return null;
+      return formatSignedDelta((Number(d) * 9) / 5, 0);
     }
 
     function unitKeyFromLocation() {
-      const raw = new URLSearchParams(location.search).get('unit')
-      if (!raw) return null
-      const needle = raw.trim()
-      if (!needle) return null
-      if (fleet.units[needle]) return needle
-      const lower = needle.toLowerCase()
-      if (fleet.units[lower]) return lower
+      const raw = new URLSearchParams(location.search).get("unit");
+      if (!raw) return null;
+      const needle = raw.trim();
+      if (!needle) return null;
+      if (fleet.units[needle]) return needle;
+      const lower = needle.toLowerCase();
+      if (fleet.units[lower]) return lower;
       for (const [k, u] of Object.entries(fleet.units || {})) {
-        if (k.toLowerCase() === lower) return k
-        if (String(u.unit_id || '').toLowerCase() === lower) return k
+        if (k.toLowerCase() === lower) return k;
+        if (String(u.unit_id || "").toLowerCase() === lower) return k;
       }
-      return lower
+      return lower;
     }
 
     function syncLocation(key) {
-      const url = new URL(location.href)
-      if (key) url.searchParams.set('unit', key)
-      else url.searchParams.delete('unit')
+      const url = new URL(location.href);
+      if (key) url.searchParams.set("unit", key);
+      else url.searchParams.delete("unit");
       if (consoleOpen.value) {
-        url.searchParams.set('console', '1')
-        if (consoleActiveId.value) url.searchParams.set('ctab', consoleActiveId.value)
-        else url.searchParams.delete('ctab')
+        url.searchParams.set("console", "1");
+        if (consoleActiveId.value)
+          url.searchParams.set("ctab", consoleActiveId.value);
+        else url.searchParams.delete("ctab");
       } else {
-        url.searchParams.delete('console')
-        url.searchParams.delete('ctab')
+        url.searchParams.delete("console");
+        url.searchParams.delete("ctab");
       }
-      const next = `${url.pathname}${url.search}${url.hash}`
-      const cur = `${location.pathname}${location.search}${location.hash}`
-      if (next === cur) return
-      history.replaceState(null, '', next)
+      if (mapOpen.value) url.searchParams.set("map", "1");
+      else url.searchParams.delete("map");
+      const next = `${url.pathname}${url.search}${url.hash}`;
+      const cur = `${location.pathname}${location.search}${location.hash}`;
+      if (next === cur) return;
+      history.replaceState(null, "", next);
     }
 
-    function openUnit(key, { fly = true } = {}) {
-      selectedKey.value = key
-      syncLocation(key)
-      if (fly) mapCtrl?.flyTo(key, fleet)
-      mapCtrl?.sync(fleet, key, fleet.now)
-      loadHistoriesFor(key)
+    function openDetail(key, { fly = false } = {}) {
+      hideConsole();
+      hideMap();
+      selectedKey.value = key;
+      mapHighlightKey.value = key;
+      syncLocation(key);
+      if (fly && mapCtrl) mapCtrl.flyTo(key, fleet);
+      pushMap();
+      loadHistoriesFor(key);
+    }
+
+    function selectFromDashboard(key) {
+      if (selectedKey.value === key) {
+        clearSelection();
+        return;
+      }
+      openDetail(key);
+    }
+
+    function selectFromMap(key) {
+      if (mapHighlightKey.value === key) {
+        openDetail(key);
+        return;
+      }
+      mapHighlightKey.value = key;
+      mapCtrl?.flyTo(key, fleet);
+      pushMap();
     }
 
     async function applyLocationUnit() {
-      const key = unitKeyFromLocation()
+      const key = unitKeyFromLocation();
       if (!key) {
         if (selectedKey.value) {
-          selectedKey.value = null
-          mapCtrl?.sync(fleet, null, fleet.now)
+          selectedKey.value = null;
+          pushMap();
         }
-        return
+        return;
       }
-      if (!fleet.units[key]) return
-      if (selectedKey.value === key) return
-      openUnit(key)
+      if (!fleet.units[key]) return;
+      if (selectedKey.value === key) return;
+      openDetail(key);
     }
 
     async function selectUnit(key) {
-      const wasConsole = consoleOpen.value
-      if (wasConsole) hideConsole()
-      if (selectedKey.value === key) {
-        if (wasConsole) {
-          syncLocation(key)
-          return
-        }
-        await clearSelection()
-        return
-      }
-      openUnit(key)
+      await selectFromDashboard(key);
     }
 
     function hideConsoleAtEvent(ev) {
-      const key = mapCtrl?.hitUnit?.(ev.clientX, ev.clientY)
+      const key = mapCtrl?.hitUnit?.(ev.clientX, ev.clientY);
       if (key) {
-        selectUnit(key)
-        return
+        selectFromMap(key);
+        return;
       }
-      hideConsole()
+      hideConsole();
+    }
+
+    function hideMapAtEvent(ev) {
+      const key = mapCtrl?.hitUnit?.(ev.clientX, ev.clientY);
+      if (key) {
+        selectFromMap(key);
+        return;
+      }
+      hideMap();
     }
 
     async function clearSelection() {
-      selectedKey.value = null
-      syncLocation(null)
-      mapCtrl?.sync(fleet, null, fleet.now)
+      selectedKey.value = null;
+      syncLocation(null);
+      pushMap();
     }
 
-    const modalDownOnBackdrop = ref(false)
+    const modalDownOnBackdrop = ref(false);
 
     function onModalBackdropMouseDown() {
-      modalDownOnBackdrop.value = true
+      modalDownOnBackdrop.value = true;
     }
 
     function onModalBackdropMouseUp() {
-      if (modalDownOnBackdrop.value) clearSelection()
-      modalDownOnBackdrop.value = false
+      if (modalDownOnBackdrop.value) clearSelection();
+      modalDownOnBackdrop.value = false;
     }
 
     function onModalPanelMouseUp() {
-      modalDownOnBackdrop.value = false
+      modalDownOnBackdrop.value = false;
     }
 
     /** @param {Record<string, unknown> | undefined} unit */
     function sessionBadgeTitle(unit) {
-      const s = unit?.session
-      if (!s || typeof s !== 'object') return ''
-      const parts = []
-      const attempt = s.attempt
-      const max = s.max_attempts
-      if (typeof attempt === 'number' && attempt > 0 && typeof max === 'number' && max > 0) {
-        parts.push(`${attempt}/${max}`)
-      } else if (typeof attempt === 'number' && attempt > 0) {
-        parts.push(`attempt ${attempt}`)
+      const s = unit?.session;
+      if (!s || typeof s !== "object") return "";
+      const parts = [];
+      const attempt = s.attempt;
+      const max = s.max_attempts;
+      if (
+        typeof attempt === "number" &&
+        attempt > 0 &&
+        typeof max === "number" &&
+        max > 0
+      ) {
+        parts.push(`${attempt}/${max}`);
+      } else if (typeof attempt === "number" && attempt > 0) {
+        parts.push(`attempt ${attempt}`);
       }
-      if (typeof s.error === 'string' && s.error) parts.push(s.error)
-      return parts.join(' · ')
+      if (typeof s.error === "string" && s.error) parts.push(s.error);
+      return parts.join(" · ");
     }
 
     function cardPrimary(unit) {
-      return unitLabel(unit)
+      return unitLabel(unit);
     }
 
     function cardNodeId(unit) {
-      return String(unit.unit_id || unit.key || '')
+      return String(unit.unit_id || unit.key || "");
     }
 
     function cardShowNodeId(unit) {
-      const id = cardNodeId(unit)
-      return !!id && id !== cardPrimary(unit)
+      const id = cardNodeId(unit);
+      return !!id && id !== cardPrimary(unit);
     }
 
+    function cardStatusLine(unit) {
+      if (isInFlight(unit)) return unitStage(unit);
+      return healthMark(unit);
+    }
+
+    function cardVoltage(unit) {
+      const mv = unit?.status?.battery_mv;
+      if (mv != null) return formatBattery(mv);
+      const pts = unit?.sparks?.battery_mv || [];
+      const last = pts[pts.length - 1];
+      if (last?.value != null && Number.isFinite(Number(last.value))) {
+        return `${Number(last.value).toFixed(2)} V`;
+      }
+      return "—";
+    }
+
+    function cardTraffic(unit) {
+      const pts = unit?.sparks?.recv_rate || [];
+      const last = [...pts]
+        .reverse()
+        .find((p) => p.value != null && Number.isFinite(Number(p.value)));
+      if (!last) return "—";
+      return `${Number(last.value).toFixed(1)}/h`;
+    }
+
+    function cardTemp(unit) {
+      const t = unit?.telemetry?.temperature;
+      if (t != null) return formatTemp(t);
+      const pts = unit?.sparks?.temperature || [];
+      const last = pts[pts.length - 1];
+      if (last?.value != null && Number.isFinite(Number(last.value))) {
+        return formatTemp(Number(last.value));
+      }
+      return "—";
+    }
+
+    function cardError(unit) {
+      const pts = unit?.sparks?.unreadable_pct || [];
+      const last = [...pts]
+        .reverse()
+        .find((p) => p.value != null && Number.isFinite(Number(p.value)));
+      if (last) return `${Number(last.value).toFixed(1)}%`;
+      const st = unit?.status;
+      if (st?.recv_errors != null && st?.packets_recv != null) {
+        const total = Number(st.packets_recv) + Number(st.recv_errors);
+        if (total > 0)
+          return `${((Number(st.recv_errors) / total) * 100).toFixed(1)}%`;
+      }
+      return "—";
+    }
+
+    function cardMetricValue(unit, metric) {
+      if (metric === "battery_mv") return cardVoltage(unit);
+      if (metric === "temperature") return cardTemp(unit);
+      if (metric === "recv_rate") return cardTraffic(unit);
+      if (metric === "unreadable_pct") return cardError(unit);
+      return "—";
+    }
+
+    const dashboardSparkDomain = computed(() => {
+      const now = Math.floor(Date.now() / 1000);
+      return { tMin: now - historyHours * 3600, tMax: now };
+    });
+
+    function dashboardSparkModel(unit, metric) {
+      const sparks = unit?.sparks || {};
+      const points = sparks[metric] || [];
+      const domain = dashboardSparkDomain.value;
+      return sparklineWallTime(points, DASH_SPARK_W, DASH_SPARK_H, {
+        minSpan: SPARK_MIN_SPAN[metric] || 0,
+        tMin: domain.tMin,
+        tMax: domain.tMax,
+      });
+    }
+
+    function dashboardSparkHasData(unit, metric) {
+      const m = dashboardSparkModel(unit, metric);
+      return !!(m && (m.line || (m.dots && m.dots.length)));
+    }
+
+    const DASH_METRICS = [
+      { key: "battery_mv", label: "V", stroke: "#6ee7a0" },
+      { key: "temperature", label: "Temp", stroke: "#f0b86e" },
+      { key: "recv_rate", label: "In/h", stroke: "#4ea1ff" },
+      { key: "unreadable_pct", label: "Err", stroke: "#f06e6e" },
+    ];
+
     function syncBookDrafts(unit) {
-      if (!unit || aliasEditing.value || notesEditing.value) return
-      aliasDraft.value = typeof unit.alias === 'string' ? unit.alias : ''
-      notesDraft.value = typeof unit.notes === 'string' ? unit.notes : ''
+      if (!unit || aliasEditing.value || notesEditing.value) return;
+      aliasDraft.value = typeof unit.alias === "string" ? unit.alias : "";
+      notesDraft.value = typeof unit.notes === "string" ? unit.notes : "";
     }
 
     watch(selectedKey, (key) => {
-      aliasEditing.value = false
-      notesEditing.value = false
-      resetLogShown()
-      syncBookDrafts(selectedUnit.value)
-      syncLocation(key)
-    })
+      aliasEditing.value = false;
+      notesEditing.value = false;
+      resetLogShown();
+      syncBookDrafts(selectedUnit.value);
+      syncLocation(key);
+    });
 
     watch(consoleActiveId, (id) => {
-      persistConsole()
+      persistConsole();
       if (consoleOpen.value) {
-        if (id) seeConsoleTab(id)
-        syncLocation(selectedKey.value)
+        if (id) seeConsoleTab(id);
+        syncLocation(selectedKey.value);
       }
-    })
+    });
 
     watch(
       () => selectedUnit.value?.alias,
-      () => syncBookDrafts(selectedUnit.value)
-    )
+      () => syncBookDrafts(selectedUnit.value),
+    );
     watch(
       () => selectedUnit.value?.notes,
-      () => syncBookDrafts(selectedUnit.value)
-    )
+      () => syncBookDrafts(selectedUnit.value),
+    );
 
     /** @param {Record<string, unknown>} unit */
     async function saveAlias(unit) {
-      aliasEditing.value = false
-      const next = aliasDraft.value.trim()
-      const prev = typeof unit.alias === 'string' ? unit.alias : ''
-      if (next === prev) return
+      aliasEditing.value = false;
+      const next = aliasDraft.value.trim();
+      const prev = typeof unit.alias === "string" ? unit.alias : "";
+      if (next === prev) return;
       try {
-        const updated = await patchUnit(String(unit.key), { alias: next || null })
-        applyUnit(updated)
-        pushMap()
+        const updated = await patchUnit(String(unit.key), {
+          alias: next || null,
+        });
+        applyUnit(updated);
+        pushMap();
       } catch (err) {
-        console.error(err)
-        aliasDraft.value = prev
+        console.error(err);
+        aliasDraft.value = prev;
       }
     }
 
     /** @param {Record<string, unknown>} unit */
     async function saveNotes(unit) {
-      notesEditing.value = false
-      const next = notesDraft.value
-      const prev = typeof unit.notes === 'string' ? unit.notes : ''
-      if (next === prev) return
+      notesEditing.value = false;
+      const next = notesDraft.value;
+      const prev = typeof unit.notes === "string" ? unit.notes : "";
+      if (next === prev) return;
       try {
-        const updated = await patchUnit(String(unit.key), { notes: next.trim() ? next : null })
-        applyUnit(updated)
+        const updated = await patchUnit(String(unit.key), {
+          notes: next.trim() ? next : null,
+        });
+        applyUnit(updated);
       } catch (err) {
-        console.error(err)
-        notesDraft.value = prev
+        console.error(err);
+        notesDraft.value = prev;
       }
     }
 
     async function togglePublic(unit, ev) {
       try {
-        const updated = await patchUnit(unit.key, { public: ev.target.checked })
-        applyUnit(updated)
-        pushMap()
+        const updated = await patchUnit(unit.key, {
+          public: ev.target.checked,
+        });
+        applyUnit(updated);
+        pushMap();
       } catch (err) {
-        console.error(err)
+        console.error(err);
       }
     }
 
     /** @param {Record<string, unknown>} unit @param {Event} [ev] */
     async function togglePaused(unit, ev) {
-      ev?.stopPropagation?.()
-      const next = ev && ev.target && 'checked' in ev.target ? !!ev.target.checked : !unit.paused
+      ev?.stopPropagation?.();
+      const next =
+        ev && ev.target && "checked" in ev.target
+          ? !!ev.target.checked
+          : !unit.paused;
       try {
-        const updated = await patchUnit(String(unit.key), { paused: next })
-        applyUnit(updated)
-        pushMap()
+        const updated = await patchUnit(String(unit.key), { paused: next });
+        applyUnit(updated);
+        pushMap();
       } catch (err) {
-        console.error(err)
+        console.error(err);
       }
     }
 
     /** @param {Record<string, unknown>} unit @param {Event} [ev] */
     async function toggleFlood(unit, ev) {
-      ev?.stopPropagation?.()
-      const next = ev && ev.target && 'checked' in ev.target ? !!ev.target.checked : !unit.flood
+      ev?.stopPropagation?.();
+      const next =
+        ev && ev.target && "checked" in ev.target
+          ? !!ev.target.checked
+          : !unit.flood;
       try {
-        const updated = await patchUnit(String(unit.key), { flood: next })
-        applyUnit(updated)
-        pushMap()
+        const updated = await patchUnit(String(unit.key), { flood: next });
+        applyUnit(updated);
+        pushMap();
       } catch (err) {
-        console.error(err)
+        console.error(err);
       }
     }
     function pushMap() {
-      mapCtrl?.sync(fleet, selectedKey.value, fleet.now)
+      mapCtrl?.sync(fleet, mapHighlightKey.value, fleet.now);
     }
 
     onMounted(async () => {
-      // Let Vue finish layout so #map has non-zero size before MapLibre inits.
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
-      startClock()
-      mapCtrl = createMapController('map', selectUnit, clearSelection)
+      startClock();
+      const onKey = (e) => {
+        if (e.key === "Escape") {
+          if (consoleOpen.value) {
+            hideConsole();
+            return;
+          }
+          if (mapOpen.value) {
+            hideMap();
+            return;
+          }
+          clearSelection();
+        }
+      };
+      const onPageHide = () => persistConsole();
+      window.addEventListener("pagehide", onPageHide);
+      const onPop = () => applyLocationUnit();
+      window.addEventListener("keydown", onKey);
+      window.addEventListener("popstate", onPop);
+      onUnmounted(() => {
+        window.removeEventListener("keydown", onKey);
+        window.removeEventListener("popstate", onPop);
+        window.removeEventListener("pagehide", onPageHide);
+      });
+      try {
+        applyHello(await fetchFleet());
+        applyLocationUnit();
+        await maybeReopenConsole();
+        await maybeReopenMap();
+      } catch (err) {
+        console.error(err);
+      }
       watch(
         () => fleet.now,
-        () => pushMap()
-      )
-      const onKey = (e) => {
-        if (e.key === 'Escape') {
-          if (consoleOpen.value) {
-            hideConsole()
-            return
-          }
-          clearSelection()
-        }
-      }
-      const onPageHide = () => persistConsole()
-      window.addEventListener('pagehide', onPageHide)
-      const onPop = () => applyLocationUnit()
-      window.addEventListener('keydown', onKey)
-      window.addEventListener('popstate', onPop)
-      onUnmounted(() => {
-        window.removeEventListener('keydown', onKey)
-        window.removeEventListener('popstate', onPop)
-        window.removeEventListener('pagehide', onPageHide)
-      })
-      try {
-        applyHello(await fetchFleet())
-        applyLocationUnit()
-        await maybeReopenConsole()
-      } catch (err) {
-        console.error(err)
-      }
-      pushMap()
-      // Second sync after layout/tiles settle.
-      requestAnimationFrame(() => pushMap())
+        () => pushMap(),
+      );
       es = connectEvents({
         onHello: (snap) => {
-          applyHello(snap)
-          applyLocationUnit()
-          maybeReopenConsole()
-          pushMap()
+          applyHello(snap);
+          applyLocationUnit();
+          maybeReopenConsole();
+          pushMap();
         },
         onUnit: (unit) => {
-          applyUnit(unit)
-          pushMap()
+          applyUnit(unit);
+          pushMap();
         },
         onSession: (poll) => {
-          applySession(poll)
+          applySession(poll);
         },
         onConsole: (event) => {
-          applyConsoleEvent(event)
+          applyConsoleEvent(event);
         },
-      })
-    })
+      });
+    });
 
-    watch(search, () => {})
+    watch(search, () => {});
 
     onUnmounted(() => {
-      stopClock()
-      es?.close()
-      mapCtrl?.destroy()
-    })
+      stopClock();
+      es?.close();
+      mapCtrl?.destroy();
+    });
 
     return {
       fleet,
@@ -1311,15 +1611,33 @@ const App = {
       cardPrimary,
       cardNodeId,
       cardShowNodeId,
+      cardStatusLine,
+      cardVoltage,
+      cardTraffic,
+      cardTemp,
+      cardError,
+      cardMetricValue,
+      dashboardSparkHasData,
+      dashboardSparkModel,
+      DASH_METRICS,
+      DASH_SPARK_W,
+      DASH_SPARK_H,
+      mapOpen,
+      mapHighlightKey,
+      toggleMap,
+      hideMap,
+      hideMapAtEvent,
+      selectFromDashboard,
+      selectFromMap,
       aliasDraft,
       notesDraft,
       saveAlias,
       saveNotes,
       onAliasFocus: () => {
-        aliasEditing.value = true
+        aliasEditing.value = true;
       },
       onNotesFocus: () => {
-        notesEditing.value = true
+        notesEditing.value = true;
       },
       formatAgo,
       formatRelative,
@@ -1408,7 +1726,7 @@ const App = {
       savePendingCmd,
       dropPendingCmd,
       clearPendingAll,
-    }
+    };
   },
   template: `
     <header id="header">
@@ -1434,6 +1752,20 @@ const App = {
           />
         </label>
       </div>
+      <div class="header-actions">
+      <button
+        type="button"
+        class="map-launch console-launch"
+        :class="{ 'is-open': mapOpen }"
+        title="Map"
+        aria-label="Open map"
+        @click="toggleMap"
+      >
+        <svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7">
+          <path d="M3 6.5l7-3.5 7 3.5v7L10 17 3 13.5v-7z" stroke-linejoin="round" />
+          <path d="M10 3v14M3 6.5l7 3.5 7-3.5" stroke-linejoin="round" />
+        </svg>
+      </button>
       <button
         type="button"
         class="console-launch"
@@ -1450,16 +1782,125 @@ const App = {
         <span v-if="consoleUnread" class="console-launch-unread" aria-hidden="true">*</span>
         <span v-if="consoleTabs.length" class="console-launch-badge">{{ consoleTabs.length }}</span>
       </button>
+      </div>
     </header>
-    <div id="layout">
-      <main id="map-wrap">
-        <div id="map"></div>
-        <div
-          v-if="selectedUnit"
-          class="detail-modal"
-          @mousedown.self="onModalBackdropMouseDown"
-          @mouseup.self="onModalBackdropMouseUp"
+    <main id="dashboard">
+      <div class="dashboard-toolbar">
+        <div class="list-filter" role="tablist" aria-label="Dashboard filter">
+          <button
+            type="button"
+            role="tab"
+            :class="{ on: listFilter === 'all' }"
+            :aria-selected="listFilter === 'all'"
+            @click="listFilter = 'all'"
+          >
+            All
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :class="{ on: listFilter === 'active' }"
+            :aria-selected="listFilter === 'active'"
+            @click="listFilter = 'active'"
+          >
+            Active{{ activeCount ? ' ' + activeCount : '' }}
+          </button>
+        </div>
+      </div>
+      <div class="dashboard-grid">
+        <p v-if="!sortedUnits.length" class="list-empty">
+          {{ listFilter === 'active' ? 'Nothing in flight.' : 'No units.' }}
+        </p>
+        <article
+          v-for="unit in sortedUnits"
+          :key="unit.key"
+          class="dash-card"
+          :class="{ selected: unit.key === selectedKey, paused: !!unit.paused, busy: isInFlight(unit) }"
+          @click="selectFromDashboard(unit.key)"
         >
+          <div class="dash-head">
+            <span class="dash-title" :title="healthTooltip(unit.health)">
+              <span class="unit-name" :class="'unit-name-' + healthHeadline(unit)">{{ cardPrimary(unit) }}</span>
+            </span>
+            <div class="unit-actions">
+              <button
+                type="button"
+                class="unit-console"
+                :class="{ 'is-unread': unitConsoleUnread(unit), 'is-busy': unitConsoleBusy(unit) }"
+                title="Console"
+                :aria-label="unitConsoleUnread(unit) ? 'Open console (unread)' : 'Open console'"
+                @click.stop="openConsoleForUnit(unit, $event)"
+              >
+                <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7">
+                  <rect x="2.5" y="3.5" width="15" height="13" rx="1.5" />
+                  <path d="M6 8.5l2.2 1.6L6 11.7" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M10.2 12.4H14" stroke-linecap="round" />
+                </svg>
+                <span v-if="unitConsoleUnread(unit)" class="unit-console-unread" aria-hidden="true">*</span>
+              </button>
+              <button
+                v-if="manualAccepting"
+                type="button"
+                class="unit-refresh"
+                :class="{ spinning: isInFlight(unit) }"
+                :disabled="!canManualUnit(unit, 'refresh')"
+                :title="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
+                :aria-label="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
+                @click.stop="runManualJob(unit, 'refresh', $event)"
+              >
+                <span class="unit-refresh-icon" aria-hidden="true">↻</span>
+              </button>
+            </div>
+          </div>
+          <div class="dash-meta">
+            <span v-if="cardShowNodeId(unit)" class="unit-id">{{ cardNodeId(unit) }}</span>
+            <span v-if="unit.ota_badge" class="ota-list-badge" :class="'ota-badge-' + unit.ota_badge.replace(' ', '-')">{{
+              unit.ota_badge
+            }}</span>
+            <span class="unit-ago">{{ formatRelative(unit.last_heard, fleet.now) }}</span>
+          </div>
+          <div class="dash-metrics">
+            <div v-for="row in DASH_METRICS" :key="row.key" class="dash-metric">
+              <span class="dash-metric-label">{{ row.label }}</span>
+              <span class="dash-metric-val">{{ cardMetricValue(unit, row.key) }}</span>
+              <svg
+                v-if="dashboardSparkHasData(unit, row.key)"
+                class="dash-spark"
+                :width="DASH_SPARK_W"
+                :height="DASH_SPARK_H"
+                :viewBox="'0 0 ' + DASH_SPARK_W + ' ' + DASH_SPARK_H"
+                aria-hidden="true"
+              >
+                <polyline
+                  v-if="dashboardSparkModel(unit, row.key).line"
+                  fill="none"
+                  :stroke="row.stroke"
+                  stroke-width="1.4"
+                  :points="dashboardSparkModel(unit, row.key).line"
+                />
+                <circle
+                  v-for="(dot, di) in dashboardSparkModel(unit, row.key).dots"
+                  :key="di"
+                  :cx="dot.x"
+                  :cy="dot.y"
+                  r="1.4"
+                  :fill="row.stroke"
+                />
+              </svg>
+            </div>
+          </div>
+          <div class="dash-status" :class="{ busy: isInFlight(unit) }" :title="sessionBadgeTitle(unit)">
+            {{ cardStatusLine(unit) }}
+          </div>
+        </article>
+      </div>
+    </main>
+    <div
+      v-if="selectedUnit"
+      class="detail-modal overlay-modal"
+      @mousedown.self="onModalBackdropMouseDown"
+      @mouseup.self="onModalBackdropMouseUp"
+    >
           <div
             id="detail"
             class="detail"
@@ -1971,11 +2412,11 @@ const App = {
           </section>
           </div>
         </div>
-        <div
-          v-if="consoleOpen"
-          class="console-modal"
-          @mousedown.self="hideConsoleAtEvent"
-        >
+    <div
+      v-if="consoleOpen"
+      class="console-modal overlay-modal"
+      @mousedown.self="hideConsoleAtEvent"
+    >
           <div class="console-shell" role="dialog" aria-modal="true" aria-label="Console" @mousedown.stop>
             <div class="console-tabs">
               <button
@@ -2122,99 +2563,114 @@ const App = {
             <p v-else class="console-empty">Pick a unit to open a tab.</p>
           </div>
         </div>
-      </main>
-      <aside id="sidebar">
-        <div class="sidebar-toolbar">
-          <div class="list-filter" role="tablist" aria-label="List filter">
-            <button
-              type="button"
-              role="tab"
-              :class="{ on: listFilter === 'all' }"
-              :aria-selected="listFilter === 'all'"
-              @click="listFilter = 'all'"
-            >
-              All
-            </button>
-            <button
-              type="button"
-              role="tab"
-              :class="{ on: listFilter === 'active' }"
-              :aria-selected="listFilter === 'active'"
-              @click="listFilter = 'active'"
-            >
-              Active{{ activeCount ? ' ' + activeCount : '' }}
-            </button>
-          </div>
+    <div
+      v-show="mapOpen"
+      class="map-modal overlay-modal"
+      @mousedown.self="hideMapAtEvent"
+    >
+      <div class="map-shell" role="dialog" aria-modal="true" aria-label="Map" @mousedown.stop>
+        <div class="map-modal-head">
+          <span class="map-modal-title">Map</span>
+          <button type="button" class="console-modal-close" aria-label="Hide map" @click="hideMap">×</button>
         </div>
-        <div id="unit-list">
-          <p v-if="!sortedUnits.length" class="list-empty">
-            {{ listFilter === 'active' ? 'Nothing in flight.' : 'No units.' }}
-          </p>
-          <div
-            v-for="unit in sortedUnits"
-            :key="unit.key"
-            class="unit-card"
-            :class="{ selected: unit.key === selectedKey, paused: !!unit.paused, busy: isInFlight(unit) }"
-            @click="selectUnit(unit.key)"
-          >
-            <div class="unit-row1">
-              <span class="unit-title" :title="healthTooltip(unit.health)">
-                <span class="unit-name" :class="'unit-name-' + healthHeadline(unit)">{{ cardPrimary(unit) }}</span>
-                <span class="unit-meta">
-                  <span v-if="cardShowNodeId(unit)" class="unit-id">{{ cardNodeId(unit) }}</span>
-                  <span v-if="unit.ota_badge" class="ota-list-badge" :class="'ota-badge-' + unit.ota_badge.replace(' ', '-')">{{
-                    unit.ota_badge
-                  }}</span>
-                  <span class="unit-ago">{{ formatRelative(unit.last_heard, fleet.now) }}</span>
-                </span>
-              </span>
-              <div class="unit-actions">
+        <div id="layout" class="map-layout">
+          <div id="map-wrap">
+            <div id="map"></div>
+          </div>
+          <aside id="sidebar">
+            <div class="sidebar-toolbar">
+              <div class="list-filter" role="tablist" aria-label="List filter">
                 <button
                   type="button"
-                  class="unit-console"
-                  :class="{
-                    'is-unread': unitConsoleUnread(unit),
-                    'is-busy': unitConsoleBusy(unit),
-                  }"
-                  title="Console"
-                  :aria-label="unitConsoleUnread(unit) ? 'Open console (unread)' : 'Open console'"
-                  @click.stop="openConsoleForUnit(unit, $event)"
+                  role="tab"
+                  :class="{ on: listFilter === 'all' }"
+                  :aria-selected="listFilter === 'all'"
+                  @click="listFilter = 'all'"
                 >
-                  <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7">
-                    <rect x="2.5" y="3.5" width="15" height="13" rx="1.5" />
-                    <path d="M6 8.5l2.2 1.6L6 11.7" stroke-linecap="round" stroke-linejoin="round" />
-                    <path d="M10.2 12.4H14" stroke-linecap="round" />
-                  </svg>
-                  <span v-if="unitConsoleUnread(unit)" class="unit-console-unread" aria-hidden="true">*</span>
+                  All
                 </button>
                 <button
-                  v-if="manualAccepting"
                   type="button"
-                  class="unit-refresh"
-                  :class="{ spinning: isInFlight(unit) }"
-                  :disabled="!canManualUnit(unit, 'refresh')"
-                  :title="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
-                  :aria-label="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
-                  @click.stop="runManualJob(unit, 'refresh', $event)"
+                  role="tab"
+                  :class="{ on: listFilter === 'active' }"
+                  :aria-selected="listFilter === 'active'"
+                  @click="listFilter = 'active'"
                 >
-                  <span class="unit-refresh-icon" aria-hidden="true">↻</span>
+                  Active{{ activeCount ? ' ' + activeCount : '' }}
                 </button>
               </div>
             </div>
-            <Transition name="stage">
+            <div id="unit-list">
+              <p v-if="!sortedUnits.length" class="list-empty">
+                {{ listFilter === 'active' ? 'Nothing in flight.' : 'No units.' }}
+              </p>
               <div
-                v-if="isInFlight(unit)"
-                class="unit-stage"
-                :title="sessionBadgeTitle(unit)"
+                v-for="unit in sortedUnits"
+                :key="unit.key"
+                class="unit-card"
+                :class="{ selected: unit.key === mapHighlightKey, paused: !!unit.paused, busy: isInFlight(unit) }"
+                @click="selectFromMap(unit.key)"
               >
-                {{ unitStage(unit) }}
+                <div class="unit-row1">
+                  <span class="unit-title" :title="healthTooltip(unit.health)">
+                    <span class="unit-name" :class="'unit-name-' + healthHeadline(unit)">{{ cardPrimary(unit) }}</span>
+                    <span class="unit-meta">
+                      <span v-if="cardShowNodeId(unit)" class="unit-id">{{ cardNodeId(unit) }}</span>
+                      <span v-if="unit.ota_badge" class="ota-list-badge" :class="'ota-badge-' + unit.ota_badge.replace(' ', '-')">{{
+                        unit.ota_badge
+                      }}</span>
+                      <span class="unit-ago">{{ formatRelative(unit.last_heard, fleet.now) }}</span>
+                    </span>
+                  </span>
+                  <div class="unit-actions">
+                    <button
+                      type="button"
+                      class="unit-console"
+                      :class="{
+                        'is-unread': unitConsoleUnread(unit),
+                        'is-busy': unitConsoleBusy(unit),
+                      }"
+                      title="Console"
+                      :aria-label="unitConsoleUnread(unit) ? 'Open console (unread)' : 'Open console'"
+                      @click.stop="openConsoleForUnit(unit, $event)"
+                    >
+                      <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7">
+                        <rect x="2.5" y="3.5" width="15" height="13" rx="1.5" />
+                        <path d="M6 8.5l2.2 1.6L6 11.7" stroke-linecap="round" stroke-linejoin="round" />
+                        <path d="M10.2 12.4H14" stroke-linecap="round" />
+                      </svg>
+                      <span v-if="unitConsoleUnread(unit)" class="unit-console-unread" aria-hidden="true">*</span>
+                    </button>
+                    <button
+                      v-if="manualAccepting"
+                      type="button"
+                      class="unit-refresh"
+                      :class="{ spinning: isInFlight(unit) }"
+                      :disabled="!canManualUnit(unit, 'refresh')"
+                      :title="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
+                      :aria-label="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
+                      @click.stop="runManualJob(unit, 'refresh', $event)"
+                    >
+                      <span class="unit-refresh-icon" aria-hidden="true">↻</span>
+                    </button>
+                  </div>
+                </div>
+                <Transition name="stage">
+                  <div
+                    v-if="isInFlight(unit)"
+                    class="unit-stage"
+                    :title="sessionBadgeTitle(unit)"
+                  >
+                    {{ unitStage(unit) }}
+                  </div>
+                </Transition>
               </div>
-            </Transition>
-          </div>
+            </div>
+          </aside>
         </div>
-      </aside>
+      </div>
     </div>
   `,
-}
+};
 
-createApp(App).mount('#app')
+createApp(App).mount("#app");

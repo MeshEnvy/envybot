@@ -142,7 +142,10 @@ BLE companion for `fleet` / `trust` / `cmd`. USB DUT for `onboard`.
 Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 
 - **Fleet UI:** `./envybot fleet` serves `127.0.0.1:8787` by default.
-  Open card is `?unit=<key>` (`replaceState`; reload restores).
+  Main view is a **card dashboard** (batt / temp / traffic / err sparklines,
+  fetch stage, health). Header **Map** opens a modal with the pin map + compact
+  sidebar list (first click fly/select, second opens detail). Open card is
+  `?unit=<key>` (`replaceState`; reload restores). `?map=1` reopens the map.
   `--web-only` browses the book without a radio. Never expose secrets.
   **Refresh**, **Pull**, and **Push** always enqueue (even while that unit
   is polling) and run ahead of auto work until the click is done. Overrides
@@ -154,7 +157,8 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
   (Retry beside the error; Continue if queued). Per-tab Cancel while
   sending (Retry only after the line has stopped, not during attempts).
   Busy send stages the next line. Hide
-  keeps running. List or map select closes the console and opens the card. Per-tab up/down command recall (survives Clear history).
+  keeps running. Dashboard card click opens detail. Map sidebar/pin: first
+  click selects + flies; second opens detail. Per-tab up/down command recall (survives Clear history).
   Clipboard copies the transcript.
   Unread `*` on a tab (header icon too when hidden).
   `localStorage` + hello survive refresh / fleet restart.
@@ -163,10 +167,12 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
   Push. Auto-apply queues when `apply_is_due` even if the fleet is mid-sync.
   **Pause** (detail checkbox) writes `paused: true` and drops the unit from
   auto poll/apply on the next job boundary (in-flight exchange finishes).
-  Sidebar fades paused rows and shows a paused badge.
+  Map sidebar and dashboard cards fade paused rows.
   **Flood** writes `flood: true` (bench flood path; next send).
   Units carry `health` (worst-of component checks) and interval traffic
-  deltas. Detail sparklines use native sqlite series; poll history is four
+  deltas. Hello snapshot includes compact 72h `sparks` (battery V, temp,
+  in/h, unreadable %) per unit; SSE status/telemetry samples extend them
+  live. Detail sparklines use native sqlite series; poll history is four
   always-open sections (status, telemetry, neighbors, ACL), 10 rows each
   with Load more +10, from `/api/polls/{unit}` (`source_histories`).
   Each GET persists only that
@@ -193,4 +199,4 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-03 (bench flood toggle)
+Last updated: 2026-09-03 (dashboard + map modal)

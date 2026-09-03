@@ -870,6 +870,52 @@ def _derived_status_series(
     return out
 
 
+SPARK_HOURS = 72
+
+
+def compact_sparks(
+    status_rows: list[dict[str, Any]],
+    *,
+    conn: sqlite3.Connection | None = None,
+    unit: str | None = None,
+    hours: int = SPARK_HOURS,
+    now: int | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Compact spark series for dashboard cards."""
+    now_ts = now or int(time.time())
+    since = now_ts - max(1, hours) * 3600
+    filtered = [r for r in status_rows if int(r.get("ts") or 0) >= since]
+    battery: list[dict[str, Any]] = []
+    for row in filtered:
+        ts = row.get("ts")
+        mv = row.get("battery_mv")
+        if ts is None or mv is None:
+            continue
+        try:
+            battery.append({"ts": int(ts), "value": round(float(mv) / 1000.0, 3)})
+        except (TypeError, ValueError):
+            continue
+    temperature: list[dict[str, Any]] = []
+    if conn is not None and unit:
+        tele_rows = conn.execute(
+            "SELECT ts, value FROM telemetry WHERE unit = ? AND type = 'temperature' "
+            "AND ts >= ? ORDER BY ts ASC",
+            (unit, since),
+        ).fetchall()
+        for row in tele_rows:
+            num = _finite_number(row["value"])
+            if num is not None:
+                temperature.append({"ts": int(row["ts"]), "value": num})
+    recv_rate = _derived_status_series(filtered, "recv_rate")
+    unreadable_pct = _derived_status_series(filtered, "unreadable_pct")
+    return {
+        "battery_mv": battery,
+        "temperature": temperature,
+        "recv_rate": recv_rate,
+        "unreadable_pct": unreadable_pct,
+    }
+
+
 def _finite_number(val: Any) -> float | None:
     if val is None:
         return None
