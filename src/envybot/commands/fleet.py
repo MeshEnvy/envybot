@@ -26,6 +26,8 @@ from envybot.jobs import (
     TIMER_JOB_KINDS,
     FleetScheduler,
     JobOutcome,
+    DEFAULT_MISS_COOLDOWN_S,
+    DEFAULT_RETRY_DELAY_S,
     drop_console_jobs,
     is_console_job,
     keep_console_jobs,
@@ -132,10 +134,13 @@ def _seed_auto_work(
     skip_discover: bool = False,
     discover_wait: float = 12.0,
     session_states: dict[str, dict[str, Any]] | None = None,
+    bypass_cooldown: bool = False,
 ) -> int:
     """Queue due GET/apply. Busy units keep their GET lane; apply is spliced in."""
     queued = 0
     for target in auto_targets:
+        if not bypass_cooldown and scheduler.is_on_cooldown(target.key):
+            continue
         due = due_groups(conn, target.key, policy=policy, now=now) if do_poll else []
         target.due_groups = due
         apply_due = do_apply and apply_is_due(
@@ -201,6 +206,7 @@ async def run(args: argparse.Namespace) -> int:
     scheduler = FleetScheduler(
         max_attempts=args.attempts or 0,
         retry_delay=args.retry_delay,
+        miss_cooldown=args.miss_cooldown,
         round_delay=args.round_delay,
     )
     manual_keys: set[str] = set()
@@ -238,6 +244,7 @@ async def run(args: argparse.Namespace) -> int:
 
     include = {u.lower() for u in args.unit} if args.unit else None
     skip = {u.lower() for u in args.skip} if args.skip else None
+    bypass_cooldown = bool(args.force or include)
     all_targets = load_targets(
         nodes_path, deployed_only=args.deployed_only, include=include, skip=skip
     )
@@ -310,6 +317,7 @@ async def run(args: argparse.Namespace) -> int:
         skip_discover=args.no_discover,
         discover_wait=args.discover_wait,
         session_states=session_states,
+        bypass_cooldown=bypass_cooldown,
     )
 
     initial_units = scheduler.active_unit_count()
@@ -841,7 +849,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--nodes", type=Path, default=Path("nodes.yaml"))
     add_companion_args(parser)
     parser.add_argument("--probe", action="store_true", help="List companions; do not touch fleet")
-    parser.add_argument("--retry-delay", type=float, default=0.0)
+    parser.add_argument(
+        "--retry-delay",
+        type=float,
+        default=DEFAULT_RETRY_DELAY_S,
+        metavar="SEC",
+        help="Auto poll/apply only: park unit after timeout before retry (default 60). "
+        "Console and manual Refresh/Pull/Push are exempt.",
+    )
+    parser.add_argument(
+        "--miss-cooldown",
+        type=float,
+        default=DEFAULT_MISS_COOLDOWN_S,
+        metavar="SEC",
+        help="Auto poll/apply only: after max attempts, skip re-seed until cooldown (default 3600). "
+        "Use --force, --unit, or manual UI to bypass.",
+    )
     parser.add_argument("--round-delay", type=float, default=0.0)
     parser.add_argument("--max-rounds", type=int, default=0)
     parser.add_argument("--max-attempts", type=int, default=0)

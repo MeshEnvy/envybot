@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import unittest
 
 from envybot.jobs import (
+    DEFAULT_MISS_COOLDOWN_S,
+    DEFAULT_RETRY_DELAY_S,
     FleetScheduler,
     JobOutcome,
     RadioJob,
@@ -295,6 +298,68 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
         woke = await sched.wait_for_work(timeout=0.05)
         self.assertFalse(woke)
         self.assertEqual(sched.pending_count(), 0)
+
+    def test_auto_retry_delay_after_timeout(self) -> None:
+        sched = FleetScheduler(max_attempts=10, retry_delay=60.0)
+        t = _target()
+        job = RadioJob(kind="login", unit_key="me0001")
+        uq = sched.get_or_create(t)
+        uq.jobs.append(job)
+        before = time.monotonic()
+        sched._settle_job(uq, job, JobOutcome.TIMEOUT, "login timeout", {})
+        self.assertGreaterEqual(uq.backoff_until, before + 59.0)
+        self.assertEqual(job.attempt, 1)
+
+    def test_manual_refresh_exempt_from_retry_delay(self) -> None:
+        sched = FleetScheduler(max_attempts=10, retry_delay=60.0)
+        t = _target()
+        job = RadioJob(kind="login", unit_key="me0001", manual=True, manual_job="refresh")
+        uq = sched.get_or_create(t)
+        uq.manual = True
+        uq.manual_job = "refresh"
+        uq.jobs.append(job)
+        sched._settle_job(uq, job, JobOutcome.TIMEOUT, "login timeout", {})
+        self.assertEqual(uq.backoff_until, 0.0)
+
+    def test_console_exempt_from_retry_delay(self) -> None:
+        sched = FleetScheduler(max_attempts=10, retry_delay=60.0)
+        t = _target()
+        job = RadioJob(kind="console:cli", unit_key="me0001")
+        uq = sched.get_or_create(t)
+        uq.jobs.append(job)
+        sched._settle_job(uq, job, JobOutcome.TIMEOUT, "cli timeout", {})
+        self.assertEqual(uq.backoff_until, 0.0)
+
+    def test_miss_cooldown_after_max_attempts(self) -> None:
+        sched = FleetScheduler(max_attempts=2, retry_delay=0.0, miss_cooldown=3600.0)
+        t = _target()
+        job = RadioJob(kind="get:status", unit_key="me0001")
+        uq = sched.get_or_create(t)
+        uq.jobs.append(job)
+        job.attempt = 1
+        before = time.monotonic()
+        sched._settle_job(uq, job, JobOutcome.TIMEOUT, "timeout", {})
+        self.assertFalse(uq.jobs)
+        self.assertGreaterEqual(uq.cooldown_until, before + 3599.0)
+
+    def test_manual_enqueue_clears_cooldown(self) -> None:
+        sched = FleetScheduler(miss_cooldown=3600.0)
+        t = _target()
+        uq = sched.get_or_create(t)
+        uq.cooldown_until = time.monotonic() + 3600.0
+        sched.enqueue_manual(
+            t,
+            "refresh",
+            [RadioJob(kind="login", unit_key="me0001", manual=True)],
+        )
+        self.assertEqual(uq.cooldown_until, 0.0)
+
+    def test_default_retry_and_cooldown_constants(self) -> None:
+        self.assertEqual(DEFAULT_RETRY_DELAY_S, 60.0)
+        self.assertEqual(DEFAULT_MISS_COOLDOWN_S, 3600.0)
+        sched = FleetScheduler()
+        self.assertEqual(sched.retry_delay, 60.0)
+        self.assertEqual(sched.miss_cooldown, 3600.0)
 
 
 class PickNextTests(unittest.TestCase):

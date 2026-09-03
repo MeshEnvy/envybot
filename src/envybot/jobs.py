@@ -29,6 +29,22 @@ TIMER_JOB_KINDS = frozenset(
     {"get:neighbors_wait", "get:ota_ls_wait", "get:post_install_wait"}
 )
 
+# Auto poll/apply only. Console and manual Refresh/Pull/Push are exempt.
+DEFAULT_RETRY_DELAY_S = 60.0
+DEFAULT_MISS_COOLDOWN_S = 3600.0
+MANUAL_UI_JOBS = frozenset({"refresh", "pull", "push"})
+
+
+def _auto_retry_policy(job: RadioJob, uq: UnitQueue) -> bool:
+    """True when retry_delay and miss_cooldown apply (scheduled poll/apply only)."""
+    if is_console_job(job):
+        return False
+    if job.manual or uq.manual:
+        return False
+    if uq.manual_job in MANUAL_UI_JOBS:
+        return False
+    return True
+
 
 @dataclass
 class RadioJob:
@@ -48,6 +64,7 @@ class UnitQueue:
     target: RouterTarget
     jobs: deque[RadioJob] = field(default_factory=deque)
     backoff_until: float = 0.0
+    cooldown_until: float = 0.0
     last_served: float = 0.0
     manual: bool = False
     manual_job: str | None = None
@@ -120,7 +137,8 @@ class FleetScheduler:
 
     units: dict[str, UnitQueue] = field(default_factory=dict)
     max_attempts: int = 10
-    retry_delay: float = 0.0
+    retry_delay: float = DEFAULT_RETRY_DELAY_S
+    miss_cooldown: float = DEFAULT_MISS_COOLDOWN_S
     round_delay: float = 0.0
     _idle_waiters: list[asyncio.Future[None]] = field(default_factory=list, repr=False)
     _stop: bool = False
@@ -133,6 +151,16 @@ class FleetScheduler:
         else:
             self.units[key].target = target
         return self.units[key]
+
+    def clear_cooldown(self, uq: UnitQueue) -> None:
+        uq.cooldown_until = 0.0
+
+    def is_on_cooldown(self, key: str, now: float | None = None) -> bool:
+        uq = self.units.get(key.lower())
+        if uq is None:
+            return False
+        now = now or time.monotonic()
+        return uq.cooldown_until > now
 
     def _cancel_timer(self, uq: UnitQueue) -> None:
         task = uq.session_extra.pop("timer_task", None)
@@ -175,6 +203,7 @@ class FleetScheduler:
         uq.jobs.extend(console_kept)
         uq.jobs.extend(jobs)
         uq.backoff_until = 0.0
+        self.clear_cooldown(uq)
         uq.last_served = 0.0
         uq.has_inventory_gap = any(
             j.kind.startswith("get:") and j.kind.split(":", 1)[1] in INVENTORY_GROUPS
@@ -211,6 +240,7 @@ class FleetScheduler:
         uq.jobs.extend(jobs)
         uq.jobs.extend(other)
         uq.backoff_until = 0.0
+        self.clear_cooldown(uq)
         self._wake_idle()
 
     def drop_auto_paused(self, paused_keys: set[str], *, manual_keys: set[str]) -> list[str]:
@@ -339,8 +369,14 @@ class FleetScheduler:
                     extra = drop_remaining_apply(uq)
                     if isinstance(dropped, list):
                         dropped.extend(extra)
+                if _auto_retry_policy(job, uq) and self.miss_cooldown > 0:
+                    uq.cooldown_until = time.monotonic() + self.miss_cooldown
             else:
-                uq.backoff_until = time.monotonic() + self.retry_delay
+                if (
+                    _auto_retry_policy(job, uq)
+                    and self.retry_delay > 0
+                ):
+                    uq.backoff_until = time.monotonic() + self.retry_delay
 
     def _timer_in_flight(self) -> bool:
         return any(

@@ -54,7 +54,7 @@ DEFAULT_MESH_ATTEMPTS = 10
 COMPANION_RECONNECT_ATTEMPTS = 5
 CLOCK_SKEW_MAX = 300  # seconds; sync when *live login* RTC vs host exceeds this
 FLEET_PATH_HASH_MODE = 1  # 2-byte advert path hashes
-FLEET_DUTYCYCLE_PCT = 100.0
+FLEET_DUTYCYCLE_PCT = 50.0
 FLEET_OTA_AUTOFETCH = "off"
 OTA_AUTOFETCH_VALUES = frozenset({"off", "any", "signed"})
 OTA_AUTOFETCH_RE = re.compile(r"autofetch=(off|any|signed)", re.I)
@@ -90,9 +90,10 @@ ADMIN_PASSWORD_NOW_RE = re.compile(r"^password now:\s*(.*)\s*$", re.I)
 # - One query, one stamp. Do not bundle independent CLI/binary sends
 #   (ver vs bootloader.ver, lat vs lon, advert vs flood advert).
 # - Radio policy (US field repeaters): path.hash.mode=1 (2-byte advert
-#   hashes; firmware sendFlood uses mode+1), dutycycle=100, and GPS from
-#   the book. SET only; stamp on OK. Never GET lat/lon into nodes.yaml.
-#   MeshCore <1.15 has no set dutycycle; use set af 0 (100% = af 0) and stamp.
+#   hashes; firmware sendFlood uses mode+1), dutycycle=50 (stock MeshCore),
+#   and GPS from the book. SET only; stamp on OK. Never GET lat/lon into
+#   nodes.yaml. MeshCore <1.15 has no set dutycycle; use set af 1
+#   (50% = af 1.0) and stamp. Seeder stays at SEEDER_DUTYCYCLE_PCT (10).
 # - --unit filters targets only; it does not imply --force.
 # - Log a one-line result as soon as GET_STATUS, GET_TELEMETRY, or a CLI
 #   command succeeds (same beat as login OK). Failures stay on the send line.
@@ -1578,6 +1579,11 @@ def contact_display_name(target: RouterTarget) -> str:
     return f"{target.unit_id} {target.name}"[:32]
 
 
+def is_bench_target(target: RouterTarget) -> bool:
+    """Unbound bag/bench units (no sites.yaml ``node:`` bind) use zero-hop direct."""
+    return target.site is None
+
+
 def contact_out_path_label(contact: dict[str, Any] | None) -> str | None:
     """Format companion out_path as space-separated hop hashes (4 hex = 2-byte mode)."""
     if not contact:
@@ -1597,21 +1603,26 @@ def contact_out_path_label(contact: dict[str, Any] | None) -> str | None:
     return " ".join(hops) if hops else None
 
 
+def contact_route_audit_label(contact: dict[str, Any] | None) -> str:
+    """Audit/log route: ``direct``, ``flood``, or space-separated hop hashes."""
+    if not contact:
+        return "flood"
+    plen = contact.get("out_path_len")
+    if plen is not None and int(plen) == 0:
+        return "direct"
+    hops = contact_out_path_label(contact)
+    if hops:
+        return hops
+    return "flood"
+
+
 def log_contact_path(
     client: MeshCore, target: RouterTarget, *, log: PollLog | None = None
 ) -> None:
-    """Log the companion's cached route for this target before a mesh send.
-
-    After ``reset_to_flood``, in-memory ``out_path`` is cleared so this should
-    read ``path: flood`` unless firmware leaked a stale route.
-    """
+    """Log the companion's cached route for this target before a mesh send."""
     log = log or PollLog()
     contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])
-    label = contact_out_path_label(contact)
-    if label:
-        log.step(f"path: {label}")
-    else:
-        log.step("path: flood")
+    log.step(f"path: {contact_route_audit_label(contact)}")
 
 
 def _audit_redact(text: str | None, *, max_len: int = 500) -> str | None:
@@ -1624,8 +1635,7 @@ def _audit_redact(text: str | None, *, max_len: int = 500) -> str | None:
 
 def audit_path_at_send(client: MeshCore, target: RouterTarget) -> str:
     contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])
-    label = contact_out_path_label(contact)
-    return label or "flood"
+    return contact_route_audit_label(contact)
 
 
 def _audit_binary_reply(val: Any) -> str | None:
@@ -1683,19 +1693,28 @@ def _audit_finish(
     )
 
 
-def flood_contact_stub(target: RouterTarget) -> dict[str, Any]:
+def _default_out_path_fields(target: RouterTarget) -> dict[str, Any]:
+    if is_bench_target(target):
+        return {"out_path_len": 0, "out_path_hash_mode": 0, "out_path": ""}
+    return {"out_path_len": -1, "out_path_hash_mode": -1, "out_path": ""}
+
+
+def contact_stub_for_target(target: RouterTarget) -> dict[str, Any]:
     return {
         "public_key": target.pubkey_hex.lower(),
         "type": CONTACT_TYPE_REPEATER,
         "flags": CONTACT_FLAG_FAVORITE,
-        "out_path_len": -1,
-        "out_path_hash_mode": -1,
-        "out_path": "",
+        **_default_out_path_fields(target),
         "adv_name": contact_display_name(target),
         "last_advert": 0,
         "adv_lat": 0.0,
         "adv_lon": 0.0,
     }
+
+
+def flood_contact_stub(target: RouterTarget) -> dict[str, Any]:
+    """Alias for contact_stub_for_target (historical name)."""
+    return contact_stub_for_target(target)
 
 
 async def ensure_contact_favorited(
@@ -1730,7 +1749,7 @@ async def ensure_contact_on_device(
     await client.ensure_contacts(follow=True)
     contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])
     if not contact:
-        stub = flood_contact_stub(target)
+        stub = contact_stub_for_target(target)
         res = await client.commands.add_contact(stub)
         if res.type == EventType.ERROR:
             log.detail(f"add_contact: {res.payload}")
@@ -1958,19 +1977,36 @@ async def send_login_frame(client: MeshCore, dst_hex: str, password: str) -> Any
     return await client.commands.send(data, [EventType.MSG_SENT, EventType.ERROR])
 
 
-async def reset_to_flood(
+async def prepare_send_route(
     client: MeshCore, target: RouterTarget, *, log: PollLog | None = None
 ) -> None:
+    """Set companion route before every mesh send (flood vs zero-hop direct)."""
     log = log or PollLog()
-    """Clear the companion's saved out_path before every mesh send."""
+    prefix = target.pubkey_hex[:12]
+    contact = client.get_contact_by_key_prefix(prefix)
+    if is_bench_target(target):
+        if not isinstance(contact, dict):
+            log.detail("prepare_route: no contact for bench direct")
+            return
+        res = await client.commands.update_contact(contact, path="", path_hash_mode=0)
+        if res.type == EventType.ERROR:
+            log.detail(f"prepare_route direct warning: {res.payload}")
+        return
     res = await client.commands.reset_path(target.pubkey_hex)
     if res.type == EventType.ERROR:
         log.detail(f"reset_path warning: {res.payload}")
-    contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])
+    contact = client.get_contact_by_key_prefix(prefix)
     if isinstance(contact, dict):
         contact["out_path_len"] = -1
         contact["out_path"] = ""
         contact["out_path_hash_mode"] = -1
+
+
+async def reset_to_flood(
+    client: MeshCore, target: RouterTarget, *, log: PollLog | None = None
+) -> None:
+    """Deprecated alias for prepare_send_route."""
+    await prepare_send_route(client, target, log=log)
 
 
 async def wait_login_response(
@@ -2041,7 +2077,7 @@ async def admin_login(
         audit_id: int | None = None
         async with client.commands._mesh_request_lock:
             await ensure_contact_on_device(client, target, log=log)
-            await reset_to_flood(client, target, log=log)
+            await prepare_send_route(client, target, log=log)
             log_contact_path(client, target, log=log)
             path = audit_path_at_send(client, target)
             sent = await send_login_frame(client, dst, target.admin_password)
@@ -2150,7 +2186,7 @@ async def admin_login_attempt(
     audit_id: int | None = None
     async with client.commands._mesh_request_lock:
         await ensure_contact_on_device(client, target, log=log)
-        await reset_to_flood(client, target, log=log)
+        await prepare_send_route(client, target, log=log)
         log_contact_path(client, target, log=log)
         path = audit_path_at_send(client, target)
         sent = await send_login_frame(client, dst, target.admin_password)
@@ -2327,7 +2363,7 @@ async def send_cmd_sync(
     cancelled_out: list[bool] | None = None,
 ) -> str | None:
     log = log or PollLog()
-    """Send CLI command; always floods (companion out_path reset before each send)."""
+    """Send CLI command; route prepared before each send (flood or bench direct)."""
     dst_hex = target.pubkey_hex
     pubkey_prefix = dst_hex[:12]
     attempt = 0
@@ -2344,7 +2380,7 @@ async def send_cmd_sync(
         prefix_token = next_cli_prefix()
         framed = f"{prefix_token}{cmd}"
         async with client.commands._mesh_request_lock:
-            await reset_to_flood(client, target, log=log)
+            await prepare_send_route(client, target, log=log)
             log_contact_path(client, target, log=log)
             path = audit_path_at_send(client, target)
             sent = await send_cli_frame(client, dst_hex, framed, attempt=attempt - 1)
@@ -2537,7 +2573,7 @@ async def retry_binary_req(
             log.step(f"{label}: aborted — companion not connected")
             break
         if target is not None:
-            await reset_to_flood(client, target, log=log)
+            await prepare_send_route(client, target, log=log)
             log_contact_path(client, target, log=log)
         n_of = attempt_label(attempt, label_cap)
         dest_wait = wait_s

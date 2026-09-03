@@ -24,7 +24,7 @@ from envybot.radio import (
     _audit_finish,
     audit_path_at_send,
     log_contact_path,
-    reset_to_flood,
+    prepare_send_route,
 )
 
 
@@ -171,8 +171,8 @@ class MeshAuditTests(unittest.TestCase):
             self.assertEqual(row["label"], "[redacted]")
 
 
-class ResetToFloodTests(unittest.IsolatedAsyncioTestCase):
-    async def test_clears_in_memory_path(self) -> None:
+class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_deployed_clears_in_memory_path(self) -> None:
         contact = {
             "out_path_len": 2,
             "out_path_hash_mode": 1,
@@ -186,11 +186,11 @@ class ResetToFloodTests(unittest.IsolatedAsyncioTestCase):
             key="me0003",
             unit_id="ME0003",
             name="test",
-            site=None,
+            site="ophir",
             pubkey_hex="b2f84713d830" + "0" * 52,
             admin_password="pw",
         )
-        await reset_to_flood(client, target, log=PollLog())
+        await prepare_send_route(client, target, log=PollLog())
         self.assertEqual(contact["out_path_len"], -1)
         self.assertEqual(contact["out_path"], "")
         lines: list[str] = []

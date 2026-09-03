@@ -34,7 +34,7 @@ STATUS_OK = 0x00
 STATUS_ERR = 0x01
 WRITE_MAX = 512
 LINK_TIMEOUT_S = 0.5
-SEEDER_DUTYCYCLE_PCT = 10
+SEEDER_DUTYCYCLE_PCT = 10  # standing cap; 1–2% is a manual daytime drip only
 
 
 def xor_bytes(data: bytes, seed: int = 0) -> int:

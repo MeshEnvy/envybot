@@ -54,6 +54,7 @@ from envybot.passwords import (
     password_is_strong,
 )
 from envybot.radio import (
+    FLEET_DUTYCYCLE_PCT,
     FLEET_PATH_HASH_MODE,
     airtime_factor_for_dutycycle,
     firmware_has_dutycycle_cli,
@@ -78,7 +79,6 @@ RADIO_CMD = f"set radio {RADIO_FREQ},{RADIO_BW},{RADIO_SF},{RADIO_CR}"
 ONBOARD_NAME = "Repeater"
 ONBOARD_LAT = 0.0
 ONBOARD_LON = 0.0
-DUTYCYCLE_PCT = 100
 ADVERT_MIN = 0
 FLOOD_ADVERT_H = 0
 
@@ -652,8 +652,9 @@ def apply_path_hash_policy(cli: RepeaterSerial, *, force: bool) -> bool:
 
 
 def apply_dutycycle_policy(cli: RepeaterSerial, fw: str | None, *, force: bool) -> bool:
-    """``set dutycycle 100``, or ``set af 0`` on MeshCore <1.15."""
-    af = airtime_factor_for_dutycycle(DUTYCYCLE_PCT)
+    """``set dutycycle 50``, or ``set af 1`` on MeshCore <1.15."""
+    want = int(FLEET_DUTYCYCLE_PCT)
+    af = airtime_factor_for_dutycycle(want)
     use_af = firmware_has_dutycycle_cli(fw) is False
     if not use_af:
         dc = parse_dutycycle(cli.cmd("get dutycycle"))
@@ -661,13 +662,13 @@ def apply_dutycycle_policy(cli: RepeaterSerial, fw: str | None, *, force: bool) 
             return apply_if_needed(
                 cli,
                 step="set dutycycle",
-                already=dc is not None and abs(dc - DUTYCYCLE_PCT) <= 0.5,
-                setter=f"set dutycycle {DUTYCYCLE_PCT}",
+                already=dc is not None and abs(dc - want) <= 0.5,
+                setter=f"set dutycycle {want}",
                 verify=lambda: (
                     (got := parse_dutycycle(cli.cmd("get dutycycle"))) is not None
-                    and abs(got - DUTYCYCLE_PCT) <= 0.5
+                    and abs(got - want) <= 0.5
                 ),
-                ok_label=f"{DUTYCYCLE_PCT:g}%",
+                ok_label=f"{want:g}%",
                 force=force,
             )
     got_af = parse_coord(cli.cmd("get af"))
@@ -680,7 +681,7 @@ def apply_dutycycle_policy(cli: RepeaterSerial, fw: str | None, *, force: bool) 
             (got := parse_coord(cli.cmd("get af"))) is not None
             and abs(got - af) < 0.05
         ),
-        ok_label=f"{DUTYCYCLE_PCT:g}% (af {af:g})",
+        ok_label=f"{want:g}% (af {af:g})",
         force=force,
     )
 
@@ -766,7 +767,7 @@ def onboard(
     if radio_changed:
         print("   (reboot to apply)")
 
-    print("2. dutycycle 100% …")
+    print(f"2. dutycycle {int(FLEET_DUTYCYCLE_PCT)}% …")
     apply_dutycycle_policy(cli, fw, force=force)
 
     print("3. path.hash 2-byte …")

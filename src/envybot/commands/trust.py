@@ -42,6 +42,7 @@ from envybot.position import resolve_book_position, site_binding
 from envybot.radio import (
     CONTACT_FLAG_FAVORITE,
     CONTACT_TYPE_REPEATER,
+    _default_out_path_fields,
     FleetSession,
     PollLog,
     RouterTarget,
@@ -93,9 +94,7 @@ def contact_payload(
         "public_key": target.pubkey_hex.lower(),
         "type": CONTACT_TYPE_REPEATER,
         "flags": CONTACT_FLAG_FAVORITE,
-        "out_path_len": -1,
-        "out_path_hash_mode": -1,
-        "out_path": "",
+        **_default_out_path_fields(target),
         "adv_name": name,
         "last_advert": 0,
         "adv_lat": lat,

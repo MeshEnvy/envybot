@@ -103,10 +103,16 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Tabs (`tab_id`) FIFO among `console:*`; cancel is per tab.
   `--attempts` is the
   per-command retry cap (scheduler-owned); logs show `N/max` not `N/1`.
+  Auto poll/apply only: `--retry-delay` (default 60s) parks a unit after timeout
+  before retry; `--miss-cooldown` (default 3600s) skips cadence re-seed after
+  max attempts. Console and manual Refresh/Pull/Push are exempt; manual UI
+  clears backoff and cooldown. `--force` or `--unit` bypass cooldown on startup.
   Successful GET_STATUS / GET_TELEMETRY / CLI log a one-line result as soon
   as they land (same beat as `login OK`).
-  Every mesh send resets companion out_path to flood first (`mesh_audit.path`
-  should read `flood`; hop strings indicate a firmware leak). Neighbor discover wait (default 12s) is a background timer, not radio hold.
+  Every mesh send prepares companion route first: site-bound units flood
+  (`mesh_audit.path` = ``flood``); unbound bag/bench use zero-hop direct
+  (``direct``). Hop strings on deployed sends indicate a firmware leak.
+  Neighbor discover wait (default 12s) is a background timer, not radio hold.
   Manual Refresh/Pull/Push replace that unit's remaining jobs except a
   queued console send (stays in front). A click mid-GET supersedes the
   in-flight result (does not pop the new head). Sqlite stamps incrementally per successful GET/SET. Apply GETs ACL when
@@ -114,8 +120,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   exhausted `--attempts` abort remaining SET jobs this pass (GET stays).
   Poll and apply password-login every MeshCore unit. Live RTC from login
   timestamp or ``clock`` CLI.
-- Duty-cycle default is 100% (`nodes.yaml` `dutycycle` overrides).
-  `set dutycycle` needs MeshCore 1.15+; older 1.x uses `set af`.
+- Duty-cycle default is 50% (stock MeshCore). `nodes.yaml` `dutycycle`
+  overrides. Seeder launch is 10%. `set dutycycle` needs MeshCore 1.15+;
+  older 1.x uses `set af` (50% = af 1.0).
   Onboard also SETs `path.hash.mode` 1 (2-byte), same as fleet apply,
   then stamps the private profile. A successful onboard is fleet-ready
   (no first mesh apply). Onboard always reboots (`set radio` is
@@ -182,4 +189,4 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-02 (leak is last-pull advert interval only)
+Last updated: 2026-09-03 (fleet duty cycle 50%; seeder 10%)

@@ -73,7 +73,7 @@ class ProfileTests(unittest.TestCase):
 
     def test_dutycycle_and_path_hash_change_hash(self) -> None:
         a = {**_STRONG}
-        self.assertNotEqual(_id(a), _id({**_STRONG, "dutycycle": 50}))
+        self.assertNotEqual(_id(a), _id({**_STRONG, "dutycycle": 100}))
         self.assertNotEqual(_id(a), _id({**_STRONG, "path_hash_mode": 0}))
 
     def test_ota_autofetch_change_hash(self) -> None:
@@ -119,7 +119,7 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(parts["lat"], 0.0)
         self.assertEqual(parts["advert"], 0)
         self.assertEqual(parts["path_hash"], 1)
-        self.assertEqual(parts["dutycycle"], 100)
+        self.assertEqual(parts["dutycycle"], 50)
         self.assertEqual(parts["ota_autofetch"], "off")
 
     def test_ota_autofetch_in_parts(self) -> None:

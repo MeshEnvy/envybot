@@ -79,8 +79,13 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
   priority. Two manuals interleave with each other.
 - `--attempts` (default 10) caps retries **per command** at the scheduler.
   Logs show scheduler `N/max` (e.g. `8/10`), not inner one-shot `N/1`.
-  Every mesh send resets companion out_path to flood first. `--retry-delay` /
-  `--round-delay` control backoff between retries. On drop: `gave up after N,
+  Every mesh send prepares companion route first: site-bound units flood,
+  unbound bag/bench zero-hop direct (`mesh_audit.path` = ``direct``).
+  `--retry-delay` (default 60s) parks auto poll/apply units after a timeout
+  before retry; `--miss-cooldown` (default 3600s) skips re-seed after max
+  attempts. Console and manual Refresh/Pull/Push are exempt; manual UI also
+  clears cooldown. `--force` or `--unit` bypass cooldown on startup seed.
+  `--round-delay` pauses between scheduler retry rounds. On drop: `gave up after N,
   continuing`; on unit done with gaps: `partial OK`.
 - Per-attempt mesh audit rows land in sqlite `mesh_audit` (unit, kind, label,
   path, wait, outcome, reply snippet). Query the book DB; no UI yet.
@@ -177,7 +182,7 @@ rolled and written back to the book. `public: true` pushes site name (or
 `unit_id` when bag/bench) plus resolved GPS.
 
 Always also SETs `path.hash.mode` (default 1 = 2-byte), `dutycycle`
-(default 100), `ota config autofetch` (default `off`; missing CLI stamps
+(default 50, stock MeshCore), `ota config autofetch` (default `off`; missing CLI stamps
 done), a strong book admin
 via `password`, and clock if unset
 or behind. Password-login every unit before GET or SET (login establishes
@@ -219,7 +224,8 @@ Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
 | `--live` | Periodic GET only (status/telemetry/neighbors) |
 | `--no-discover` | GET neighbor table without remote `discover.neighbors` |
 | `--discover-wait SEC` | Listen after discover (default 12; timer job, radio idle) |
-| `--retry-delay SEC` | Backoff after a command timeout before retry |
+| `--retry-delay SEC` | Auto only: park unit after timeout before retry (default 60). Console and manual UI exempt. |
+| `--miss-cooldown SEC` | Auto only: after max attempts, skip re-seed until cooldown (default 3600). `--force`, `--unit`, or manual UI bypass. |
 | `--round-delay SEC` | Pause between scheduler retry rounds |
 | `--poll-only` | GET only |
 | `--apply-only` | SET only |

@@ -51,11 +51,15 @@ class DutycycleCliGateTests(unittest.TestCase):
 
 
 class AirtimeFactorTests(unittest.TestCase):
-    def test_full_duty_is_zero_af(self) -> None:
-        self.assertEqual(airtime_factor_for_dutycycle(FLEET_DUTYCYCLE_PCT), 0.0)
+    def test_fleet_default_is_stock_fifty(self) -> None:
+        self.assertEqual(FLEET_DUTYCYCLE_PCT, 50.0)
+        self.assertEqual(airtime_factor_for_dutycycle(FLEET_DUTYCYCLE_PCT), 1.0)
 
-    def test_default_fifty(self) -> None:
-        self.assertEqual(airtime_factor_for_dutycycle(50.0), 1.0)
+    def test_full_duty_is_zero_af(self) -> None:
+        self.assertEqual(airtime_factor_for_dutycycle(100.0), 0.0)
+
+    def test_ten_percent(self) -> None:
+        self.assertEqual(airtime_factor_for_dutycycle(10.0), 9.0)
 
 
 if __name__ == "__main__":

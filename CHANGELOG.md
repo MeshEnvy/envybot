@@ -6,6 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Changed
+
+- Fleet / onboard repeater duty cycle is **50%** (stock MeshCore). Seeder
+  stays at 10%. Book `dutycycle: 50`. Next fleet apply SETs units still
+  stamped at 100.
+
+- Fleet auto poll/apply: default **`--retry-delay` 60s** (park after timeout
+  before retry) and **`--miss-cooldown` 3600s** (skip re-seed after max
+  attempts). Console and manual Refresh/Pull/Push are exempt; manual UI clears
+  cooldown. `--force` or `--unit` bypass cooldown on startup seed.
+
+- Fleet/trust/cmd mesh sends: **site-bound** units still flood; **unbound**
+  bag/bench units use zero-hop direct (`path: direct` in logs and
+  `mesh_audit.path`). No learned multi-hop paths.
+
 ### Added
 
 - `envybot seed` — USB `.mota` folder relay. Launch sends `doctor gc`
