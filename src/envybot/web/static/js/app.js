@@ -554,14 +554,11 @@ const App = {
       await new Promise((r) =>
         requestAnimationFrame(() => requestAnimationFrame(r)),
       );
-      mapCtrl = createMapController("map", selectFromMapPin, clearMapHighlight);
+      mapCtrl = createMapController("map", selectFromMapPin, () => {
+        if (selectedKey.value) clearSelection();
+      });
       pushMap();
       requestAnimationFrame(() => pushMap());
-    }
-
-    function clearMapHighlight() {
-      mapHighlightKey.value = null;
-      pushMap();
     }
 
     async function showMap() {
@@ -1080,12 +1077,40 @@ const App = {
       () => Object.values(fleet.units || {}).filter(isInFlight).length,
     );
 
+    const attentionCount = computed(
+      () =>
+        Object.values(fleet.units || {}).filter((u) => {
+          const h = healthHeadline(u);
+          return h === "attention" || h === "unreachable";
+        }).length,
+    );
+
+    const pausedCount = computed(
+      () => Object.values(fleet.units || {}).filter((u) => !!u.paused).length,
+    );
+
+    /** @param {Record<string, unknown>} unit */
+    function matchesListFilter(unit) {
+      const f = listFilter.value;
+      if (f === "active") return isInFlight(unit);
+      if (f === "attention") {
+        const h = healthHeadline(unit);
+        return h === "attention" || h === "unreachable";
+      }
+      if (f === "paused") return !!unit.paused;
+      return true;
+    }
+
+    const listFilterEmpty = computed(() => {
+      if (listFilter.value === "active") return "Nothing in flight.";
+      if (listFilter.value === "attention") return "Nothing needs attention.";
+      if (listFilter.value === "paused") return "No paused units.";
+      return "No units.";
+    });
+
     const sortedUnits = computed(() => {
       const q = search.value.trim().toLowerCase();
-      let units = Object.values(fleet.units || {});
-      if (listFilter.value === "active") {
-        units = units.filter(isInFlight);
-      }
+      let units = Object.values(fleet.units || {}).filter(matchesListFilter);
       if (q) {
         units = units.filter((u) => {
           const hay = [
@@ -1270,17 +1295,11 @@ const App = {
       openDetail(key);
     }
 
-    function selectFromMap(key) {
-      if (mapHighlightKey.value === key) {
-        openDetail(key);
+    function selectFromMapPin(key) {
+      if (selectedKey.value === key) {
+        clearSelection();
         return;
       }
-      mapHighlightKey.value = key;
-      mapCtrl?.flyTo(key, fleet);
-      pushMap();
-    }
-
-    function selectFromMapPin(key) {
       openDetail(key, { fly: true });
     }
 
@@ -1288,8 +1307,7 @@ const App = {
       const key = unitKeyFromLocation();
       if (!key) {
         if (selectedKey.value) {
-          selectedKey.value = null;
-          pushMap();
+          await clearSelection();
         }
         return;
       }
@@ -1322,8 +1340,11 @@ const App = {
 
     async function clearSelection() {
       selectedKey.value = null;
+      mapHighlightKey.value = null;
       syncLocation(null);
       pushMap();
+      await nextTick();
+      mapCtrl?.resize?.();
     }
 
     const modalDownOnBackdrop = ref(false);
@@ -1630,7 +1651,37 @@ const App = {
     }
 
     function pushMap() {
-      mapCtrl?.sync(fleet, mapHighlightKey.value, fleet.now);
+      mapCtrl?.sync(fleet, selectedKey.value ?? mapHighlightKey.value, fleet.now);
+    }
+
+    /** @param {EventTarget | null} target */
+    function isTypingTarget(target) {
+      const el = /** @type {HTMLElement | null} */ (target);
+      if (!el) return false;
+      const tag = el.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      if (el.isContentEditable) return true;
+      return false;
+    }
+
+    function focusSearchAtEnd() {
+      const el = searchInput.value;
+      if (!el) return;
+      el.focus();
+      const len = el.value.length;
+      el.setSelectionRange(len, len);
+    }
+
+    function appendToSearch(ch) {
+      search.value += ch;
+      nextTick(() => focusSearchAtEnd());
+    }
+
+    function clearSearch() {
+      if (!search.value) return false;
+      search.value = "";
+      nextTick(() => focusSearchAtEnd());
+      return true;
     }
 
     onMounted(async () => {
@@ -1643,6 +1694,7 @@ const App = {
           return;
         }
         if (e.key === "Escape") {
+          e.preventDefault();
           if (consoleOpen.value) {
             hideConsole();
             return;
@@ -1655,6 +1707,21 @@ const App = {
             hideMap();
             return;
           }
+          if (search.value) {
+            clearSearch();
+          }
+          return;
+        }
+        if (
+          !consoleOpen.value &&
+          !isTypingTarget(e.target) &&
+          !e.metaKey &&
+          !e.ctrlKey &&
+          !e.altKey &&
+          e.key.length === 1
+        ) {
+          e.preventDefault();
+          appendToSearch(e.key);
         }
       };
       const onPageHide = () => persistConsole();
@@ -1701,6 +1768,10 @@ const App = {
 
     watch(search, () => {});
 
+    watch([selectedKey, mapOpen], () => {
+      nextTick(() => mapCtrl?.resize?.());
+    });
+
     onUnmounted(() => {
       stopClock();
       stopBenchGeo?.();
@@ -1714,6 +1785,9 @@ const App = {
       searchInput,
       listFilter,
       activeCount,
+      attentionCount,
+      pausedCount,
+      listFilterEmpty,
       sortedUnits,
       selectedUnit,
       selectedKey,
@@ -1754,7 +1828,6 @@ const App = {
       hideMap,
       hideMapAtEvent,
       selectFromDashboard,
-      selectFromMap,
       aliasDraft,
       notesDraft,
       saveAlias,
@@ -1939,11 +2012,29 @@ const App = {
           >
             Active{{ activeCount ? ' ' + activeCount : '' }}
           </button>
+          <button
+            type="button"
+            role="tab"
+            :class="{ on: listFilter === 'attention' }"
+            :aria-selected="listFilter === 'attention'"
+            @click="listFilter = 'attention'"
+          >
+            Attention{{ attentionCount ? ' ' + attentionCount : '' }}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :class="{ on: listFilter === 'paused' }"
+            :aria-selected="listFilter === 'paused'"
+            @click="listFilter = 'paused'"
+          >
+            Paused{{ pausedCount ? ' ' + pausedCount : '' }}
+          </button>
         </div>
       </div>
       <div class="dashboard-grid">
         <p v-if="!sortedUnits.length" class="list-empty">
-          {{ listFilter === 'active' ? 'Nothing in flight.' : 'No units.' }}
+          {{ listFilterEmpty }}
         </p>
         <article
           v-for="unit in sortedUnits"
@@ -2052,15 +2143,17 @@ const App = {
         </article>
       </div>
     </main>
+    <Teleport :to="mapOpen ? '#map-detail-slot' : 'body'">
     <div
       v-if="selectedUnit"
-      class="detail-modal overlay-modal"
-      @mousedown.self="onModalBackdropMouseDown"
-      @mouseup.self="onModalBackdropMouseUp"
+      :class="mapOpen ? 'map-detail-host' : 'detail-modal overlay-modal'"
+      @mousedown.self="!mapOpen && onModalBackdropMouseDown()"
+      @mouseup.self="!mapOpen && onModalBackdropMouseUp()"
     >
           <div
             id="detail"
             class="detail"
+            :class="{ 'detail-map-side': mapOpen }"
             role="dialog"
             aria-modal="true"
             aria-labelledby="detail-title"
@@ -2629,6 +2722,7 @@ const App = {
           </section>
           </div>
         </div>
+    </Teleport>
     <div
       v-if="consoleOpen"
       class="console-modal overlay-modal"
@@ -2790,100 +2884,11 @@ const App = {
           <span class="map-modal-title">Map</span>
           <button type="button" class="console-modal-close" aria-label="Hide map" @click="hideMap">×</button>
         </div>
-        <div id="layout" class="map-layout">
+        <div id="layout" class="map-layout" :class="{ 'detail-open': !!selectedUnit }">
           <div id="map-wrap">
             <div id="map"></div>
           </div>
-          <aside id="sidebar">
-            <div class="sidebar-toolbar">
-              <div class="list-filter" role="tablist" aria-label="List filter">
-                <button
-                  type="button"
-                  role="tab"
-                  :class="{ on: listFilter === 'all' }"
-                  :aria-selected="listFilter === 'all'"
-                  @click="listFilter = 'all'"
-                >
-                  All
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  :class="{ on: listFilter === 'active' }"
-                  :aria-selected="listFilter === 'active'"
-                  @click="listFilter = 'active'"
-                >
-                  Active{{ activeCount ? ' ' + activeCount : '' }}
-                </button>
-              </div>
-            </div>
-            <div id="unit-list">
-              <p v-if="!sortedUnits.length" class="list-empty">
-                {{ listFilter === 'active' ? 'Nothing in flight.' : 'No units.' }}
-              </p>
-              <div
-                v-for="unit in sortedUnits"
-                :key="unit.key"
-                class="unit-card"
-                :class="{ selected: unit.key === mapHighlightKey, paused: !!unit.paused, busy: isInFlight(unit) }"
-                @click="selectFromMap(unit.key)"
-              >
-                <div class="unit-row1">
-                  <span class="unit-title" :title="healthTooltip(unit.health)">
-                    <span class="unit-name" :class="'unit-name-' + healthHeadline(unit)">{{ cardPrimary(unit) }}</span>
-                    <span class="unit-meta">
-                      <span v-if="cardShowNodeId(unit)" class="unit-id">{{ cardNodeId(unit) }}</span>
-                      <span v-if="unit.ota_badge" class="ota-list-badge" :class="'ota-badge-' + unit.ota_badge.replace(' ', '-')">{{
-                        unit.ota_badge
-                      }}</span>
-                      <span class="unit-ago">{{ formatRelative(unit.last_heard, fleet.now) }}</span>
-                    </span>
-                  </span>
-                  <div class="unit-actions">
-                    <button
-                      type="button"
-                      class="unit-console"
-                      :class="{
-                        'is-unread': unitConsoleUnread(unit),
-                        'is-busy': unitConsoleBusy(unit),
-                      }"
-                      title="Console"
-                      :aria-label="unitConsoleUnread(unit) ? 'Open console (unread)' : 'Open console'"
-                      @click.stop="openConsoleForUnit(unit, $event)"
-                    >
-                      <svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7">
-                        <rect x="2.5" y="3.5" width="15" height="13" rx="1.5" />
-                        <path d="M6 8.5l2.2 1.6L6 11.7" stroke-linecap="round" stroke-linejoin="round" />
-                        <path d="M10.2 12.4H14" stroke-linecap="round" />
-                      </svg>
-                      <span v-if="unitConsoleUnread(unit)" class="unit-console-unread" aria-hidden="true">*</span>
-                    </button>
-                    <button
-                      v-if="manualAccepting"
-                      type="button"
-                      class="unit-refresh"
-                      :class="{ spinning: isInFlight(unit) }"
-                      :disabled="!canManualUnit(unit, 'refresh')"
-                      :title="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
-                      :aria-label="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
-                      @click.stop="runManualJob(unit, 'refresh', $event)"
-                    >
-                      <span class="unit-refresh-icon" aria-hidden="true">↻</span>
-                    </button>
-                  </div>
-                </div>
-                <Transition name="stage">
-                  <div
-                    v-if="isInFlight(unit)"
-                    class="unit-stage"
-                    :title="sessionBadgeTitle(unit)"
-                  >
-                    {{ unitStage(unit) }}
-                  </div>
-                </Transition>
-              </div>
-            </div>
-          </aside>
+          <aside id="map-detail-slot" class="map-detail-slot" :class="{ 'is-open': !!selectedUnit }"></aside>
         </div>
       </div>
     </div>
