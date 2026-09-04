@@ -131,6 +131,8 @@ const App = {
     const mapOpen = ref(false);
     const mapHighlightKey = ref(/** @type {string | null} */ (null));
     const search = ref("");
+    /** @type {import('vue').Ref<HTMLInputElement | null>} */
+    const searchInput = ref(null);
     const listFilter = ref("all");
     const aliasDraft = ref("");
     const notesDraft = ref("");
@@ -1634,6 +1636,12 @@ const App = {
     onMounted(async () => {
       startClock();
       const onKey = (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+          e.preventDefault();
+          searchInput.value?.focus();
+          searchInput.value?.select();
+          return;
+        }
         if (e.key === "Escape") {
           if (consoleOpen.value) {
             hideConsole();
@@ -1703,6 +1711,7 @@ const App = {
     return {
       fleet,
       search,
+      searchInput,
       listFilter,
       activeCount,
       sortedUnits,
@@ -1867,6 +1876,7 @@ const App = {
           </span>
           <input
             id="search"
+            ref="searchInput"
             v-model="search"
             class="search-input"
             type="search"
