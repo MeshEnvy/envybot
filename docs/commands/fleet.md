@@ -14,6 +14,8 @@ Refresh stores `ota status` (hw, target, this-fw, serving, keys, bl, seeder)
 plus `ota ls` for the detail OTA panel. Neighbor GET
 sends remote `discover.neighbors`, waits 12s, then reads the table. Polls every
 pollable MeshCore unit in the book, including bag/bench (no site `node:` bind).
+Contact sync drops an old companion record when a unit's pubkey changes
+(same `unit_id` or site name). Bare `Repeater` contacts stay.
 `firmware_platform: meshtastic` is omitted from the UI and never polled or applied.
 
 ## Stores
@@ -85,14 +87,16 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
 - `--attempts` (default 10) caps retries **per command** at the scheduler.
   Logs show scheduler `N/max` (e.g. `8/10`), not inner one-shot `N/1`.
   Every mesh send prepares companion route first: site-bound units flood,
-  unbound bag/bench zero-hop direct (`mesh_audit.path` = ``direct``)
-  unless `flood: true`.
+  unbound bag/bench always SET zero-hop (`mesh_audit.path` = ``direct``)
+  unless `flood: true`. A missing contact cache does not skip that SET.
   `--retry-delay` (default 60s) parks auto poll/apply units after a timeout
   before retry; `--miss-cooldown` (default 3600s) skips re-seed after max
   attempts. Console and manual Refresh/Pull/Push are exempt; manual UI also
   clears cooldown. `--force` or `--unit` bypass cooldown on startup seed.
   `--round-delay` pauses between scheduler retry rounds. On drop: `gave up after N,
-  continuing`; on unit done with gaps: `partial OK`.
+  continuing` (actual attempts, and only when that job was dropped). A
+  displaced in-flight login is not a give-up. Failed login drops remaining
+  console CLI (`stopping`, not `continuing`). On unit done with gaps: `partial OK`.
 - Per-attempt mesh audit rows land in sqlite `mesh_audit` (unit, kind, label,
   path, wait, outcome, reply snippet). Query the book DB; no UI yet.
 - UI Refresh/Pull/Push always enqueue, even while that unit is polling.

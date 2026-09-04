@@ -5,8 +5,10 @@
 commands over the mesh.
 
 Idempotent on identity/creds/radio/name/GPS/path.hash: match existing pubkey
-(or --unit), GET then SET, reuse stored passwords. Always reboot so ``set radio``
-applies (firmware writes prefs only; ``get radio`` cannot see the live radio).
+(or --unit), GET then SET, reuse stored password *values*. Admin is write-only
+on the repeater, so onboard always SETs it (yaml is the source, not a skip).
+Always reboot so ``set radio`` applies (firmware writes prefs only; ``get radio``
+cannot see the live radio).
 Always pulls firmware + bootloader.ver and re-runs neighbor discover/fetch.
 Writes nodes.yaml (next ME#### if new; site stays null) and stamps the
 private profile so fleet does not queue a first mesh apply.
@@ -57,6 +59,7 @@ from envybot.radio import (
     FLEET_DUTYCYCLE_PCT,
     FLEET_PATH_HASH_MODE,
     airtime_factor_for_dutycycle,
+    cli_admin_password_ok,
     firmware_has_dutycycle_cli,
     parse_bootloader,
     parse_coord,
@@ -632,6 +635,17 @@ def apply_if_needed(
     return True
 
 
+def apply_admin_password(cli: RepeaterSerial, admin_pw: str) -> None:
+    """Always write admin. Cannot GET; yaml reuse is the value source only.
+
+    Skipping SET when the book already had a password left replacement chips
+    on the factory default (``password``). A bad mesh login is a silent timeout.
+    """
+    reply = cli.cmd(f"password {admin_pw}")
+    if not cli_admin_password_ok(reply, admin_pw):
+        raise CliError(f"password: {reply}")
+
+
 def apply_path_hash_policy(cli: RepeaterSerial, *, force: bool) -> bool:
     """``set path.hash.mode 1`` (2-byte). Skip if firmware has no CLI."""
     want = FLEET_PATH_HASH_MODE
@@ -792,13 +806,9 @@ def onboard(
         print("   local 0m / flood 0h")
 
     print("6. admin password …")
-    admin_changed = False
-    if admin_src == "yaml" and not force:
-        print("   kept (yaml)")
-    else:
-        require_ok("password", cli.cmd(f"password {admin_pw}"))
-        admin_changed = admin_src != "yaml"
-        print("   set" if admin_changed else "   confirmed")
+    apply_admin_password(cli, admin_pw)
+    admin_changed = admin_src != "yaml"
+    print("   set" if admin_changed else "   confirmed")
 
     print("7. guest password …")
     device_guest = parse_get_value(cli.cmd("get guest.password"))

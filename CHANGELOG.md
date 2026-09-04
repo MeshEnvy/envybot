@@ -6,7 +6,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Fixed
+
+- Trust and fleet contact sync drop the old companion record when a
+  unit's pubkey changes (same `unit_id` or site name). Bare `Repeater`
+  contacts stay. A replaced chip used to leave two ME0051-style rows.
+
+- Bag/bench login always SETs zero-hop before send. A missing contact
+  cache used to skip that and leave a leftover flood path, so Refresh
+  started `path: flood` then retried direct.
+
+- Onboard always writes the admin password. Yaml reuse is the value only.
+  Skipping SET on a replacement chip left factory `password`, and a bad
+  mesh login is a silent timeout (`trust` looked like RF failure).
+
+- Console CLI no longer runs after a failed login. A login timeout clears
+  cached auth (stale from an earlier chip or earlier success this process).
+  Send while Refresh is still logging in queues `console:login` first.
+  Login retries keep going until `--attempts`; the log no longer says
+  `gave up after 10, continuing` when a console send only displaced the
+  in-flight login at 5/10.
+
 ### Changed
+
+- `trust` does not apply `public` or `MeshEnvy` channel rows (Public was
+  already skipped; MeshEnvy is the same). Remaining grants (SLPT, 911, …)
+  still SET.
 
 - Fleet UI default is a **card dashboard** (batt / temp / traffic / err
   sparklines, fetch stage, health). Header **Map** opens a modal with pins

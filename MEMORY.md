@@ -60,7 +60,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 - `fleet` and `trust` poll every pollable MeshCore unit, including
   bag/bench (no site bind). `--deployed-only` narrows fleet to
   site-bound units only. Contact name is the site `name` (e.g. Ophir),
-  else `unit_id`. Stale advert names are removed and re-added. `trust ben`
+  else `unit_id`. Stale advert names on the same key are removed and
+  re-added. A replaced chip (same unit/site name, new pubkey) drops the
+  old companion contact; bare `Repeater` names stay. `trust ben`
   records the live tag in `keys.yaml` and password-auths onto MeshCore
   units (`--unit` scopes that pass; contacts still import the full book).
   On units already profile-synced, trust stamps the new hash so fleet
@@ -68,9 +70,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   `admin1_*` is Meshtastic, not MC ACL.
 - `channels.yaml` (channel-first) lists group name + 16-byte PSK + who
   gets it (`everyone` or person slugs). `trust` add/updates granted
-  channels on the companion; extras on the tag are left alone. The stock
-  Public slot is never applied (`public` yaml is ignored). Missing file
-  skips channel work.
+  channels on the companion; extras on the tag are left alone. `public`
+  and `MeshEnvy` are never applied. Missing file skips channel work.
 - Mask name is `Repeater`. Display name is site `name` when bound, else book
   `alias`, else `unit_id`. Alias is UI/selector only (not pushed to radio).
 - `public: true` SETs site name (or `unit_id` when bag/bench) + site GPS.
@@ -112,8 +113,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Successful GET_STATUS / GET_TELEMETRY / CLI log a one-line result as soon
   as they land (same beat as `login OK`).
   Every mesh send prepares companion route first: site-bound units flood
-  (`mesh_audit.path` = ``flood``); unbound bag/bench use zero-hop direct
-  (``direct``) unless `flood: true`. Hop strings on deployed sends
+  (`mesh_audit.path` = ``flood``); unbound bag/bench always
+  ``update_contact`` to zero-hop (``direct``) unless `flood: true`.
+  A cache miss does not skip that SET. Hop strings on deployed sends
   indicate a firmware leak.
   Neighbor discover wait (default 12s) is a background timer, not radio hold.
   Manual Refresh/Pull/Push replace that unit's remaining jobs except a
@@ -127,6 +129,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   overrides. Seeder launch is 10%. `set dutycycle` needs MeshCore 1.15+;
   older 1.x uses `set af` (50% = af 1.0).
   Onboard also SETs `path.hash.mode` 1 (2-byte), same as fleet apply,
+  and always SETs admin (write-only; yaml is the value, not a skip),
   then stamps the private profile. A successful onboard is fleet-ready
   (no first mesh apply). Onboard always reboots (`set radio` is
   prefs-only until reboot) unless `--no-reboot`. `get radio` matching is
@@ -152,8 +155,10 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
   `--skip` and `paused`. Refresh is live GET only; Pull adds sticky GET;
   Push is SET-only force.   **Console** (header or unit-row icon): tabbed modal, optional extra sessions to the
   same unit. Row icon focuses the first tab for that unit or opens one.
-  Open is radio-free. CLI jumps that unit (login on first send).
-  Timeout retries `--attempts` (default 10) on that unit, then parks
+  Open is radio-free. CLI jumps that unit (login on first send if not
+  authed, or if a login job is already queued). Login timeout clears
+  cached auth. Failed login drops remaining console CLI. Timeout retries
+  `--attempts` (default 10) on that unit, then parks
   (Retry beside the error; Continue if queued). Per-tab Cancel while
   sending (Retry only after the line has stopped, not during attempts).
   Busy send stages the next line. Hide

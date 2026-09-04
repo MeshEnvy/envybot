@@ -16,7 +16,7 @@ CHANNELS_NAME = "channels.yaml"
 CHANNELS_YAML_HEADER = (
     "# MeshEnvy group channels (private).\n"
     "# name: {key?: 32-hex PSK, people: everyone | [person, …]}\n"
-    "# public is ignored (stock MeshCore Public is never applied).\n"
+    "# public and MeshEnvy are ignored (trust never applies them).\n"
     "# people: everyone grants every companion. Named people match keys.yaml.\n"
 )
 
@@ -24,6 +24,7 @@ HEX_PSK_RE = re.compile(r"^[0-9a-fA-F]{32}$")
 CHANNEL_NAME_RE = re.compile(r"^[\x20-\x7E]{1,31}$")
 EVERYONE = "everyone"
 PUBLIC_YAML_NAME = "public"
+SKIP_TRUST_NAMES = frozenset({PUBLIC_YAML_NAME, "meshenvy"})
 PUBLIC_FIRMWARE_NAME = "Public"
 PUBLIC_GROUP_PSK_B64 = "izOH6cXN6mrJ5e26oRXNcg=="
 PUBLIC_GROUP_PSK = base64.b64decode(PUBLIC_GROUP_PSK_B64)
@@ -131,6 +132,11 @@ def load_channels(path: Path) -> dict[str, tuple[frozenset[str] | str, ChannelDe
     return out
 
 
+def skip_trust_channel(ch: ChannelDef) -> bool:
+    """Public and MeshEnvy are never SET during trust."""
+    return ch.is_public or ch.yaml_name.lower() in SKIP_TRUST_NAMES
+
+
 def resolve_person_channels(
     catalog: dict[str, tuple[frozenset[str] | str, ChannelDef]],
     person: str | None,
@@ -138,7 +144,7 @@ def resolve_person_channels(
     """Channels granted to person (or everyone-only when person is None)."""
     want: list[ChannelDef] = []
     for _people, ch in catalog.values():
-        if ch.is_public:
+        if skip_trust_channel(ch):
             continue
         if _people == EVERYONE:
             want.append(ch)
@@ -192,13 +198,13 @@ def plan_channel_ops(
     want: list[ChannelDef],
     heard: list[ChannelSlot],
 ) -> tuple[list[ChannelOp], list[str]]:
-    """Add/update only. Extras on the tag are left alone. Public is never SET."""
+    """Add/update only. Extras on the tag are left alone. Public/MeshEnvy never SET."""
     ops: list[ChannelOp] = []
     failures: list[str] = []
     used: set[int] = set()
 
     for ch in want:
-        if ch.is_public:
+        if skip_trust_channel(ch):
             continue
         existing: ChannelSlot | None = None
         for slot in heard:

@@ -13,6 +13,7 @@ from envybot.jobs import (
     JobOutcome,
     RadioJob,
     UnitQueue,
+    job_still_queued,
 )
 from envybot.radio import RouterTarget
 
@@ -360,6 +361,50 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
         sched = FleetScheduler()
         self.assertEqual(sched.retry_delay, 60.0)
         self.assertEqual(sched.miss_cooldown, 3600.0)
+
+    async def test_failed_console_login_does_not_run_cli(self) -> None:
+        sched = FleetScheduler(max_attempts=3, retry_delay=0.0)
+        t = _target("me0001")
+        sched.enqueue_console(
+            t,
+            [
+                RadioJob(kind="console:login", unit_key="me0001", extra={"tab_id": "a"}),
+                RadioJob(
+                    kind="console:cli",
+                    unit_key="me0001",
+                    extra={"tab_id": "a", "cmd": "ver"},
+                ),
+            ],
+        )
+        kinds: list[str] = []
+
+        async def execute(job: RadioJob, uq: UnitQueue) -> tuple[JobOutcome, object | None]:
+            kinds.append(job.kind)
+            if job.kind == "console:login":
+                return JobOutcome.TIMEOUT, "login timeout"
+            return JobOutcome.HEARD, "v1"
+
+        await sched.run(execute, once=True)
+        self.assertEqual(kinds, ["console:login", "console:login", "console:login"])
+        self.assertFalse(sched.units["me0001"].jobs)
+
+    def test_console_login_timeout_keeps_cli_until_max(self) -> None:
+        sched = FleetScheduler(max_attempts=3, retry_delay=0.0)
+        t = _target("me0001")
+        login = RadioJob(kind="console:login", unit_key="me0001", extra={"tab_id": "a"})
+        cli = RadioJob(
+            kind="console:cli", unit_key="me0001", extra={"tab_id": "a", "cmd": "ver"}
+        )
+        sched.enqueue_console(t, [login, cli])
+        uq = sched.units["me0001"]
+        sched._settle_job(uq, login, JobOutcome.TIMEOUT, "login timeout", {})
+        self.assertTrue(job_still_queued(uq, login))
+        self.assertTrue(job_still_queued(uq, cli))
+        sched._settle_job(uq, login, JobOutcome.TIMEOUT, "login timeout", {})
+        self.assertTrue(job_still_queued(uq, login))
+        sched._settle_job(uq, login, JobOutcome.TIMEOUT, "login timeout", {})
+        self.assertFalse(job_still_queued(uq, login))
+        self.assertFalse(job_still_queued(uq, cli))
 
 
 class PickNextTests(unittest.TestCase):

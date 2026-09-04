@@ -8,6 +8,7 @@ from typing import Any
 
 from envybot.nodes_doc import (
     HEX_PUBKEY_RE,
+    MASK_NAME,
     PLACEHOLDER_PW,
     UNIT_NUM_RE,
     is_decommissioned,
@@ -36,6 +37,53 @@ def normalize_adv_name(name: str) -> str:
     s = ADV_NAME_PIPE_RE.sub("", s)
     s = ADV_NAME_SPACE_RE.sub(" ", s).strip()
     return s
+
+
+def contact_pubkey(contact: dict[str, Any] | None, fallback: str = "") -> str:
+    if not isinstance(contact, dict):
+        return fallback.strip().lower()
+    return str(contact.get("public_key") or fallback).strip().lower()
+
+
+def _is_replaced_identity(adv_name: str, *, want: set[str], unit_id: str) -> bool:
+    n = normalize_adv_name(adv_name)
+    if not n:
+        return False
+    if n in want:
+        return True
+    tokens = n.split()
+    return bool(unit_id and tokens and tokens[0] == unit_id)
+
+
+def stale_identity_pubkeys(
+    contacts: dict[str, Any] | None,
+    *,
+    keep_pubkey: str,
+    names: list[str] | tuple[str, ...] = (),
+    unit_id: str = "",
+) -> list[str]:
+    """Companion pubkeys that still advertise this unit under a replaced key."""
+    keep = keep_pubkey.strip().lower()
+    want = {normalize_adv_name(str(n)) for n in names if n and str(n).strip()}
+    unit = normalize_adv_name(unit_id) if unit_id else ""
+    if unit:
+        want.add(unit)
+    want.discard(normalize_adv_name(MASK_NAME))
+    found: list[str] = []
+    seen: set[str] = set()
+    for key, raw in (contacts or {}).items():
+        if isinstance(raw, dict):
+            cpk = contact_pubkey(raw, str(key))
+            adv = str(raw.get("adv_name") or "")
+        else:
+            cpk = str(key).strip().lower()
+            adv = ""
+        if not cpk or cpk == keep or cpk in seen:
+            continue
+        if _is_replaced_identity(adv, want=want, unit_id=unit):
+            found.append(cpk)
+            seen.add(cpk)
+    return found
 
 
 def _node_to_target(

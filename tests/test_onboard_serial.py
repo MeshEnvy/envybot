@@ -8,8 +8,10 @@ from pathlib import Path
 
 from envybot.apply import apply_is_due
 from envybot.commands.onboard import (
+    CliError,
     RepeaterSerial,
     antenna_ready,
+    apply_admin_password,
     apply_ota_autofetch_policy,
     apply_path_hash_policy,
     resolve_unit,
@@ -155,6 +157,18 @@ class ResolveUnitTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as err:
             resolve_unit(nodes, "a" * 64, unit=None)
         self.assertIn("decommissioned", str(err.exception))
+
+
+class AdminPasswordPolicyTests(unittest.TestCase):
+    def test_always_writes_yaml_reuse(self) -> None:
+        cli = FakeCli({"password AdminOneStrong1": "password now: AdminOneStrong1"})
+        apply_admin_password(cli, "AdminOneStrong1")
+        self.assertEqual(cli.sent, ["password AdminOneStrong1"])
+
+    def test_rejects_mismatch_reply(self) -> None:
+        cli = FakeCli({"password AdminOneStrong1": "password now: other"})
+        with self.assertRaises(CliError):
+            apply_admin_password(cli, "AdminOneStrong1")
 
 
 class StampFleetReadyTests(unittest.TestCase):

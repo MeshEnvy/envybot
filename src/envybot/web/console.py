@@ -153,7 +153,11 @@ class ConsoleManager:
         cancel_gen = sess.cancel_gen
         extra_base = {"cancel_gen": cancel_gen, "tab_id": sess.tab_id}
         jobs: list[RadioJob] = []
-        if session is None or not session.is_authed(target.key):
+        uq = scheduler.units.get(target.key)
+        login_queued = bool(
+            uq and any(j.kind in ("login", "console:login") for j in uq.jobs)
+        )
+        if session is None or not session.is_authed(target.key) or login_queued:
             jobs.append(
                 RadioJob(
                     kind="console:login",
@@ -345,6 +349,21 @@ class ConsoleManager:
         sess.max_attempts = max_attempts
         sess.cmd = cmd
         await self._emit(sess)
+
+    async def fail_sending(self, key: str, *, error: str) -> None:
+        """Park every sending tab on this unit (login exhausted)."""
+        key = key.lower()
+        for sess in list(self._tabs.values()):
+            if sess.key != key or sess.state != "sending":
+                continue
+            await self.on_cli_done(
+                sess.tab_id,
+                ok=False,
+                reply=None,
+                error=error,
+                drop_pending=True,
+                drain=False,
+            )
 
     async def on_cli_done(
         self,

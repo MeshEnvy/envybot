@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from envybot.commands.cmd import redact_snippet, should_redact
-from envybot.selector import normalize_adv_name, resolve_selector
+from envybot.selector import normalize_adv_name, resolve_selector, stale_identity_pubkeys
 
 FAKE_PUB = "a" * 64
 OTHER_PUB = "b" * 64
@@ -56,6 +56,55 @@ class NormalizeAdvNameTests(unittest.TestCase):
     def test_strips_braces_and_pipe(self) -> None:
         self.assertEqual(normalize_adv_name("Poito {meshenvy.org}"), "poito")
         self.assertEqual(normalize_adv_name("Foo | bar"), "foo")
+
+
+class StaleIdentityTests(unittest.TestCase):
+    def test_drops_old_same_name_key(self) -> None:
+        keep = "d" * 64
+        old = "6" * 64
+        other = "2" * 64
+        contacts = {
+            keep: {"public_key": keep, "adv_name": "ME0051"},
+            old: {"public_key": old, "adv_name": "ME0051"},
+            other: {"public_key": other, "adv_name": "Repeater"},
+        }
+        self.assertEqual(
+            stale_identity_pubkeys(
+                contacts, keep_pubkey=keep, names=["ME0051"], unit_id="ME0051"
+            ),
+            [old],
+        )
+
+    def test_matches_unit_id_prefix_on_stale_advert(self) -> None:
+        keep = "a" * 64
+        old = "b" * 64
+        contacts = {
+            keep: {"public_key": keep, "adv_name": "Ophir"},
+            old: {"public_key": old, "adv_name": "ME0003 RAK4631 Repeater"},
+        }
+        self.assertEqual(
+            stale_identity_pubkeys(
+                contacts, keep_pubkey=keep, names=["Ophir"], unit_id="ME0003"
+            ),
+            [old],
+        )
+
+    def test_ignores_mask_name_and_keep_key(self) -> None:
+        keep = "a" * 64
+        mask = "c" * 64
+        contacts = {
+            keep: {"public_key": keep, "adv_name": "ME0051"},
+            mask: {"public_key": mask, "adv_name": "Repeater"},
+        }
+        self.assertEqual(
+            stale_identity_pubkeys(
+                contacts,
+                keep_pubkey=keep,
+                names=["ME0051", "Repeater"],
+                unit_id="ME0051",
+            ),
+            [],
+        )
 
 
 class ResolveSelectorTests(unittest.TestCase):

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import unittest
-from envybot.jobs import FleetScheduler
-from envybot.radio import RouterTarget
+from envybot.jobs import FleetScheduler, RadioJob
+from envybot.radio import FleetSession, RouterTarget
 from envybot.web.console import ConsoleManager
 from envybot.web.hub import FleetHub
 
@@ -212,6 +212,39 @@ class ConsoleManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sess.state, "sending")
         self.assertEqual(sess.cmd, "ota stats")
         self.assertEqual(sess.pending, [])
+
+    async def test_stale_auth_logs_in_when_refresh_login_queued(self) -> None:
+        await self.mgr.open(key="me0001", tab_id="t1")
+        self.sched.enqueue_manual(
+            self.target, "refresh", [RadioJob(kind="login", unit_key="me0001")]
+        )
+        session = FleetSession()
+        session.mark_authed("me0001")
+        await self.mgr.enqueue_send(
+            tab_id="t1",
+            cmd="ver",
+            scheduler=self.sched,
+            target=self.target,
+            session=session,
+        )
+        kinds = [j.kind for j in self.sched.units["me0001"].jobs]
+        self.assertEqual(kinds[0], "console:login")
+        self.assertIn("console:cli", kinds)
+        self.assertIn("login", kinds)
+
+    async def test_fail_sending_drops_pending(self) -> None:
+        await self.mgr.open(key="me0001", tab_id="t1")
+        await self.mgr.enqueue_send(
+            tab_id="t1", cmd="ver", scheduler=self.sched, target=self.target
+        )
+        await self.mgr.enqueue_send(
+            tab_id="t1", cmd="next", scheduler=self.sched, target=self.target
+        )
+        await self.mgr.fail_sending("me0001", error="login failed")
+        sess = self.mgr.get("t1")
+        assert sess is not None
+        self.assertEqual(sess.pending, [])
+        self.assertEqual(sess.state, "ready")
 
     async def test_login_fail_drops_pending(self) -> None:
         await self.mgr.open(key="me0001", tab_id="t1")

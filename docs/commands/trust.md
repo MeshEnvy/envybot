@@ -20,8 +20,10 @@ trust roles.
 Contact name is the bound site's `name` (e.g. Ophir), or `unit_id` when
 the unit has no site. Includes bag/bench units. Skips `decommissioned`
 rows. A stale last-heard
-advert name is removed and re-added so the phone list picks up the
-book name. Reconnect the MeshCore app after trust.
+advert name on the same key is removed and re-added so the phone list
+picks up the book name. A replaced chip (same unit or site name, new
+pubkey) drops the old companion contact. Bare `Repeater` names are left
+alone. Reconnect the MeshCore app after trust.
 
 Does not copy admin/guest passwords or field-node secret keys.
 
@@ -29,8 +31,8 @@ Does not copy admin/guest passwords or field-node secret keys.
 
 `channels.yaml` lives next to `keys.yaml` in the private book. Each channel
 is defined once (name + 32-hex PSK) with a `people:` grant (`everyone` or
-a list of person slugs). A `public` row is ignored. Trust never adds or
-updates the stock MeshCore Public slot.
+a list of person slugs). `public` and `MeshEnvy` rows are ignored. Trust
+never adds or updates those slots.
 
 On every companion connect, `trust` GETs channel slots and SETs any granted
 channel that is missing or has the wrong key. Add/update only: personal

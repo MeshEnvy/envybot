@@ -30,6 +30,8 @@ from envybot.jobs import (
     DEFAULT_RETRY_DELAY_S,
     drop_console_jobs,
     is_console_job,
+    is_login_job,
+    job_still_queued,
     keep_console_jobs,
 )
 from envybot.keys_doc import keys_path, load_keys
@@ -514,15 +516,16 @@ async def run(args: argparse.Namespace) -> int:
                 JobOutcome.TIMEOUT,
                 JobOutcome.HARD_FAIL,
             ):
-                drop_console_jobs(uq, tab_id or None)
-                await web_ctx.console.on_cli_done(
-                    tab_id,
-                    ok=False,
-                    reply=None,
-                    error=str(payload or "login failed"),
-                    drop_pending=outcome == JobOutcome.HARD_FAIL,
-                    drain=False,
-                )
+                if outcome == JobOutcome.HARD_FAIL or not job_still_queued(uq, job):
+                    drop_console_jobs(uq, tab_id or None)
+                    await web_ctx.console.on_cli_done(
+                        tab_id,
+                        ok=False,
+                        reply=None,
+                        error=str(payload or "login failed"),
+                        drop_pending=True,
+                        drain=False,
+                    )
             elif job.kind == "console:cli":
                 if outcome == JobOutcome.CANCELLED:
                     await web_ctx.console.on_cli_done(
@@ -565,6 +568,15 @@ async def run(args: argparse.Namespace) -> int:
                             error=str(payload or "command timeout"),
                             drain=False,
                         )
+        if (
+            web_ctx
+            and job.kind == "login"
+            and outcome in (JobOutcome.TIMEOUT, JobOutcome.HARD_FAIL)
+            and not job_still_queued(uq, job)
+        ):
+            await web_ctx.console.fail_sending(
+                target.key, error=str(payload or "login failed")
+            )
         node_record = nodes.get(target.key) or {}
         guest_before = str(node_record.get("guest_password") or "")
 
@@ -607,7 +619,8 @@ async def run(args: argparse.Namespace) -> int:
                 queued=True,
             )
             if not args.quiet and outcome == JobOutcome.TIMEOUT:
-                if uq.jobs and uq.jobs[0].kind == job.kind:
+                still = job_still_queued(uq, job)
+                if still and uq.jobs[0].kind == job.kind:
                     if payload:
                         print(f"  retrying: {payload}")
                     elif scheduler.max_attempts:
@@ -615,8 +628,12 @@ async def run(args: argparse.Namespace) -> int:
                             f"  retrying {job.kind} "
                             f"({uq.jobs[0].attempt + 1}/{scheduler.max_attempts})"
                         )
-                elif scheduler.max_attempts:
-                    print(f"  {job.kind}: gave up after {scheduler.max_attempts}, continuing")
+                elif not still:
+                    n = job.attempt or scheduler.max_attempts
+                    if is_login_job(job):
+                        print(f"  {job.kind}: gave up after {n}, stopping")
+                    elif scheduler.max_attempts:
+                        print(f"  {job.kind}: gave up after {n}, continuing")
         else:
             session_states[target.key] = {"state": "ok", "due_groups": []}
             dropped = uq.session_extra.get("dropped_jobs") or []

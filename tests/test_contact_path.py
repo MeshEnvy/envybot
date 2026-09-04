@@ -154,6 +154,40 @@ class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
         client.commands.reset_path.assert_not_awaited()
         self.assertEqual(contact["out_path_len"], 0)
 
+    async def test_bench_missing_cache_still_forces_direct(self) -> None:
+        client = MagicMock()
+        client.get_contact_by_key_prefix.return_value = None
+        client.contacts = {}
+        ok = MagicMock(type=EventType.OK)
+        client.commands.update_contact = AsyncMock(return_value=ok)
+        client.commands.reset_path = AsyncMock()
+        await prepare_send_route(client, _target(site=None), log=PollLog())
+        client.commands.update_contact.assert_awaited_once()
+        self.assertEqual(client.commands.update_contact.await_args.kwargs.get("path"), "")
+        client.commands.reset_path.assert_not_awaited()
+        stub = next(iter(client.contacts.values()))
+        self.assertEqual(stub["out_path_len"], 0)
+
+    async def test_bench_pins_direct_if_update_leaves_flood_cache(self) -> None:
+        contact = {
+            "public_key": "b2f84713d830" + "0" * 52,
+            "out_path_len": -1,
+            "out_path_hash_mode": -1,
+            "out_path": "",
+            "adv_name": "x",
+            "type": 2,
+            "flags": 1,
+            "last_advert": 0,
+            "adv_lat": 0.0,
+            "adv_lon": 0.0,
+        }
+        client = MagicMock()
+        client.get_contact_by_key_prefix.return_value = contact
+        ok = MagicMock(type=EventType.OK)
+        client.commands.update_contact = AsyncMock(return_value=ok)
+        await prepare_send_route(client, _target(site=None), log=PollLog())
+        self.assertEqual(contact["out_path_len"], 0)
+
     async def test_bench_flood_flag_resets_flood(self) -> None:
         contact = {
             "out_path_len": 0,

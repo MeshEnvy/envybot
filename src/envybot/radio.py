@@ -1701,10 +1701,19 @@ def _audit_finish(
     )
 
 
-def _default_out_path_fields(target: RouterTarget) -> dict[str, Any]:
-    if uses_flood_route(target):
+def route_path_fields(*, flood: bool) -> dict[str, Any]:
+    if flood:
         return {"out_path_len": -1, "out_path_hash_mode": -1, "out_path": ""}
     return {"out_path_len": 0, "out_path_hash_mode": 0, "out_path": ""}
+
+
+def _default_out_path_fields(target: RouterTarget) -> dict[str, Any]:
+    return route_path_fields(flood=uses_flood_route(target))
+
+
+def pin_contact_route(contact: dict[str, Any], *, flood: bool) -> None:
+    """Force cache path fields. Device snapshots can overwrite after a SET."""
+    contact.update(route_path_fields(flood=flood))
 
 
 def contact_stub_for_target(target: RouterTarget) -> dict[str, Any]:
@@ -1723,6 +1732,59 @@ def contact_stub_for_target(target: RouterTarget) -> dict[str, Any]:
 def flood_contact_stub(target: RouterTarget) -> dict[str, Any]:
     """Alias for contact_stub_for_target (historical name)."""
     return contact_stub_for_target(target)
+
+
+def pop_companion_contact(client: MeshCore, pubkey: str) -> None:
+    pk = pubkey.strip().lower()
+    contacts = getattr(client, "contacts", None)
+    if not isinstance(contacts, dict):
+        return
+    for key in list(contacts):
+        raw = contacts.get(key)
+        key_pk = str(key).strip().lower()
+        stored = ""
+        if isinstance(raw, dict):
+            stored = str(raw.get("public_key") or "").strip().lower()
+        if key_pk == pk or stored == pk:
+            contacts.pop(key, None)
+
+
+async def drop_companion_contact(
+    client: MeshCore, pubkey: str, *, log: PollLog, unit_id: str
+) -> bool:
+    pk = pubkey.strip().lower()
+    res = await client.commands.remove_contact(pk)
+    if res.type == EventType.ERROR:
+        log.step(f"{unit_id}: remove failed ({res.payload})")
+        return False
+    pop_companion_contact(client, pk)
+    return True
+
+
+async def forget_replaced_identities(
+    client: MeshCore,
+    *,
+    keep_pubkey: str,
+    names: list[str],
+    unit_id: str,
+    log: PollLog | None = None,
+) -> int:
+    """Remove companion contacts that still name this unit under an old pubkey."""
+    from envybot.selector import stale_identity_pubkeys
+
+    log = log or PollLog()
+    stale = stale_identity_pubkeys(
+        getattr(client, "contacts", None) or {},
+        keep_pubkey=keep_pubkey,
+        names=names,
+        unit_id=unit_id,
+    )
+    dropped = 0
+    for pk in stale:
+        if await drop_companion_contact(client, pk, log=log, unit_id=unit_id):
+            log.step(f"{unit_id}: dropped old {pk[:12]}…")
+            dropped += 1
+    return dropped
 
 
 async def ensure_contact_favorited(
@@ -1775,6 +1837,7 @@ async def sync_fleet_contacts(
     print(f"Ensuring {len(targets)} fleet contact(s) exist and are favorited …")
     added = 0
     favorited = 0
+    dropped = 0
     async with client.commands._mesh_request_lock:
         await client.ensure_contacts(follow=True)
         for target in targets:
@@ -1785,9 +1848,16 @@ async def sync_fleet_contacts(
                 added += 1
             if not was_fav and contact.get("flags", 0) & CONTACT_FLAG_FAVORITE:
                 favorited += 1
+            dropped += await forget_replaced_identities(
+                client,
+                keep_pubkey=target.pubkey_hex,
+                names=[target.unit_id, target.name, contact_display_name(target)],
+                unit_id=target.unit_id,
+                log=log,
+            )
     print(
         f"Fleet contacts ready: {added} added, {favorited} newly favorited, "
-        f"{len(client.contacts)} total on companion"
+        f"{dropped} old identities dropped, {len(client.contacts)} total on companion"
     )
 
 
@@ -1988,26 +2058,32 @@ async def send_login_frame(client: MeshCore, dst_hex: str, password: str) -> Any
 async def prepare_send_route(
     client: MeshCore, target: RouterTarget, *, log: PollLog | None = None
 ) -> None:
-    """Set companion route before every mesh send (flood vs zero-hop direct)."""
+    """Set companion route before every mesh send (flood vs zero-hop direct).
+
+    Bench must always ``update_contact`` to zero-hop. A cache miss used to
+    skip that SET and leave a leftover flood path on the device (first
+    login after a console flood or contact import).
+    """
     log = log or PollLog()
     prefix = target.pubkey_hex[:12]
+    flood = uses_flood_route(target)
     contact = client.get_contact_by_key_prefix(prefix)
-    if not uses_flood_route(target):
-        if not isinstance(contact, dict):
-            log.detail("prepare_route: no contact for bench direct")
-            return
-        res = await client.commands.update_contact(contact, path="", path_hash_mode=0)
+    if not isinstance(contact, dict):
+        contact = contact_stub_for_target(target)
+        contacts = getattr(client, "contacts", None)
+        if isinstance(contacts, dict):
+            contacts[contact["public_key"]] = contact
+        log.detail("prepare_route: no cached contact, using stub")
+    if flood:
+        res = await client.commands.reset_path(target.pubkey_hex)
         if res.type == EventType.ERROR:
-            log.detail(f"prepare_route direct warning: {res.payload}")
+            log.detail(f"reset_path warning: {res.payload}")
+        pin_contact_route(contact, flood=True)
         return
-    res = await client.commands.reset_path(target.pubkey_hex)
+    res = await client.commands.update_contact(contact, path="", path_hash_mode=0)
     if res.type == EventType.ERROR:
-        log.detail(f"reset_path warning: {res.payload}")
-    contact = client.get_contact_by_key_prefix(prefix)
-    if isinstance(contact, dict):
-        contact["out_path_len"] = -1
-        contact["out_path"] = ""
-        contact["out_path_hash_mode"] = -1
+        log.detail(f"prepare_route direct warning: {res.payload}")
+    pin_contact_route(contact, flood=False)
 
 
 async def reset_to_flood(
@@ -2189,6 +2265,8 @@ async def admin_login_attempt(
 ) -> tuple[bool, str | None, int | None]:
     """Single login send+wait."""
     log = log or PollLog()
+    if session is not None:
+        session.clear_auth(target.key)
     dst = target.pubkey_hex
     prefix = dst[:12]
     audit_id: int | None = None

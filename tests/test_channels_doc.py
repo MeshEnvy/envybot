@@ -78,7 +78,12 @@ class ResolvePersonTests(unittest.TestCase):
 
     def test_ben_gets_private_set(self) -> None:
         names = {c.yaml_name for c in resolve_person_channels(self.catalog, "ben")}
-        self.assertEqual(names, {"SLPT", "MeshEnvy", "911"})
+        self.assertEqual(names, {"SLPT", "911"})
+
+    def test_skips_meshenvy_and_public(self) -> None:
+        names = {c.yaml_name for c in resolve_person_channels(self.catalog, "ben")}
+        self.assertNotIn("MeshEnvy", names)
+        self.assertNotIn("public", names)
 
     def test_bill_gets_911_not_slpt(self) -> None:
         names = {c.yaml_name for c in resolve_person_channels(self.catalog, "bill")}
@@ -118,6 +123,7 @@ class PlanChannelOpsTests(unittest.TestCase):
     def test_public_never_added_or_updated(self) -> None:
         want = [
             ChannelDef("public", PUBLIC_FIRMWARE_NAME, PUBLIC_GROUP_PSK, True),
+            ChannelDef("MeshEnvy", "MeshEnvy", MESH_KEY, False),
         ]
         heard = [
             ChannelSlot(0, "", b"\x00" * 16),

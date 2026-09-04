@@ -51,7 +51,9 @@ from envybot.radio import (
     companion_identity,
     connect,
     ensure_companion_identity,
+    drop_companion_contact,
     ensure_contact_favorited,
+    forget_replaced_identities,
     load_targets,
 )
 from envybot.selector import format_candidates, normalize_adv_name, resolve_selector
@@ -143,15 +145,6 @@ def contact_needs_replace(existing: dict[str, Any], stub: dict[str, Any]) -> boo
     return False
 
 
-async def _forget_contact(client: MeshCore, pubkey: str, *, log: PollLog, unit_id: str) -> bool:
-    res = await client.commands.remove_contact(pubkey)
-    if res.type == EventType.ERROR:
-        log.step(f"{unit_id}: remove failed ({res.payload})")
-        return False
-    client.contacts.pop(pubkey.lower(), None)
-    return True
-
-
 async def push_contacts(
     client: MeshCore,
     rows: list[dict[str, Any]],
@@ -179,6 +172,13 @@ async def _push_contact_rows(
     for row in rows:
         stub = {k: v for k, v in row.items() if k not in ("unit_id", "site")}
         stub["last_advert"] = now
+        await forget_replaced_identities(
+            client,
+            keep_pubkey=row["public_key"],
+            names=[str(row.get("adv_name") or ""), row["unit_id"]],
+            unit_id=row["unit_id"],
+            log=log,
+        )
         existing = client.get_contact_by_key_prefix(row["public_key"][:12])
         if existing and not contact_needs_replace(existing, stub):
             await ensure_contact_favorited(client, existing, log=log)
@@ -188,7 +188,7 @@ async def _push_contact_rows(
             )
             ok += 1
             continue
-        if existing and not await _forget_contact(
+        if existing and not await drop_companion_contact(
             client, row["public_key"], log=log, unit_id=row["unit_id"]
         ):
             continue

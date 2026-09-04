@@ -85,6 +85,15 @@ def is_console_job(job: RadioJob | str) -> bool:
     return kind.startswith("console:")
 
 
+def is_login_job(job: RadioJob | str) -> bool:
+    kind = job.kind if isinstance(job, RadioJob) else job
+    return kind in ("login", "console:login")
+
+
+def job_still_queued(uq: UnitQueue, job: RadioJob) -> bool:
+    return any(j is job for j in uq.jobs)
+
+
 def _pick_tier(uq: UnitQueue, job: RadioJob) -> int:
     """Console heads stay on the radio until heard, exhausted, or cancelled."""
     if is_console_job(job):
