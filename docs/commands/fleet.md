@@ -110,24 +110,22 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
 
 ## Poll history (UI)
 
-Status, telemetry, neighbors, and ACL are **orthogonal** sqlite tables and UI
-sections. `/api/polls/{unit}` returns `{ histories: { status, telemetry,
-neighbors, acl } }` with per-source deltas (no merged status+telemetry spine).
-Status and telemetry samples store display GPS (bound site, else node
+Status, telemetry, neighbors, and ACL are stored in orthogonal sqlite tables.
+`/api/polls/{unit}` returns `{ histories: { status, telemetry, polls,
+neighbors, acl, sun } }`. The detail card shows a single **Polls** table
+from `polls` (`poll_snapshots`: status spine with nearest/interpolated
+telemetry, deltas, reboot detection). Status and telemetry arrays remain
+for sparkline fallback. Samples store display GPS (bound site, else node
 `loc`, else book `bench_loc`). A one-shot sqlite backfill copies the
 current display loc onto older NULL rows (`sample_loc_backfill_v2`; v1
 was site-only). Opening fleet runs backfill once. The UI may POST
 `/api/bench` from browser geolocation (debounced) to move `bench_loc`
 while the laptop travels; that does not SET radio lat/lon and does not
-rewrite history. Status **V** and telemetry **Temp** **When**
-cells show ☀️ or 🌙: clear-sky sun above the horizon means charging
-expected. Hover for elevation and Open-Meteo ambient (temp, cloud, precip,
-wind). Voltage is status ``battery_mv`` only
-(telemetry voltage is stored, not shown). Detail
-10 rows each, **Load more** reveals 10 more. Sparklines share a 72h
-wall-clock axis. Sun is clear-sky elevation vs the horizon. Default history limit is 80 (72h of hourly samples).
-Sparklines use native `/api/history/{unit}?metric=`. SSE `unit` events include
-`sample` so the open detail card updates live without refetch.
+rewrite history. Poll rows show ☀️ or 🌙, voltage, traffic deltas,
+temperature (with vs-ambient delta), Open-Meteo weather column, and gap.
+Interpolated gauges are italic. Detail 10 rows, **Load more** +10. Sparklines
+prefer `polls` when loaded. Default history limit is 80 (72h). SSE `unit`
+events merge live status/telemetry into the polls list.
 Cards show book apply prefs (power saving, FEM LNA, duty cycle, path hash,
 OTA autofetch) with applied/due from sqlite stamps. Not a live radio GET.
 

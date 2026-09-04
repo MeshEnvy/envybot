@@ -40,7 +40,7 @@ import {
   replaceSnapshot,
   startClock,
   stopClock,
-} from "./state.js?v=8";
+} from "./state.js?v=9";
 import {
   formatAgo,
   formatBattery,
@@ -59,6 +59,9 @@ import {
   sunTitle,
   sunWhenTitle,
   ambientDelta,
+  formatPollWeather,
+  pollSynthetic,
+  weatherLabel,
   hasHealthIssues,
   hasTrafficStats,
   healthHeadline,
@@ -69,7 +72,7 @@ import {
   compareUnits,
   unitLabel,
   unitTitle,
-} from "./format.js?v=28";
+} from "./format.js?v=29";
 import {
   buildNeighborEdges,
   createMapController,
@@ -78,9 +81,11 @@ import {
 } from "./map.js?v=31";
 import {
   seriesFromHistories,
+  seriesFromPolls,
   sparklineWallTime,
   SPARK_MIN_SPAN,
-} from "./sparklines.js?v=10";
+  withSunSeries,
+} from "./sparklines.js?v=11";
 
 const DASH_SPARK_W = 52;
 const DASH_SPARK_H = 16;
@@ -143,8 +148,7 @@ const App = {
     const historyHours = 72;
     const LOG_PAGE = 10;
     const logShown = reactive({
-      status: LOG_PAGE,
-      telemetry: LOG_PAGE,
+      polls: LOG_PAGE,
       neighbors: LOG_PAGE,
       acl: LOG_PAGE,
     });
@@ -167,26 +171,25 @@ const App = {
     let consoleCopyTimer = 0;
 
     function resetLogShown() {
-      logShown.status = LOG_PAGE;
-      logShown.telemetry = LOG_PAGE;
+      logShown.polls = LOG_PAGE;
       logShown.neighbors = LOG_PAGE;
       logShown.acl = LOG_PAGE;
     }
 
-    /** @param {'status' | 'telemetry' | 'neighbors' | 'acl'} source */
+    /** @param {'polls' | 'neighbors' | 'acl'} source */
     function logSlice(source) {
       const list = unitHistory.value?.[source];
       if (!Array.isArray(list)) return [];
       return list.slice(0, logShown[source]);
     }
 
-    /** @param {'status' | 'telemetry' | 'neighbors' | 'acl'} source */
+    /** @param {'polls' | 'neighbors' | 'acl'} source */
     function logHasMore(source) {
       const list = unitHistory.value?.[source];
       return Array.isArray(list) && list.length > logShown[source];
     }
 
-    /** @param {'status' | 'telemetry' | 'neighbors' | 'acl'} source */
+    /** @param {'polls' | 'neighbors' | 'acl'} source */
     function loadMoreLog(source) {
       logShown[source] += LOG_PAGE;
     }
@@ -1148,9 +1151,13 @@ const App = {
       }
     }
 
-    const sparkSeries = computed(() =>
-      seriesFromHistories(unitHistory.value || {}),
-    );
+    const sparkSeries = computed(() => {
+      const hist = unitHistory.value || {};
+      if (Array.isArray(hist.polls) && hist.polls.length) {
+        return withSunSeries(seriesFromPolls(hist.polls), hist.sun);
+      }
+      return seriesFromHistories(hist);
+    });
 
     const sparkDomain = computed(() => {
       const now = Math.floor(Date.now() / 1000);
@@ -1226,6 +1233,7 @@ const App = {
 
     function formatPollVoltage(poll) {
       if (poll?.battery_mv != null) return formatBattery(poll.battery_mv);
+      if (poll?.voltage != null) return `${Number(poll.voltage).toFixed(3)} V`;
       return "—";
     }
 
@@ -1873,6 +1881,9 @@ const App = {
       sunTitle,
       sunWhenTitle,
       ambientDelta,
+      formatPollWeather,
+      pollSynthetic,
+      weatherLabel,
       unitLabel,
       unitTitle,
       togglePublic,
@@ -2535,23 +2546,25 @@ const App = {
               · {{ formatAgo(nb.secs_ago) }}
             </div>
           </section>
-          <section v-if="unitHistory?.status?.length" class="poll-log-section">
+          <section v-if="unitHistory?.polls?.length" class="poll-log-section">
             <div class="poll-log">
-              <h3>Status · {{ unitHistory.status.length }}</h3>
-              <table class="poll-table">
+              <h3>Polls · {{ unitHistory.polls.length }}</h3>
+              <table class="poll-table poll-table-wide">
                 <thead>
                   <tr>
                     <th>When</th>
                     <th>Sun</th>
                     <th>V</th>
                     <th>In / out</th>
+                    <th>Temp</th>
+                    <th>Weather</th>
                     <th>Gap</th>
                   </tr>
                 </thead>
                 <tbody>
                   <tr
-                    v-for="(row, pi) in logSlice('status')"
-                    :key="'st-' + pi"
+                    v-for="(row, pi) in logSlice('polls')"
+                    :key="'pl-' + pi"
                     :class="{ 'poll-reboot': row.reboot }"
                   >
                     <td>{{ formatRelative(row.ts, fleet.now) }}</td>
@@ -2568,7 +2581,10 @@ const App = {
                       </span>
                       <template v-else>—</template>
                     </td>
-                    <td class="poll-metric">
+                    <td
+                      class="poll-metric"
+                      :class="{ synthetic: pollSynthetic(row, 'voltage') }"
+                    >
                       {{ formatPollVoltage(row) }}
                       <span
                         v-if="voltageStock(row)"
@@ -2577,6 +2593,23 @@ const App = {
                       >{{ voltageStock(row).text }}</span>
                     </td>
                     <td>{{ formatPollDelta(row.delta_packets_recv, row.delta_packets_sent) }}</td>
+                    <td
+                      class="poll-metric"
+                      :class="{ synthetic: pollSynthetic(row, 'temperature') }"
+                    >
+                      {{ formatPollTemp(row) }}
+                      <span v-if="ambientDelta(row)" class="stock-delta stock-neutral">{{
+                        ambientDelta(row)
+                      }}</span>
+                      <span
+                        v-if="tempStock(row)"
+                        class="stock-delta"
+                        :class="'stock-' + tempStock(row).dir"
+                      >{{ tempStock(row).text }}</span>
+                    </td>
+                    <td class="poll-weather" :title="weatherLabel(row.weather)">
+                      {{ formatPollWeather(row.weather) }}
+                    </td>
                     <td>
                       <template v-if="row.reboot">reboot</template>
                       <template v-else-if="row.since_prev_secs != null">{{
@@ -2588,68 +2621,10 @@ const App = {
                 </tbody>
               </table>
               <button
-                v-if="logHasMore('status')"
+                v-if="logHasMore('polls')"
                 type="button"
                 class="load-more"
-                @click="loadMoreLog('status')"
-              >
-                Load more
-              </button>
-            </div>
-          </section>
-          <section v-if="unitHistory?.telemetry?.length" class="poll-log-section">
-            <div class="poll-log">
-              <h3>Telemetry · {{ unitHistory.telemetry.length }}</h3>
-              <table class="poll-table">
-                <thead>
-                  <tr>
-                    <th>When</th>
-                    <th>Sun</th>
-                    <th>Temp</th>
-                    <th>Gap</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(row, pi) in logSlice('telemetry')" :key="'te-' + pi">
-                    <td>{{ formatRelative(row.ts, fleet.now) }}</td>
-                    <td>
-                      <span
-                        v-if="sunEmoji(row.sun)"
-                        class="poll-sun"
-                        :title="sunWhenTitle(row.sun, row.weather)"
-                      >
-                        {{ sunEmoji(row.sun) }}
-                        <span v-if="sunElev(row.sun)" class="poll-sun-elev">{{
-                          sunElev(row.sun)
-                        }}</span>
-                      </span>
-                      <template v-else>—</template>
-                    </td>
-                    <td class="poll-metric">
-                      {{ formatPollTemp(row) }}
-                      <span v-if="ambientDelta(row)" class="stock-delta stock-neutral">{{
-                        ambientDelta(row)
-                      }}</span>
-                      <span
-                        v-if="tempStock(row)"
-                        class="stock-delta"
-                        :class="'stock-' + tempStock(row).dir"
-                      >{{ tempStock(row).text }}</span>
-                    </td>
-                    <td>
-                      <template v-if="row.since_prev_secs != null">{{
-                        formatPollWindow(row.since_prev_secs)
-                      }}</template>
-                      <template v-else>—</template>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-              <button
-                v-if="logHasMore('telemetry')"
-                type="button"
-                class="load-more"
-                @click="loadMoreLog('telemetry')"
+                @click="loadMoreLog('polls')"
               >
                 Load more
               </button>

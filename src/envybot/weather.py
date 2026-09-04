@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 import time
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -31,6 +33,54 @@ HOURLY_VARS = (
 RECENT_DAYS = 92
 FETCH_CHUNK_DAYS = 31
 REQUEST_TIMEOUT_S = 30
+
+LogFn = Callable[[str], None]
+
+
+def _emit(log: LogFn | None, msg: str) -> None:
+    if log is not None:
+        log(msg)
+
+
+def _fetch_range(
+    lat: float,
+    lon: float,
+    start_ts: int,
+    end_ts: int,
+    *,
+    log: LogFn | None = None,
+) -> dict[int, dict[str, Any]]:
+    start = hour_floor(start_ts)
+    end = hour_floor(end_ts)
+    if end < start:
+        start, end = end, start
+    now = int(time.time())
+    recent_cutoff = now - RECENT_DAYS * 86400
+    merged: dict[int, dict[str, Any]] = {}
+    chunk_start = start
+    while chunk_start <= end:
+        chunk_end = min(end, chunk_start + FETCH_CHUNK_DAYS * 86400)
+        use_forecast = chunk_start >= recent_cutoff - 86400
+        url = FORECAST_URL if use_forecast else ARCHIVE_URL
+        api = "forecast" if use_forecast else "archive"
+        start_date = _iso_date(chunk_start)
+        end_date = _iso_date(chunk_end)
+        _emit(log, f"    fetch {api} {start_date} .. {end_date}")
+        params = {
+            "latitude": f"{lat:.6f}",
+            "longitude": f"{lon:.6f}",
+            "hourly": ",".join(HOURLY_VARS),
+            "start_date": start_date,
+            "end_date": end_date,
+            "timezone": "UTC",
+            "wind_speed_unit": "ms",
+        }
+        data = _fetch_open_meteo(url, params)
+        parsed = _parse_hourly_response(data)
+        merged.update(parsed)
+        _emit(log, f"    got {len(parsed)} hour(s)")
+        chunk_start = chunk_end + 3600
+    return merged
 
 
 def lat_lon_cell(lat: float, lon: float) -> tuple[float, float]:
@@ -198,39 +248,6 @@ def _parse_hourly_response(data: dict[str, Any]) -> dict[int, dict[str, Any]]:
     return out
 
 
-def _fetch_range(
-    lat: float,
-    lon: float,
-    start_ts: int,
-    end_ts: int,
-) -> dict[int, dict[str, Any]]:
-    start = hour_floor(start_ts)
-    end = hour_floor(end_ts)
-    if end < start:
-        start, end = end, start
-    now = int(time.time())
-    recent_cutoff = now - RECENT_DAYS * 86400
-    merged: dict[int, dict[str, Any]] = {}
-    chunk_start = start
-    while chunk_start <= end:
-        chunk_end = min(end, chunk_start + FETCH_CHUNK_DAYS * 86400)
-        use_forecast = chunk_start >= recent_cutoff - 86400
-        url = FORECAST_URL if use_forecast else ARCHIVE_URL
-        params = {
-            "latitude": f"{lat:.6f}",
-            "longitude": f"{lon:.6f}",
-            "hourly": ",".join(HOURLY_VARS),
-            "start_date": _iso_date(chunk_start),
-            "end_date": _iso_date(chunk_end),
-            "timezone": "UTC",
-            "wind_speed_unit": "ms",
-        }
-        data = _fetch_open_meteo(url, params)
-        merged.update(_parse_hourly_response(data))
-        chunk_start = chunk_end + 3600
-    return merged
-
-
 def missing_hours(
     conn: sqlite3.Connection,
     lat: float,
@@ -264,16 +281,31 @@ def ensure_weather_cached(
     lon: float,
     start_ts: int,
     end_ts: int,
+    *,
+    log: LogFn | None = None,
 ) -> int:
     """Fetch Open-Meteo for any missing hours in range. Returns rows inserted."""
     if is_placeholder_gps(lat, lon):
         return 0
     missing = missing_hours(conn, lat, lon, start_ts, end_ts)
     if not missing:
+        _emit(log, "    cache complete (0 missing)")
         return 0
-    fetched = _fetch_range(lat, lon, missing[0], missing[-1])
+    _emit(
+        log,
+        f"    {len(missing)} missing hour(s), "
+        f"{_iso_date(missing[0])} .. {_iso_date(missing[-1])}",
+    )
+    fetched = _fetch_range(lat, lon, missing[0], missing[-1], log=log)
     to_store = {h: fetched[h] for h in missing if h in fetched}
-    return _insert_hours(conn, lat, lon, to_store)
+    if len(to_store) < len(missing):
+        _emit(
+            log,
+            f"    warning: API returned {len(to_store)}/{len(missing)} missing hour(s)",
+        )
+    inserted = _insert_hours(conn, lat, lon, to_store)
+    _emit(log, f"    cached {inserted} hour row(s)")
+    return inserted
 
 
 def weather_at(
@@ -348,18 +380,41 @@ def attach_weather(
         stamp_weather(conn, row, loc=effective_loc)
 
 
+def _site_label(
+    loc: tuple[float, float],
+    units: list[str],
+    by_node: dict[str, tuple[str, dict[str, Any]]],
+    sites: dict[str, dict[str, Any]],
+) -> str:
+    from envybot.position import lookup_site_name
+
+    names: list[str] = []
+    for unit in units:
+        bind = by_node.get(unit)
+        if bind:
+            slug, _site = bind
+            name = lookup_site_name(slug, sites) or slug
+            if name not in names:
+                names.append(name)
+    label = ", ".join(names) if names else ", ".join(units)
+    return f"{label} ({loc[0]:.3f}, {loc[1]:.3f})"
+
+
 def run_weather_backfill(
     conn: sqlite3.Connection,
     book: Any,
     *,
     force: bool = False,
     sleep_s: float = 0.2,
+    log: LogFn | None = None,
 ) -> dict[str, Any]:
     """One-shot cache fill for bound sites × history span."""
     from pathlib import Path
 
     from envybot.nodes_doc import load_nodes_doc
     from envybot.position import index_sites_by_node, load_sites, site_loc, site_loc_for_unit
+
+    emit = log or (lambda msg: print(msg, file=sys.stderr, flush=True))
 
     if not force and not weather_backfill_pending(conn):
         return {"skipped": True, "reason": "already done"}
@@ -390,9 +445,13 @@ def run_weather_backfill(
             continue
         loc_jobs.setdefault(loc, []).append(key)
 
+    emit(f"weather backfill: {len(loc_jobs)} site location(s) in book")
+
     total_hours = 0
     site_count = 0
-    for loc, units in loc_jobs.items():
+    skipped_no_history = 0
+    for idx, (loc, units) in enumerate(sorted(loc_jobs.items()), start=1):
+        label = _site_label(loc, units, by_node, sites)
         placeholders = ",".join("?" * len(units))
         row = conn.execute(
             f"""
@@ -407,13 +466,21 @@ def run_weather_backfill(
             (*units, *units),
         ).fetchone()
         if not row or row["mn"] is None or row["mx"] is None:
+            skipped_no_history += 1
+            emit(f"  [{idx}/{len(loc_jobs)}] {label}: skip (no poll history)")
             continue
         start_ts = int(row["mn"])
         end_ts = int(row["mx"])
-        # Pad one hour each side for boundary samples.
         start_ts = hour_floor(start_ts) - 3600
         end_ts = hour_floor(end_ts) + 3600
-        total_hours += ensure_weather_cached(conn, loc[0], loc[1], start_ts, end_ts)
+        emit(
+            f"  [{idx}/{len(loc_jobs)}] {label}: "
+            f"history {_iso_date(start_ts)} .. {_iso_date(end_ts)} "
+            f"({', '.join(units)})"
+        )
+        total_hours += ensure_weather_cached(
+            conn, loc[0], loc[1], start_ts, end_ts, log=emit
+        )
         site_count += 1
         if sleep_s > 0:
             time.sleep(sleep_s)
@@ -423,8 +490,14 @@ def run_weather_backfill(
         (WEATHER_BACKFILL_META, str(int(time.time()))),
     )
     conn.commit()
+    emit(
+        f"weather backfill: done — {site_count} site(s) filled, "
+        f"{total_hours} hour row(s) cached"
+        + (f", {skipped_no_history} skipped (no history)" if skipped_no_history else "")
+    )
     return {
         "skipped": False,
         "sites": site_count,
         "hours_inserted": total_hours,
+        "skipped_no_history": skipped_no_history,
     }

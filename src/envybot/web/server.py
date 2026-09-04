@@ -604,8 +604,10 @@ async def _handle_polls(request: web.Request) -> web.Response:
         loc = _site_loc_for_polls(web_ctx, unit)
         attach_sun(histories.get("status"), loc=loc)
         attach_sun(histories.get("telemetry"), loc=loc)
+        attach_sun(histories.get("polls"), loc=loc)
         attach_weather(conn, histories.get("status"), loc=loc)
         attach_weather(conn, histories.get("telemetry"), loc=loc)
+        attach_weather(conn, histories.get("polls"), loc=loc)
         now = int(time.time())
         histories["sun"] = (
             sun_series(loc[0], loc[1], now - hours * 3600, now) if loc else []

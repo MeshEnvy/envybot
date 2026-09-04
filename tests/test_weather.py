@@ -187,5 +187,21 @@ class WeatherBackfillTests(unittest.TestCase):
             ensure_mock.assert_not_called()
 
 
+class WeatherCliTests(unittest.TestCase):
+    @patch("envybot.commands.weather.run_weather_backfill")
+    @patch("envybot.commands.weather.open_history")
+    def test_cli_dispatches_backfill(self, open_mock, backfill_mock) -> None:
+        from envybot.commands import weather
+
+        open_mock.return_value = type("Conn", (), {"close": lambda self: None})()
+        backfill_mock.return_value = {"skipped": False, "sites": 2, "hours_inserted": 10}
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            rc = weather.main(book, ["backfill"])
+        self.assertEqual(rc, 0)
+        backfill_mock.assert_called_once()
+        open_mock.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()

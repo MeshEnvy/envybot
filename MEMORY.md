@@ -192,9 +192,9 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
   Units carry `health` (worst-of component checks) and interval traffic
   deltas. Hello snapshot includes compact 72h `sparks` (battery V, temp,
   in/h, unreadable %) per unit; SSE status/telemetry samples extend them
-  live. Detail sparklines use native sqlite series; poll history is four
-  always-open sections (status, telemetry, neighbors, ACL), 10 rows each
-  with Load more +10, from `/api/polls/{unit}` (`source_histories`).
+  live. Detail sparklines prefer merged `polls` from `/api/polls/{unit}`
+  (`poll_snapshots`); neighbors and ACL stay separate sections. Unified
+  **Polls** table (status+telemetry+weather, deltas, 10 rows + Load more).
   Each GET persists only that
   group (no replay of earlier status). SSE `unit` events carry
   `{ source, sample }` so the open card updates live via `state.js`.

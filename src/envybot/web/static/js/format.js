@@ -236,6 +236,30 @@ export function sunTitle(sun) {
 }
 
 /** @param {Record<string, unknown> | null | undefined} weather */
+export function formatPollWeather(weather) {
+  if (!weather || typeof weather !== 'object') return '—'
+  const parts = []
+  const tempC = Number(weather.temp_c)
+  if (Number.isFinite(tempC)) parts.push(`${cToF(tempC).toFixed(0)}°`)
+  const cloud = Number(weather.cloud_pct)
+  if (Number.isFinite(cloud)) parts.push(`${Math.round(cloud)}%`)
+  const precip = Number(weather.precip_mm)
+  if (Number.isFinite(precip) && precip > 0.05) parts.push(`${precip.toFixed(1)}mm`)
+  const wind = Number(weather.wind_ms)
+  if (Number.isFinite(wind)) {
+    if (wind < 1) parts.push('calm')
+    else parts.push(`${Math.round(wind * 2.237)}mph`)
+  }
+  return parts.length ? parts.join(' · ') : '—'
+}
+
+/** @param {Record<string, unknown> | null | undefined} row */
+export function pollSynthetic(row, key) {
+  const syn = row?.synthetic
+  return Array.isArray(syn) && syn.includes(key)
+}
+
+/** @param {Record<string, unknown> | null | undefined} weather */
 export function weatherLabel(weather) {
   return typeof weather?.label === 'string' ? weather.label : ''
 }

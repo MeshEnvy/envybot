@@ -94,10 +94,14 @@ export function isSynthetic(poll, field) {
   return Array.isArray(syn) && syn.includes(field)
 }
 
-/** Voltage from status ``battery_mv``. Telemetry voltage is unused. */
+/** Voltage from poll row (battery_mv or telemetry voltage). */
 export function pollVoltage(poll) {
   if (poll?.battery_mv != null && Number.isFinite(Number(poll.battery_mv))) {
     return Number(poll.battery_mv) / 1000
+  }
+  const volts = poll?.voltage
+  if (volts != null && Number.isFinite(Number(volts))) {
+    return Number(volts)
   }
   return null
 }
@@ -242,6 +246,19 @@ export function seriesFromHistories(history) {
     }
   }
   for (const p of history?.sun || []) {
+    const ts = Number(p.ts)
+    const elev = Number(p.value)
+    if (Number.isFinite(ts) && Number.isFinite(elev)) {
+      out.sun.push({ ts, value: elev })
+    }
+  }
+  return out
+}
+
+/** Merge sun elevation series into poll-derived spark data. */
+export function withSunSeries(fromPolls, sunRows) {
+  const out = { ...fromPolls, sun: [] }
+  for (const p of sunRows || []) {
     const ts = Number(p.ts)
     const elev = Number(p.value)
     if (Number.isFinite(ts) && Number.isFinite(elev)) {

@@ -54,7 +54,7 @@ def cmd_seed(book: Path, argv: list[str]) -> int:
 def cmd_weather(book: Path, argv: list[str]) -> int:
     from envybot.commands import weather
 
-    return weather.main(_inject_flag(argv, "--book", str(book)))
+    return weather.main(book, argv)
 
 
 COMMANDS: dict[str, tuple[str, Command]] = {

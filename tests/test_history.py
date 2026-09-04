@@ -620,6 +620,8 @@ class HistoryTests(unittest.TestCase):
             hist = source_histories(conn, "me0015", hours=72, limit=10)
             self.assertEqual(len(hist["status"]), 1)
             self.assertEqual(len(hist["telemetry"]), 1)
+            self.assertEqual(len(hist["polls"]), 1)
+            self.assertAlmostEqual(hist["polls"][0]["voltage"], 4.05)
             self.assertEqual(hist["status"][0]["ts"], now - 2000)
             self.assertAlmostEqual(hist["status"][0]["voltage"], 4.05)
             self.assertNotIn("temperature", hist["status"][0])

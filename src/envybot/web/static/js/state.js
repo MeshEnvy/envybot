@@ -2,14 +2,15 @@ import { reactive } from 'vue'
 import { buildNeighborEdges } from './map.js?v=28'
 
 /** @typedef {{ ts: number, [key: string]: unknown }} HistoryRow */
-/** @typedef {{ status: HistoryRow[], telemetry: HistoryRow[], neighbors: HistoryRow[], acl: HistoryRow[], sun?: HistoryRow[] }} UnitHistory */
+/** @typedef {{ status: HistoryRow[], telemetry: HistoryRow[], polls: HistoryRow[], neighbors: HistoryRow[], acl: HistoryRow[], sun?: HistoryRow[] }} UnitHistory */
 /** @typedef {{ key: string, history?: UnitHistory, [key: string]: unknown }} FleetUnit */
 /** @typedef {{ units: Record<string, FleetUnit>, counts: Record<string, unknown>, poll: Record<string, unknown>, companion: string | null, edges: unknown[] }} FleetSnapshot */
 
 const HISTORY_LIMIT = 48
+const POLL_MERGE_WINDOW = 120
 
 function emptyHistory() {
-  return { status: [], telemetry: [], neighbors: [], acl: [], sun: [] }
+  return { status: [], telemetry: [], polls: [], neighbors: [], acl: [], sun: [] }
 }
 
 export const fleetStore = reactive({
@@ -47,6 +48,74 @@ function ensureUnit(key) {
   return fleetStore.units[key]
 }
 
+/** @param {HistoryRow} row @param {HistoryRow | null | undefined} prev */
+function applyPollDeltasFront(row, prev) {
+  if (!prev) return
+  row.since_prev_secs = Math.max(0, Number(row.ts) - Number(prev.ts))
+  const prevUp = prev.uptime_secs
+  const currUp = row.uptime_secs
+  const reboot =
+    prevUp != null && currUp != null && Number(currUp) < Number(prevUp)
+  row.reboot = reboot
+  if (reboot) return
+  for (const key of ['packets_recv', 'packets_sent', 'recv_errors']) {
+    const curr = row[key]
+    const pval = prev[key]
+    if (curr == null || pval == null) continue
+    const delta = Number(curr) - Number(pval)
+    if (delta >= 0) row[`delta_${key}`] = delta
+  }
+  for (const [key, digits] of [
+    ['voltage', 3],
+    ['temperature', 1],
+    ['battery_mv', 0],
+  ]) {
+    const curr = row[key]
+    const pval = prev[key]
+    if (curr == null || pval == null) continue
+    const a = Number(curr)
+    const b = Number(pval)
+    if (!Number.isFinite(a) || !Number.isFinite(b)) continue
+    row[`delta_${key}`] = Number((a - b).toFixed(digits))
+  }
+}
+
+/** @param {UnitHistory} hist @param {'status' | 'telemetry'} source @param {HistoryRow} row */
+function mergePollSample(hist, source, row) {
+  if (!Array.isArray(hist.polls)) hist.polls = []
+  const polls = hist.polls
+  if (source === 'status') {
+    if (polls.length && polls[0].ts === row.ts) {
+      Object.assign(polls[0], row)
+      return
+    }
+    const next = { ...row }
+    applyPollDeltasFront(next, polls[0])
+    polls.unshift(next)
+    if (polls.length > HISTORY_LIMIT) polls.length = HISTORY_LIMIT
+    return
+  }
+  if (source === 'telemetry') {
+    let best = -1
+    let bestDt = POLL_MERGE_WINDOW + 1
+    for (let i = 0; i < polls.length; i++) {
+      const dt = Math.abs(Number(polls[i].ts) - Number(row.ts))
+      if (dt < bestDt) {
+        bestDt = dt
+        best = i
+      }
+    }
+    if (best >= 0 && bestDt <= POLL_MERGE_WINDOW) {
+      Object.assign(polls[best], row)
+      return
+    }
+    const next = { ...row }
+    applyPollDeltasFront(next, polls[0])
+    polls.unshift(next)
+    if (polls.length > HISTORY_LIMIT) polls.length = HISTORY_LIMIT
+  }
+}
+
 function prependHistory(key, source, row) {
   const unit = ensureUnit(key)
   const hist = unit.history || emptyHistory()
@@ -57,6 +126,9 @@ function prependHistory(key, source, row) {
   } else {
     list.unshift(row)
     if (list.length > HISTORY_LIMIT) list.length = HISTORY_LIMIT
+  }
+  if (source === 'status' || source === 'telemetry') {
+    mergePollSample(hist, source, row)
   }
 }
 
@@ -140,6 +212,7 @@ export function loadHistories(key, histories) {
   unit.history = {
     status: histories.status || [],
     telemetry: histories.telemetry || [],
+    polls: histories.polls || [],
     neighbors: histories.neighbors || [],
     acl: histories.acl || [],
     sun: histories.sun || [],

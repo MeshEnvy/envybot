@@ -1323,6 +1323,7 @@ def source_histories(
     return {
         "status": status_history(conn, unit, limit=limit, hours=hours),
         "telemetry": telemetry_history(conn, unit, limit=limit, hours=hours),
+        "polls": poll_snapshots(conn, unit, limit=limit, hours=hours),
         "neighbors": neighbors_history(conn, unit, limit=limit, hours=hours),
         "acl": acl_history(conn, unit, limit=limit, hours=hours),
     }
@@ -1389,6 +1390,8 @@ def poll_snapshots(
                 "recv_errors": _status_int(payload, "recv_errors"),
                 "noise_floor": _status_int(payload, "noise_floor"),
                 "uptime_secs": _status_int(payload, "uptime_secs"),
+                "lat": _finite_number(payload.get("site_lat")),
+                "lon": _finite_number(payload.get("site_lon")),
             }
         )
 
