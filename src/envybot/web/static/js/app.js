@@ -70,7 +70,7 @@ import {
   createMapController,
   unitStage,
   unitStatus,
-} from "./map.js?v=29";
+} from "./map.js?v=30";
 import {
   seriesFromHistories,
   sparklineWallTime,
@@ -505,7 +505,7 @@ const App = {
       await new Promise((r) =>
         requestAnimationFrame(() => requestAnimationFrame(r)),
       );
-      mapCtrl = createMapController("map", selectFromMap, clearMapHighlight);
+      mapCtrl = createMapController("map", selectFromMapPin, clearMapHighlight);
       pushMap();
       requestAnimationFrame(() => pushMap());
     }
@@ -1228,6 +1228,10 @@ const App = {
       pushMap();
     }
 
+    function selectFromMapPin(key) {
+      openDetail(key, { fly: true });
+    }
+
     async function applyLocationUnit() {
       const key = unitKeyFromLocation();
       if (!key) {
@@ -1249,7 +1253,7 @@ const App = {
     function hideConsoleAtEvent(ev) {
       const key = mapCtrl?.hitUnit?.(ev.clientX, ev.clientY);
       if (key) {
-        selectFromMap(key);
+        selectFromMapPin(key);
         return;
       }
       hideConsole();
@@ -1258,7 +1262,7 @@ const App = {
     function hideMapAtEvent(ev) {
       const key = mapCtrl?.hitUnit?.(ev.clientX, ev.clientY);
       if (key) {
-        selectFromMap(key);
+        selectFromMapPin(key);
         return;
       }
       hideMap();

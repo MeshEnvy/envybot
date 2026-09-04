@@ -217,21 +217,23 @@ export function createMapController(containerId, onSelect, onClear) {
       },
     })
 
-    map.on('click', 'units', (e) => {
-      const key = e.features?.[0]?.properties?.key
-      if (typeof key === 'string') onSelect(key)
-    })
-    map.on('mouseenter', 'units', () => {
-      map.getCanvas().style.cursor = 'pointer'
-    })
-    map.on('mouseleave', 'units', () => {
-      map.getCanvas().style.cursor = ''
-    })
+    const hitLayers = () =>
+      ['units', 'units-glow', 'units-label'].filter((id) => map.getLayer(id))
 
     map.on('click', (e) => {
-      const hits = map.queryRenderedFeatures(e.point, { layers: ['units'] })
-      if (!hits.length) onClear?.()
+      const hits = map.queryRenderedFeatures(e.point, { layers: hitLayers() })
+      const key = hits[0]?.properties?.key
+      if (typeof key === 'string') onSelect(key)
+      else onClear?.()
     })
+    for (const layer of ['units', 'units-glow', 'units-label']) {
+      map.on('mouseenter', layer, () => {
+        map.getCanvas().style.cursor = 'pointer'
+      })
+      map.on('mouseleave', layer, () => {
+        map.getCanvas().style.cursor = ''
+      })
+    }
   }
 
   /** @param {Record<string, unknown>} fleet @param {string | null} selectedKey @param {number} [now] */
@@ -338,8 +340,9 @@ export function createMapController(containerId, onSelect, onClear) {
     if (!ready || !map.getLayer('units')) return null
     const rect = map.getCanvas().getBoundingClientRect()
     const point = [clientX - rect.left, clientY - rect.top]
-    const layers = ['units']
-    if (map.getLayer('units-label')) layers.push('units-label')
+    const layers = ['units', 'units-glow', 'units-label'].filter((id) =>
+      map.getLayer(id),
+    )
     const hits = map.queryRenderedFeatures(point, { layers })
     const key = hits[0]?.properties?.key
     return typeof key === 'string' ? key : null
