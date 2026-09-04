@@ -70,6 +70,8 @@ NODES_YAML_HEADER = (
     "# firmware_platform: meshcore | meshtastic. Meshtastic rows stay in the\n"
     "#   book; envybot ignores them (no UI, poll, apply, trust, cmd).\n"
     "# paused: true skips auto fleet poll/apply. Still in the UI. Refresh/Pull/Push override.\n"
+    "# stability_ack_ts: unix epoch when reboot warning was dismissed in the UI.\n"
+    "#   Ignores earlier uptime drops until the next reboot.\n"
     "# routing: direct | path | flood — mesh send policy (default path when omitted).\n"
     "#   path: use cached route; flood-login to discover; discard stale cache after 3 fails.\n"
     "#   direct: always zero-hop. flood: always flood (danger — high airtime).\n"

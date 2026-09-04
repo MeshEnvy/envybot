@@ -259,12 +259,15 @@ body {
 
 .dash-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
   min-width: 0;
 }
 
 .dash-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -272,17 +275,17 @@ body {
 
 .dash-title .unit-name {
   font-size: 0.82rem;
-  display: block;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .dash-metrics {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px 6px;
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 .dash-metric {
@@ -312,34 +315,56 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 6px;
+  margin-top: 4px;
   min-width: 0;
   font-size: 0.68rem;
   color: #8aa0b5;
   line-height: 1.25;
+  white-space: nowrap;
 }
 
 .dash-foot-meta {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
   min-width: 0;
   flex: 1;
+  overflow: hidden;
+}
+
+.dash-foot-meta > * {
+  flex-shrink: 0;
+}
+
+.dash-foot-meta .unit-id {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash-foot-ago {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: #6b7d8f;
 }
 
 .dash-foot-busy {
-  flex-shrink: 0;
+  flex: 1;
+  min-width: 0;
   font-weight: 600;
   color: #a896ff;
-  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 45%;
+  margin-right: 6px;
 }
 
-.dash-foot.busy .dash-foot-meta {
-  justify-content: flex-end;
+.dash-foot.busy {
+  color: #a896ff;
+}
+
+.ota-card-badge {
+  margin-left: 0;
 }
 
 .dash-health-badge {
@@ -1374,6 +1399,30 @@ body {
   margin-top: 2px;
   font-size: 0.7rem;
   color: #8aa0b5;
+}
+
+.health-issue-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.health-dismiss {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 0 6px;
+  border: 1px solid #3a4a5c;
+  border-radius: 4px;
+  background: #1a222c;
+  color: #9ec0e0;
+  font-size: 0.65rem;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.health-dismiss:hover {
+  border-color: #4ea1ff;
+  color: #c5d4e3;
 }
 
 .spark-grid,

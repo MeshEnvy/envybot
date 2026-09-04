@@ -94,6 +94,16 @@ def is_secret_key(key: str) -> bool:
     return bool(SECRET_KEY_RE.search(key))
 
 
+def _stability_ack_ts(node: dict[str, Any]) -> int | None:
+    raw = node.get("stability_ack_ts")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def unit_label(
     *,
     key: str,
@@ -635,6 +645,7 @@ def build_fleet_snapshot(
                 traffic_window=window_map.get(key),
                 status_rows=status_rows,
                 paused=units[key]["paused"],
+                stability_ack_ts=_stability_ack_ts(node),
             )
             units[key]["sparks"] = compact_sparks(status_rows, conn=conn, unit=key, now=now)
     finally:

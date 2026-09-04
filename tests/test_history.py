@@ -12,6 +12,7 @@ from envybot.history import (
     _backfill_sample_loc_from_sites,
     _backfill_sample_loc_v2,
     count_reboots,
+    count_reboots_since,
     get_last_seen,
     history_series,
     import_jsonl,
@@ -486,6 +487,25 @@ class HistoryTests(unittest.TestCase):
             rows = status_series(conn, "me0008", days=7)
             self.assertEqual(len(rows), 3)
             self.assertEqual(count_reboots(rows), 1)
+
+    def test_count_reboots_since_ignores_older_drops(self) -> None:
+        rows = [
+            {"ts": 100, "uptime_secs": 2000},
+            {"ts": 200, "uptime_secs": 100},
+            {"ts": 300, "uptime_secs": 500},
+        ]
+        self.assertEqual(count_reboots(rows), 1)
+        self.assertEqual(count_reboots_since(rows, 250), 0)
+        self.assertEqual(count_reboots_since(rows, 150), 1)
+
+    def test_count_reboots_since_counts_new_drop_after_ack(self) -> None:
+        rows = [
+            {"ts": 100, "uptime_secs": 2000},
+            {"ts": 200, "uptime_secs": 100},
+            {"ts": 400, "uptime_secs": 3000},
+            {"ts": 500, "uptime_secs": 50},
+        ]
+        self.assertEqual(count_reboots_since(rows, 250), 1)
 
     def test_history_derived_series(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

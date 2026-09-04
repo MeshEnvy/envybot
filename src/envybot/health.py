@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from envybot.history import count_reboots
+from envybot.history import count_reboots, count_reboots_since
 
 CheckStatus = Literal["ok", "warn", "bad", "unknown"]
 Grade = Literal["ok", "warn", "bad", "unknown"]
@@ -12,9 +12,11 @@ Headline = Literal["paused", "healthy", "unreachable", "attention"]
 
 _IN_FLIGHT = frozenset({"queued", "refreshing", "pulling", "pushing", "polling"})
 
-# Power (volts)
+# Power (volts) — 1S Li-ion / WisBlock (charge 4.2 V, operating max 4.3 V)
 POWER_WARN_V = 3.7
 POWER_BAD_V = 3.5
+POWER_HIGH_WARN_V = 4.25
+POWER_HIGH_BAD_V = 4.35
 POWER_TREND_DROP_V = 0.15
 POWER_TREND_POLLS = 3
 
@@ -112,6 +114,7 @@ def compute_health(
     traffic_window: dict[str, Any] | None = None,
     status_rows: list[dict[str, Any]],
     reboot_count: int | None = None,
+    stability_ack_ts: int | None = None,
     paused: bool = False,
     drift_detail: str | None = None,
 ) -> dict[str, Any]:
@@ -165,24 +168,45 @@ def compute_health(
             recent = volt_history[-POWER_TREND_POLLS :]
             if recent[0] - recent[-1] >= POWER_TREND_DROP_V:
                 trend_drop = True
-        if volts < POWER_BAD_V:
+        if volts > POWER_HIGH_BAD_V:
             checks.append(
                 _check(
                     "Power",
                     "bad",
-                    f"{volts:.2f} V below {POWER_BAD_V:.1f} V",
-                    fix="Check solar, battery, and charger. Replace the pack if it does not recover in sun.",
+                    f"Above {POWER_HIGH_BAD_V:.2f} V critical threshold",
+                    fix="Above WisBlock 4.3 V operating max. Check solar input and charge path.",
                 )
             )
-        elif volts < POWER_WARN_V or trend_drop:
-            reason = f"{volts:.2f} V"
-            if trend_drop:
-                reason += " falling"
+        elif volts > POWER_HIGH_WARN_V:
             checks.append(
                 _check(
                     "Power",
                     "warn",
-                    reason,
+                    f"Above {POWER_HIGH_WARN_V:.2f} V warn threshold",
+                    fix="Solar may push high in sun. OK if it falls after dark; investigate if sustained.",
+                )
+            )
+        elif volts < POWER_BAD_V:
+            checks.append(
+                _check(
+                    "Power",
+                    "bad",
+                    f"Below {POWER_BAD_V:.1f} V critical threshold",
+                    fix="Check solar, battery, and charger. Replace the pack if it does not recover in sun.",
+                )
+            )
+        elif volts < POWER_WARN_V or trend_drop:
+            parts: list[str] = []
+            if volts < POWER_WARN_V:
+                parts.append(f"below {POWER_WARN_V:.1f} V warn threshold")
+            if trend_drop:
+                parts.append("falling over recent polls")
+            reason = " and ".join(parts)
+            checks.append(
+                _check(
+                    "Power",
+                    "warn",
+                    reason[0].upper() + reason[1:] if reason else "warn",
                     fix="Watch voltage. Inspect the power path if it keeps dropping.",
                 )
             )
@@ -191,7 +215,7 @@ def compute_health(
 
     # Stability
     if reboot_count is None:
-        reboot_count = count_reboots(status_rows)
+        reboot_count = count_reboots_since(status_rows, stability_ack_ts)
     if len(status_rows) < 2:
         checks.append(_check("Stability", "unknown", "Not enough poll history"))
     elif reboot_count >= STABILITY_BAD_REBOOTS:
@@ -209,7 +233,7 @@ def compute_health(
                 "Stability",
                 "warn",
                 f"{reboot_count} reboot in recent history",
-                fix="Refresh again to confirm it stays up.",
+                fix="Dismiss if expected (bench flash, power cycle). Warns again on the next reboot.",
             )
         )
     else:
@@ -334,9 +358,8 @@ def compute_health(
         checks.append(
             _check(
                 "Config",
-                "warn",
-                "Profile apply is due",
-                fix="Fleet auto-queues a Push when the profile stamp is due. Use Push to force it now.",
+                "ok",
+                "Profile apply pending (auto on next poll)",
             )
         )
     else:
@@ -358,16 +381,25 @@ def compute_health(
             _check(
                 "Temperature",
                 "bad",
-                f"{temp * 9 / 5 + 32:.0f} °F",
+                "Above critical high threshold",
                 fix="Shade, vent, or move the enclosure.",
             )
         )
-    elif temp >= TEMP_WARN_HIGH or temp <= TEMP_WARN_LOW:
+    elif temp >= TEMP_WARN_HIGH:
         checks.append(
             _check(
                 "Temperature",
                 "warn",
-                f"{temp * 9 / 5 + 32:.0f} °F",
+                "Above warn threshold",
+                fix="Check enclosure placement and sun load.",
+            )
+        )
+    elif temp <= TEMP_WARN_LOW:
+        checks.append(
+            _check(
+                "Temperature",
+                "warn",
+                "Below warn threshold",
                 fix="Check enclosure placement and sun load.",
             )
         )

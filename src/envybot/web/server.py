@@ -750,6 +750,8 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
             node["notes"] = notes
         else:
             node.pop("notes", None)
+    if body.get("ack_stability") is True:
+        node["stability_ack_ts"] = int(time.time())
     if "site" in body:
         site = body["site"]
         sites_doc = load_sites_doc(web_ctx.sites_path)

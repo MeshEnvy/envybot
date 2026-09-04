@@ -52,7 +52,7 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(health["summary"], "Healthy — all checks pass")
         self.assertEqual(health["issues"], [])
 
-    def test_config_due_has_fix(self) -> None:
+    def test_config_due_is_not_attention(self) -> None:
         health = compute_health(
             freshness="fresh",
             session={"state": "ok"},
@@ -73,10 +73,11 @@ class HealthTests(unittest.TestCase):
             ],
             reboot_count=0,
         )
-        self.assertEqual(health["headline"], "attention")
-        cfg = next(i for i in health["issues"] if i["name"] == "Config")
-        self.assertIn("due", (cfg["reason"] or "").lower())
-        self.assertIn("Push", cfg.get("fix") or "")
+        self.assertEqual(health["headline"], "healthy")
+        self.assertEqual(health["issues"], [])
+        cfg = next(c for c in health["checks"] if c["name"] == "Config")
+        self.assertEqual(cfg["status"], "ok")
+        self.assertIn("auto", (cfg["reason"] or "").lower())
 
     def test_config_leak_is_bad(self) -> None:
         health = compute_health(
@@ -165,6 +166,39 @@ class HealthTests(unittest.TestCase):
         power = next(c for c in health["checks"] if c["name"] == "Power")
         self.assertEqual(power["status"], "bad")
 
+    def test_power_high_voltage_warn(self) -> None:
+        health = compute_health(
+            freshness="fresh",
+            session=None,
+            drift=None,
+            status={"battery_mv": 4280},
+            telemetry={"voltage": 4.28},
+            traffic_interval={"packets_recv": 10, "packets_sent": 5, "duration_secs": 3600},
+            traffic_window=_traffic_window(recv=10, sent=5),
+            status_rows=[{"battery_mv": 4280, "uptime_secs": 100}],
+            reboot_count=0,
+        )
+        power = next(c for c in health["checks"] if c["name"] == "Power")
+        self.assertEqual(power["status"], "warn")
+        self.assertIn("4.25", power.get("reason") or "")
+
+    def test_power_high_voltage_bad(self) -> None:
+        health = compute_health(
+            freshness="fresh",
+            session=None,
+            drift=None,
+            status={"battery_mv": 4360},
+            telemetry={"voltage": 4.36},
+            traffic_interval={"packets_recv": 10, "packets_sent": 5, "duration_secs": 3600},
+            traffic_window=_traffic_window(recv=10, sent=5),
+            status_rows=[{"battery_mv": 4360, "uptime_secs": 100}],
+            reboot_count=0,
+        )
+        self.assertEqual(health["headline"], "attention")
+        power = next(c for c in health["checks"] if c["name"] == "Power")
+        self.assertEqual(power["status"], "bad")
+        self.assertIn("4.35", power.get("reason") or "")
+
     def test_power_ignores_telemetry_voltage(self) -> None:
         health = compute_health(
             freshness="fresh",
@@ -202,6 +236,49 @@ class HealthTests(unittest.TestCase):
         )
         stability = next(c for c in health["checks"] if c["name"] == "Stability")
         self.assertEqual(stability["status"], "bad")
+
+    def test_stability_ack_suppresses_known_reboot(self) -> None:
+        rows = [
+            {"ts": 100, "uptime_secs": 2000},
+            {"ts": 200, "uptime_secs": 100},
+            {"ts": 300, "uptime_secs": 500},
+        ]
+        health = compute_health(
+            freshness="fresh",
+            session={"state": "ok"},
+            drift=None,
+            status={"battery_mv": 4000, "packets_recv": 100, "recv_errors": 0},
+            telemetry={"voltage": 4.0},
+            traffic_interval={"packets_recv": 5, "packets_sent": 1, "duration_secs": 3600},
+            traffic_window=_traffic_window(recv=5, sent=1),
+            status_rows=rows,
+            stability_ack_ts=250,
+        )
+        self.assertEqual(health["headline"], "healthy")
+        stability = next(c for c in health["checks"] if c["name"] == "Stability")
+        self.assertEqual(stability["status"], "ok")
+
+    def test_stability_ack_returns_after_new_reboot(self) -> None:
+        rows = [
+            {"ts": 100, "uptime_secs": 2000},
+            {"ts": 200, "uptime_secs": 100},
+            {"ts": 400, "uptime_secs": 3000},
+            {"ts": 500, "uptime_secs": 50},
+        ]
+        health = compute_health(
+            freshness="fresh",
+            session={"state": "ok"},
+            drift=None,
+            status={"battery_mv": 4000, "packets_recv": 100, "recv_errors": 0},
+            telemetry={"voltage": 4.0},
+            traffic_interval={"packets_recv": 5, "packets_sent": 1, "duration_secs": 3600},
+            traffic_window=_traffic_window(recv=5, sent=1),
+            status_rows=rows,
+            stability_ack_ts=250,
+        )
+        self.assertEqual(health["headline"], "attention")
+        stability = next(c for c in health["checks"] if c["name"] == "Stability")
+        self.assertEqual(stability["status"], "warn")
 
     def test_traffic_deaf_warn(self) -> None:
         health = compute_health(

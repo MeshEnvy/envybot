@@ -591,13 +591,28 @@ def status_series(
 
 def count_reboots(status_rows: list[dict[str, Any]]) -> int:
     """Reboot count from uptime drops across chronological status rows."""
+    return count_reboots_since(status_rows, since_ts=None)
+
+
+def count_reboots_since(
+    status_rows: list[dict[str, Any]], since_ts: int | None
+) -> int:
+    """Reboot count ignoring uptime drops before ``since_ts`` (post-reboot row ts)."""
     reboots = 0
     prev_uptime: int | None = None
     for row in status_rows:
         uptime = _status_int(row, "uptime_secs") if isinstance(row, dict) else None
         if uptime is None:
             continue
-        if prev_uptime is not None and uptime < prev_uptime:
+        ts = int(row.get("ts") or 0)
+        if (
+            since_ts is not None
+            and prev_uptime is not None
+            and uptime < prev_uptime
+            and ts > since_ts
+        ):
+            reboots += 1
+        elif since_ts is None and prev_uptime is not None and uptime < prev_uptime:
             reboots += 1
         prev_uptime = uptime
     return reboots

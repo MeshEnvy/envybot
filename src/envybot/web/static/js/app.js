@@ -1373,6 +1373,15 @@ const App = {
       return !!id && id !== cardPrimary(unit);
     }
 
+    /** Short OTA chip on dashboard cards; full text in title. */
+    function cardOtaLabel(unit) {
+      const badge = unit?.ota_badge;
+      if (typeof badge !== "string" || !badge) return null;
+      if (badge === "sees update") return "fw";
+      if (badge === "downloading") return "dl";
+      return badge;
+    }
+
     function cardVoltage(unit) {
       const mv = unit?.status?.battery_mv;
       if (mv != null) return formatBattery(mv);
@@ -1607,6 +1616,17 @@ const App = {
       }
     }
 
+    async function ackStability(unit, ev) {
+      ev?.stopPropagation?.();
+      try {
+        const updated = await patchUnit(String(unit.key), { ack_stability: true });
+        applyUnit(updated);
+        pushMap();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
     function pushMap() {
       mapCtrl?.sync(fleet, mapHighlightKey.value, fleet.now);
     }
@@ -1708,6 +1728,7 @@ const App = {
       cardPrimary,
       cardNodeId,
       cardShowNodeId,
+      cardOtaLabel,
       cardVoltage,
       cardTraffic,
       cardTemp,
@@ -1770,6 +1791,7 @@ const App = {
       unitTitle,
       togglePublic,
       togglePaused,
+      ackStability,
       setRoutingPolicy,
       effectiveRoutingPolicy,
       routingPolicyLabel,
@@ -1922,6 +1944,13 @@ const App = {
         >
           <div class="dash-head">
             <span class="dash-title" :title="healthTooltip(unit.health)">
+              <span
+                v-if="showHealthMark(unit)"
+                class="dash-health-badge"
+                :class="'dash-health-' + healthHeadline(unit)"
+                :title="healthTooltip(unit.health)"
+                :aria-label="healthMark(unit)"
+              >{{ healthEmoji(unit) }}</span>
               <span class="unit-name" :class="'unit-name-' + healthHeadline(unit)">{{ cardPrimary(unit) }}</span>
             </span>
             <div class="unit-actions">
@@ -1954,6 +1983,33 @@ const App = {
               </button>
             </div>
           </div>
+          <div class="dash-foot" :class="{ busy: isInFlight(unit) }">
+            <span
+              v-if="isInFlight(unit)"
+              class="dash-foot-busy"
+              :title="sessionBadgeTitle(unit)"
+            >{{ unitStage(unit) }}</span>
+            <span v-else class="dash-foot-meta">
+              <span v-if="cardShowNodeId(unit)" class="unit-id">{{ cardNodeId(unit) }}</span>
+              <span
+                v-if="showPolicyFloodBadge(unit)"
+                class="routing-policy-danger"
+                title="Always flood — high airtime"
+              >flood</span>
+              <span
+                v-if="unit.routing_explicit === 'direct'"
+                class="routing-policy-direct"
+                title="Direct override"
+              >direct*</span>
+              <span
+                v-if="cardOtaLabel(unit)"
+                class="ota-list-badge ota-card-badge"
+                :class="unit.ota_badge ? 'ota-badge-' + unit.ota_badge.replace(' ', '-') : ''"
+                :title="unit.ota_badge"
+              >{{ cardOtaLabel(unit) }}</span>
+            </span>
+            <span class="dash-foot-ago">{{ formatRelative(unit.last_heard, fleet.now) }}</span>
+          </div>
           <div class="dash-metrics">
             <div v-for="row in DASH_METRICS" :key="row.key" class="dash-metric">
               <span class="dash-metric-val">{{ cardMetricValue(unit, row.key) }}</span>
@@ -1982,42 +2038,6 @@ const App = {
                 />
               </svg>
             </div>
-          </div>
-          <div class="dash-foot" :class="{ busy: isInFlight(unit) }">
-            <span
-              v-if="isInFlight(unit)"
-              class="dash-foot-busy"
-              :title="sessionBadgeTitle(unit)"
-            >{{ unitStage(unit) }}</span>
-            <span
-              v-else-if="showHealthMark(unit)"
-              class="dash-health-badge"
-              :class="'dash-health-' + healthHeadline(unit)"
-              :title="healthTooltip(unit.health)"
-              :aria-label="healthMark(unit)"
-            >{{ healthEmoji(unit) }}</span>
-            <span class="dash-foot-meta">
-              <span v-if="cardShowNodeId(unit)" class="unit-id">{{ cardNodeId(unit) }}</span>
-              <span
-                v-if="unit.live_route?.label"
-                :class="liveRouteBadgeClass(unit)"
-                :title="liveRouteTitle(unit)"
-              >{{ unit.live_route_label || unit.live_route.label }}</span>
-              <span
-                v-if="showPolicyFloodBadge(unit)"
-                class="routing-policy-danger"
-                title="Always flood — high airtime"
-              >flood</span>
-              <span
-                v-if="unit.routing_explicit === 'direct'"
-                class="routing-policy-direct"
-                title="Direct override"
-              >direct*</span>
-              <span v-if="unit.ota_badge" class="ota-list-badge" :class="'ota-badge-' + unit.ota_badge.replace(' ', '-')">{{
-                unit.ota_badge
-              }}</span>
-              <span class="unit-ago">{{ formatRelative(unit.last_heard, fleet.now) }}</span>
-            </span>
           </div>
         </article>
       </div>
@@ -2178,7 +2198,17 @@ const App = {
                 :key="i"
                 :class="'health-' + issue.status"
               >
-                <div>{{ issue.name }}: {{ issue.reason || issue.status }}</div>
+                <div class="health-issue-head">
+                  <span>{{ issue.name }}: {{ issue.reason || issue.status }}</span>
+                  <button
+                    v-if="issue.name === 'Stability'"
+                    type="button"
+                    class="health-dismiss"
+                    @click="ackStability(selectedUnit, $event)"
+                  >
+                    Dismiss
+                  </button>
+                </div>
                 <div v-if="issue.fix" class="health-fix">{{ issue.fix }}</div>
               </li>
             </ul>
