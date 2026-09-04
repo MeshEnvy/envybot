@@ -111,7 +111,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   max attempts. Console and manual Refresh/Pull/Push are exempt; manual UI
   clears backoff and cooldown. `--force` or `--unit` bypass cooldown on startup.
   Successful GET_STATUS / GET_TELEMETRY / CLI log a one-line result as soon
-  as they land (same beat as `login OK`).
+  as they land (same beat as `login OK`). An apply field whose stamp
+  already matches logs `field: skip (synced)` (no radio).
   Every mesh send prepares companion route first: site-bound units flood
   (`mesh_audit.path` = ``flood``); unbound bag/bench always
   ``update_contact`` to zero-hop (``direct``) unless `flood: true`.
@@ -126,7 +127,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Poll and apply password-login every MeshCore unit. Live RTC from login
   timestamp or ``clock`` CLI.
 - Duty-cycle default is 50% (stock MeshCore). `nodes.yaml` `dutycycle`
-  overrides. Seeder launch is 10%. `set dutycycle` needs MeshCore 1.15+;
+  overrides. Optional `powersaving` / `fem_rxgain` (on|off) apply only
+  when the book sets them. FEM missing CLI (`unsupported` /
+  `unknown config`) stamps done. Seeder launch is 10%. `set dutycycle` needs MeshCore 1.15+;
   older 1.x uses `set af` (50% = af 1.0).
   Onboard also SETs `path.hash.mode` 1 (2-byte), same as fleet apply,
   and always SETs admin (write-only; yaml is the value, not a skip),
@@ -146,7 +149,7 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 
 - **Fleet UI:** `./envybot fleet` serves `127.0.0.1:8787` by default.
   Main view is a **card dashboard** (batt / temp / traffic / err sparklines,
-  fetch stage, health). Header **Map** opens a modal with the pin map + compact
+  fetch stage, health, book apply prefs). Header **Map** opens a modal with the pin map + compact
   sidebar list (first click fly/select, second opens detail). Open card is
   `?unit=<key>` (`replaceState`; reload restores). `?map=1` reopens the map.
   `--web-only` browses the book without a radio. Never expose secrets.
@@ -205,4 +208,4 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-03 (map pin opens node card)
+Last updated: 2026-09-04 (fleet UI apply prefs)

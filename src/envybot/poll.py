@@ -84,6 +84,8 @@ _STAGE_LABELS = {
     "apply:path_hash": "Setting path hash",
     "apply:dutycycle": "Setting duty cycle",
     "apply:ota_autofetch": "Setting OTA autofetch",
+    "apply:powersaving": "Setting powersaving",
+    "apply:fem_rxgain": "Setting FEM RX gain",
     "apply:acl": "Setting ACL",
     "apply:clock": "Syncing clock",
     "console:login": "Console login",

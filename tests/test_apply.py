@@ -10,7 +10,9 @@ from envybot.apply import (
     apply_due_fields,
     apply_is_due,
     applicable_field_desireds,
+    desired_fem_rxgain,
     desired_ota_autofetch,
+    desired_powersaving,
     format_apply_plan,
     profile_id,
     profile_parts,
@@ -126,6 +128,27 @@ class ProfileTests(unittest.TestCase):
         parts = profile_parts({**_STRONG, "ota_autofetch": "any"}, None)
         self.assertEqual(parts["ota_autofetch"], "any")
 
+    def test_optional_power_prefs_omitted_until_set(self) -> None:
+        parts = profile_parts(_STRONG, None)
+        self.assertNotIn("powersaving", parts)
+        self.assertNotIn("fem_rxgain", parts)
+        self.assertEqual(_id(_STRONG), _id({**_STRONG}))
+        self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "powersaving": True}))
+        self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "fem_rxgain": False}))
+
+    def test_desired_powersaving_optional(self) -> None:
+        self.assertIsNone(desired_powersaving({}))
+        self.assertIsNone(desired_powersaving(_STRONG))
+        self.assertTrue(desired_powersaving({**_STRONG, "powersaving": True}))
+        self.assertTrue(desired_powersaving({**_STRONG, "powersaving": "on"}))
+        self.assertFalse(desired_powersaving({**_STRONG, "powersaving": "off"}))
+
+    def test_desired_fem_rxgain_alias(self) -> None:
+        self.assertIsNone(desired_fem_rxgain({}))
+        self.assertFalse(desired_fem_rxgain({**_STRONG, "fem_rxgain": False}))
+        self.assertFalse(desired_fem_rxgain({**_STRONG, "radio.fem.rxgain": "off"}))
+        self.assertTrue(desired_fem_rxgain({**_STRONG, "fem_rxgain": "on"}))
+
 
 class DueTests(unittest.TestCase):
     def test_first_run_private_is_due(self) -> None:
@@ -202,6 +225,19 @@ class DueTests(unittest.TestCase):
                 insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
             due = apply_due_fields(conn, "me0001", _STRONG, None)
             self.assertEqual(due, ["ota_autofetch"])
+
+    def test_power_prefs_due_when_other_fields_synced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            node = {**_STRONG, "powersaving": True, "fem_rxgain": False}
+            applicable = applicable_field_desireds(node, None)
+            for field, des in applicable.items():
+                if field in ("powersaving", "fem_rxgain"):
+                    continue
+                insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
+            due = apply_due_fields(conn, "me0001", node, None)
+            self.assertEqual(due, ["powersaving", "fem_rxgain"])
+            self.assertNotIn("powersaving", applicable_field_desireds(_STRONG, None))
 
     def test_onboard_stamp_skips_public(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

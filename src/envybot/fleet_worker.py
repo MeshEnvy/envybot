@@ -14,8 +14,10 @@ from envybot.apply import (
     apply_is_due,
     clear_apply_stamps,
     desired_dutycycle,
+    desired_fem_rxgain,
     desired_ota_autofetch,
     desired_path_hash_mode,
+    desired_powersaving,
     profile_id,
     radio_apply_due_fields,
 )
@@ -68,9 +70,12 @@ from envybot.radio import (
     send_cmd_once,
     set_book_coord,
     set_dutycycle_policy,
+    FemRxgainUnsupported,
     OtaAutofetchUnsupported,
+    set_fem_rxgain_policy,
     set_ota_autofetch_policy,
     set_path_hash_policy,
+    set_powersaving_policy,
     trigger_neighbor_discover_once,
 )
 
@@ -91,6 +96,8 @@ APPLY_FIELD_ORDER = (
     "path_hash",
     "dutycycle",
     "ota_autofetch",
+    "powersaving",
+    "fem_rxgain",
     "acl",
 )
 
@@ -1140,6 +1147,7 @@ async def _execute_apply(
 
     due = due_fields()
     if field not in due and field != "clock":
+        ctx.log.step(f"{field}: skip (synced)")
         return JobOutcome.HEARD, "skip"
 
     if field == "clock":
@@ -1247,6 +1255,26 @@ async def _execute_apply(
             )
         except OtaAutofetchUnsupported:
             ctx.log.step("ota autofetch: skip (unsupported)")
+            send = "ok"
+        else:
+            send = "ok" if applied is not None else "timeout"
+    elif field == "powersaving":
+        send = "ok" if await set_powersaving_policy(
+            ctx.client, target, cmd_timeout=ctx.cmd_timeout, attempts=1,
+            log=ctx.log, session=ctx.session,
+            enabled=desired_powersaving(node),
+            attempt_num=attempt_num, attempt_cap=attempt_cap,
+        ) is not None else "timeout"
+    elif field == "fem_rxgain":
+        try:
+            applied = await set_fem_rxgain_policy(
+                ctx.client, target, cmd_timeout=ctx.cmd_timeout, attempts=1,
+                log=ctx.log, session=ctx.session,
+                enabled=desired_fem_rxgain(node),
+                attempt_num=attempt_num, attempt_cap=attempt_cap,
+            )
+        except FemRxgainUnsupported:
+            ctx.log.step("fem.rxgain: skip (unsupported)")
             send = "ok"
         else:
             send = "ok" if applied is not None else "timeout"

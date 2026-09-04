@@ -32,7 +32,12 @@ except ImportError as exc:  # pragma: no cover
         "  ./envybot onboard"
     ) from exc
 
-from envybot.apply import desired_ota_autofetch, stamp_profile_after_onboard
+from envybot.apply import (
+    desired_fem_rxgain,
+    desired_ota_autofetch,
+    desired_powersaving,
+    stamp_profile_after_onboard,
+)
 from envybot.history import open_history, record_onboard_heard
 from envybot.keys_doc import (
     UnknownPerson,
@@ -69,6 +74,7 @@ from envybot.radio import (
     parse_int_get_value,
     parse_ota_autofetch,
     parse_ota_self,
+    fem_rxgain_cli_missing,
     serial_port_candidates,
 )
 
@@ -730,6 +736,57 @@ def apply_ota_autofetch_policy(
     )
 
 
+def apply_powersaving_policy(
+    cli: RepeaterSerial,
+    node: dict[str, Any] | None,
+    *,
+    force: bool,
+) -> bool:
+    """``powersaving on|off`` when the book sets it. Reply is not ``OK``."""
+    want = desired_powersaving(node or {})
+    if want is None:
+        return False
+    word = "on" if want else "off"
+    raw = cli.cmd("powersaving")
+    already = (raw or "").strip().lower().startswith(word)
+    if already and not force:
+        print(f"   {word} (already)")
+        return False
+    reply = cli.cmd(f"powersaving {word}")
+    if not (reply or "").strip().lower().startswith(word):
+        raise CliError(f"powersaving: {reply}")
+    print(f"   {word}")
+    return True
+
+
+def apply_fem_rxgain_policy(
+    cli: RepeaterSerial,
+    node: dict[str, Any] | None,
+    *,
+    force: bool,
+) -> bool:
+    """``set radio.fem.rxgain`` when the book sets it. Skip if unsupported."""
+    want = desired_fem_rxgain(node or {})
+    if want is None:
+        return False
+    word = "on" if want else "off"
+    raw = cli.cmd("get radio.fem.rxgain")
+    if fem_rxgain_cli_missing(raw):
+        print("   skipped (unsupported)")
+        return False
+    got = (raw or "").strip().lower()
+    already = word in got
+    return apply_if_needed(
+        cli,
+        step="set radio.fem.rxgain",
+        already=already,
+        setter=f"set radio.fem.rxgain {word}",
+        verify=lambda: word in (cli.cmd("get radio.fem.rxgain") or "").lower(),
+        ok_label=word,
+        force=force,
+    )
+
+
 def onboard(
     cli: RepeaterSerial,
     *,
@@ -789,6 +846,12 @@ def onboard(
 
     print("4. ota autofetch off …")
     apply_ota_autofetch_policy(cli, node, force=force)
+
+    print("4b. powersaving …")
+    apply_powersaving_policy(cli, node, force=force)
+
+    print("4c. fem.rxgain …")
+    apply_fem_rxgain_policy(cli, node, force=force)
 
     print("5. adverts 0/0 …")
     adv = parse_int_get_value(cli.cmd("get advert.interval"))

@@ -690,6 +690,24 @@ def last_ok_apply_times(
     return out
 
 
+def last_ok_apply_desireds(
+    conn: sqlite3.Connection, unit: str | None = None
+) -> dict[str, dict[str, str]]:
+    """Latest ok apply desired per unit, per field."""
+    sql = "SELECT unit, field, desired, ts FROM applies WHERE ok = 1"
+    args: tuple[Any, ...] = ()
+    if unit is not None:
+        sql += " AND unit = ?"
+        args = (unit,)
+    sql += " ORDER BY ts ASC"
+    out: dict[str, dict[str, str]] = {}
+    for row in conn.execute(sql, args):
+        out.setdefault(str(row["unit"]), {})[str(row["field"])] = (
+            "" if row["desired"] is None else str(row["desired"])
+        )
+    return out
+
+
 _IDENTITY_HEARD: dict[str, tuple[str, str, type]] = {
     "name": ("name_heard", "name_at", str),
     "lat": ("lat_heard", "gps_at", float),

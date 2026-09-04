@@ -54,8 +54,11 @@ from envybot.radio import (
     send_cmd_sync,
     set_book_coord,
     set_dutycycle_policy,
+    set_fem_rxgain_policy,
     set_ota_autofetch_policy,
     set_path_hash_policy,
+    set_powersaving_policy,
+    FemRxgainUnsupported,
 )
 
 try:
@@ -76,6 +79,8 @@ APPLY_FIELDS = (
     "path_hash",
     "dutycycle",
     "ota_autofetch",
+    "powersaving",
+    "fem_rxgain",
     "acl",
     "identity",
 )
@@ -102,6 +107,37 @@ def desired_dutycycle(node: dict[str, Any]) -> int:
 
 def desired_ota_autofetch(node: dict[str, Any]) -> str:
     return normalize_ota_autofetch(node.get("ota_autofetch"))
+
+
+def _parse_optional_bool(value: Any) -> bool | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(int(value))
+    text = str(value).strip().lower()
+    if text in ("1", "true", "on", "yes"):
+        return True
+    if text in ("0", "false", "off", "no"):
+        return False
+    return None
+
+
+def desired_powersaving(node: dict[str, Any]) -> bool | None:
+    """None unless the book sets ``powersaving``. No fleet default."""
+    if "powersaving" not in node:
+        return None
+    return _parse_optional_bool(node.get("powersaving"))
+
+
+def desired_fem_rxgain(node: dict[str, Any]) -> bool | None:
+    """None unless the book sets ``fem_rxgain`` (alias ``radio.fem.rxgain``)."""
+    if "fem_rxgain" in node:
+        return _parse_optional_bool(node.get("fem_rxgain"))
+    if "radio.fem.rxgain" in node:
+        return _parse_optional_bool(node.get("radio.fem.rxgain"))
+    return None
 
 
 def _opt_int(value: Any) -> int | None:
@@ -139,7 +175,7 @@ def profile_parts(
         grants = resolve_node_acl(doc or {}, node, keys or {})
     except UnknownPerson:
         grants = []
-    return {
+    parts: dict[str, Any] = {
         "acl": grants_payload(grants),
         "admin": password_token(node.get("admin_password")),
         "advert": advert,
@@ -154,6 +190,13 @@ def profile_parts(
         "path_hash": desired_path_hash_mode(node),
         "public": public,
     }
+    powersaving = desired_powersaving(node)
+    if powersaving is not None:
+        parts["powersaving"] = powersaving
+    fem_rxgain = desired_fem_rxgain(node)
+    if fem_rxgain is not None:
+        parts["fem_rxgain"] = fem_rxgain
+    return parts
 
 
 def profile_id(
@@ -194,6 +237,8 @@ def applicable_field_desireds(
     out: dict[str, str] = {}
     public = is_public(node)
     for field in APPLY_FIELDS:
+        if field not in parts:
+            continue
         if field == "admin" and not password_is_strong(node.get("admin_password")):
             continue
         if field in ("lat", "lon") and public and not resolve_book_position(node, sites, key=key):
@@ -682,6 +727,40 @@ async def apply_one(
             return abort("ota_autofetch")
     else:
         log.step("ota autofetch: skip (synced)")
+
+    if "powersaving" in due:
+        if await set_powersaving_policy(
+            client, target, cmd_timeout=cmd_timeout,
+            attempts=attempts,
+            log=log, session=session,
+            enabled=desired_powersaving(node),
+        ) is not None:
+            stamp("powersaving")
+        else:
+            return abort("powersaving")
+    elif "powersaving" in applicable:
+        log.step("powersaving: skip (synced)")
+
+    if "fem_rxgain" in due:
+        unsupported = False
+        try:
+            applied = await set_fem_rxgain_policy(
+                client, target, cmd_timeout=cmd_timeout,
+                attempts=attempts,
+                log=log, session=session,
+                enabled=desired_fem_rxgain(node),
+            )
+        except FemRxgainUnsupported:
+            unsupported = True
+            applied = None
+        if applied is not None or unsupported:
+            stamp("fem_rxgain")
+            if unsupported:
+                log.step("fem.rxgain: skip (unsupported)")
+        else:
+            return abort("fem_rxgain")
+    elif "fem_rxgain" in applicable:
+        log.step("fem.rxgain: skip (synced)")
 
     stored_clock = None
     seen = get_last_seen(conn, target.key)

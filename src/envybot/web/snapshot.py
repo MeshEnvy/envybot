@@ -7,12 +7,17 @@ import time
 from pathlib import Path
 from typing import Any
 
-from envybot.apply import apply_is_due
+from envybot.apply import (
+    apply_is_due,
+    applicable_field_desireds,
+    profile_parts,
+)
 from envybot.health import compute_health
 from envybot.history import (
     all_last_seen,
     compact_sparks,
     interval_traffic,
+    last_ok_apply_desireds,
     last_ok_apply_times,
     latest_neighbors,
     latest_ota,
@@ -48,6 +53,14 @@ DEFAULT_STALE_SECS = 86400.0
 NEIGHBOR_FRESH_SECS = 7 * 24 * 3600
 
 SessionState = str  # idle | queued | refreshing | pulling | pushing | polling | ok | unreachable | paused
+
+RADIO_PREF_FIELDS = (
+    ("powersaving", "Power saving"),
+    ("fem_rxgain", "FEM LNA"),
+    ("dutycycle", "Duty cycle"),
+    ("path_hash", "Path hash"),
+    ("ota_autofetch", "OTA autofetch"),
+)
 
 STATUS_PUBLIC_KEYS = (
     "battery_mv",
@@ -343,6 +356,59 @@ def drift_state(
     return None
 
 
+def pref_display(field: str, value: Any) -> str:
+    if field in ("powersaving", "fem_rxgain"):
+        if isinstance(value, bool):
+            return "on" if value else "off"
+        text = str(value).strip().lower()
+        if text in ("1", "true", "on", "yes"):
+            return "on"
+        if text in ("0", "false", "off", "no"):
+            return "off"
+        return text
+    if field == "dutycycle":
+        try:
+            return f"{int(round(float(value)))}%"
+        except (TypeError, ValueError):
+            return str(value)
+    if field == "path_hash":
+        try:
+            mode = int(value)
+        except (TypeError, ValueError):
+            return str(value)
+        return "2-byte" if mode == 1 else str(mode)
+    return str(value)
+
+
+def build_radio_prefs(
+    node: dict[str, Any],
+    sites: dict[str, dict[str, Any]] | None,
+    *,
+    doc: dict[str, Any] | None = None,
+    keys: dict[str, list[str]] | None = None,
+    key: str | None = None,
+    apply_desireds: dict[str, str] | None = None,
+) -> list[dict[str, str]]:
+    """Book apply prefs plus stamp state. Not a live radio GET."""
+    parts = profile_parts(node, sites, doc=doc, keys=keys, key=key)
+    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=key)
+    stamped = apply_desireds or {}
+    prefs: list[dict[str, str]] = []
+    for field, label in RADIO_PREF_FIELDS:
+        if field not in applicable or field not in parts:
+            continue
+        desired = applicable[field]
+        prefs.append(
+            {
+                "id": field,
+                "label": label,
+                "value": pref_display(field, parts[field]),
+                "state": "synced" if stamped.get(field) == desired else "due",
+            }
+        )
+    return prefs
+
+
 def sanitize_unit(
     key: str,
     node: dict[str, Any],
@@ -361,6 +427,7 @@ def sanitize_unit(
     profile_ok: bool = False,
     ota_raw: dict[str, Any] | None = None,
     apply_at: dict[str, int] | None = None,
+    prefs: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     normalize_fleet_node(node)
     heard = last_heard(node, seen)
@@ -416,6 +483,9 @@ def sanitize_unit(
         "acl_count": None,
         "path_hash_mode": node.get("path_hash_mode"),
         "dutycycle": node.get("dutycycle"),
+        "powersaving": node.get("powersaving"),
+        "fem_rxgain": node.get("fem_rxgain"),
+        "prefs": prefs or [],
         "node_clock": (seen or {}).get("node_clock"),
         "drift": drift_state(node, profile_ok=profile_ok, seen=seen, apply_at=apply_at),
         "drift_detail": identity_leak_reason(node, seen, apply_at),
@@ -456,12 +526,14 @@ def build_fleet_snapshot(
     window_map: dict[str, dict[str, Any]] = {}
     status_rows_map: dict[str, list[dict[str, Any]]] = {}
     apply_at_map: dict[str, dict[str, int]] = {}
+    apply_desired_map: dict[str, dict[str, str]] = {}
     conn = None
     try:
         conn = open_history(book_dir)
         if seen_map is None:
             seen_map = all_last_seen(conn)
         apply_at_map = last_ok_apply_times(conn)
+        apply_desired_map = last_ok_apply_desireds(conn)
         for key in nodes:
             nbs = latest_neighbors(conn, key)
             if nbs is not None:
@@ -512,6 +584,14 @@ def build_fleet_snapshot(
                 profile_ok=profile_ok,
                 ota_raw=ota_map.get(key),
                 apply_at=apply_at_map.get(key),
+                prefs=build_radio_prefs(
+                    node,
+                    sites,
+                    doc=doc,
+                    keys=keys,
+                    key=key,
+                    apply_desireds=apply_desired_map.get(key),
+                ),
             )
             status_rows = status_rows_map.get(key, [])
             units[key]["health"] = compute_health(

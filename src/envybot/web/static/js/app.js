@@ -64,7 +64,8 @@ import {
   compareUnits,
   unitLabel,
   unitTitle,
-} from "./format.js?v=23";
+  prefBadges,
+} from "./format.js?v=24";
 import {
   buildNeighborEdges,
   createMapController,
@@ -906,11 +907,9 @@ const App = {
 
     /** @param {Record<string, unknown> | null | undefined} running */
     function otaBlLabel(running) {
-      if (!running || typeof running !== "object" || !("bl_apply" in running))
-        return "—";
-      const r = /** @type {{ bl_apply?: boolean, bl_rc?: string }} */ (running);
-      const apply = r.bl_apply ? "apply" : "NONE";
-      return r.bl_rc ? `${apply} rc=${r.bl_rc}` : apply;
+      if (!running || typeof running !== "object") return "";
+      const r = /** @type {{ bl_rc?: string }} */ (running);
+      return r.bl_rc ? `rc=${r.bl_rc}` : "";
     }
 
     /** @param {Record<string, unknown> | undefined} unit */
@@ -1618,6 +1617,7 @@ const App = {
       cardNodeId,
       cardShowNodeId,
       cardStatusLine,
+      prefBadges,
       cardVoltage,
       cardTraffic,
       cardTemp,
@@ -1863,6 +1863,13 @@ const App = {
             <span v-if="unit.ota_badge" class="ota-list-badge" :class="'ota-badge-' + unit.ota_badge.replace(' ', '-')">{{
               unit.ota_badge
             }}</span>
+            <span
+              v-for="badge in prefBadges(unit.prefs)"
+              :key="badge.id"
+              class="pref-badge"
+              :class="'pref-' + badge.state"
+              :title="badge.title"
+            >{{ badge.text }}</span>
             <span class="unit-ago">{{ formatRelative(unit.last_heard, fleet.now) }}</span>
           </div>
           <div class="dash-metrics">
@@ -1924,6 +1931,15 @@ const App = {
             · {{ selectedUnit.public ? 'public' : 'private' }}
             · {{ formatRelative(selectedUnit.last_heard, fleet.now) }}
             <span v-if="selectedUnit.drift"> · {{ selectedUnit.drift }}</span>
+          </p>
+          <p v-if="selectedUnit.prefs?.length" class="pref-line">
+            <span
+              v-for="pref in selectedUnit.prefs"
+              :key="pref.id"
+              class="pref-badge"
+              :class="'pref-' + pref.state"
+              :title="pref.state === 'due' ? 'Book apply due' : 'Apply stamped'"
+            >{{ pref.label }} {{ pref.value }}</span>
           </p>
           <div class="detail-toolbar">
             <label
@@ -2066,6 +2082,18 @@ const App = {
               </div>
             </div>
           </section>
+          <section v-if="selectedUnit.prefs?.length">
+            <h3>Radio prefs</h3>
+            <dl>
+              <template v-for="pref in selectedUnit.prefs" :key="pref.id">
+                <dt>{{ pref.label }}</dt>
+                <dd>
+                  {{ pref.value }}
+                  <span class="dim">{{ pref.state === 'due' ? 'due' : 'applied' }}</span>
+                </dd>
+              </template>
+            </dl>
+          </section>
           <section class="ota-section">
             <h3>Firmware</h3>
             <dl>
@@ -2092,13 +2120,13 @@ const App = {
                 <span
                   v-if="selectedUnit.ota?.running?.bl_apply === true"
                   class="ota-tag ota-tag-ok"
-                  title="Bootloader can apply in-place"
-                >apply</span>
+                  title="MOTA bootloader can apply firmware updates"
+                >MOTA</span>
                 <span
                   v-else-if="selectedUnit.ota?.running?.bl_apply === false"
                   class="ota-tag ota-tag-warn"
-                  title="Bootloader cannot apply OTA"
-                >no apply</span>
+                  title="Stock bootloader cannot apply firmware updates"
+                >no MOTA</span>
               </dd>
             </dl>
             <template v-if="selectedUnit.ota || manualAccepting">
@@ -2625,6 +2653,13 @@ const App = {
                       <span v-if="unit.ota_badge" class="ota-list-badge" :class="'ota-badge-' + unit.ota_badge.replace(' ', '-')">{{
                         unit.ota_badge
                       }}</span>
+                      <span
+                        v-for="badge in prefBadges(unit.prefs)"
+                        :key="badge.id"
+                        class="pref-badge"
+                        :class="'pref-' + badge.state"
+                        :title="badge.title"
+                      >{{ badge.text }}</span>
                       <span class="unit-ago">{{ formatRelative(unit.last_heard, fleet.now) }}</span>
                     </span>
                   </span>

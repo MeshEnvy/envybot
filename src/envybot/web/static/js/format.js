@@ -260,6 +260,42 @@ export function unitTitle(unit) {
   return unitLabel(unit)
 }
 
+/**
+ * Compact card chips for book apply prefs (stamped, not a live GET).
+ * @param {Array<{ id?: string, label?: string, value?: string, state?: string }> | undefined} prefs
+ */
+export function prefBadges(prefs) {
+  const out = []
+  for (const p of prefs || []) {
+    if (!p || !p.id) continue
+    const due = p.state === 'due'
+    const value = String(p.value || '')
+    if (p.id === 'powersaving') {
+      out.push({
+        id: p.id,
+        text: value === 'on' ? 'PS' : 'PS off',
+        state: p.state || 'due',
+        title: `Power saving ${value}${due ? ' (apply due)' : ''}`,
+      })
+    } else if (p.id === 'fem_rxgain') {
+      out.push({
+        id: p.id,
+        text: value === 'off' ? 'LNA off' : 'LNA on',
+        state: p.state || 'due',
+        title: `FEM LNA ${value}${due ? ' (apply due)' : ''}`,
+      })
+    } else if (p.id === 'dutycycle') {
+      out.push({
+        id: p.id,
+        text: `DC ${value}`,
+        state: p.state || 'due',
+        title: `Duty cycle ${value}${due ? ' (apply due)' : ''}`,
+      })
+    }
+  }
+  return out
+}
+
 /** Stable sidebar order: site name, else unit id. Numeric-aware. */
 export function compareUnits(a, b) {
   const an = unitLabel(a)

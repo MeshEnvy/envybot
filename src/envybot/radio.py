@@ -1318,6 +1318,102 @@ class OtaAutofetchUnsupported(Exception):
     """Firmware has no ``ota config autofetch`` CLI."""
 
 
+class FemRxgainUnsupported(Exception):
+    """Board or firmware has no ``set radio.fem.rxgain``."""
+
+
+def fem_rxgain_cli_missing(text: str | None) -> bool:
+    """RAK ``unsupported`` or older MeshCore ``unknown config``."""
+    if not text:
+        return False
+    return "unsupported" in text.lower() or cli_unknown_reply(text)
+
+
+def _cli_on_off_ok(text: str | None, enabled: bool) -> bool:
+    if not text or cli_error_reply(text):
+        return False
+    low = text.strip().lower()
+    if enabled:
+        return low.startswith("on") or "rx gain on" in low
+    return low.startswith("off") or "rx gain off" in low
+
+
+async def set_powersaving_policy(
+    client: MeshCore,
+    target: RouterTarget,
+    *,
+    cmd_timeout: float,
+    attempts: int,
+    log: PollLog,
+    session: FleetSession | None = None,
+    enabled: bool | None,
+    attempt_num: int | None = None,
+    attempt_cap: int | None = None,
+) -> bool | None:
+    """``powersaving on|off``. Reply is ``on - Immediate effect``, not ``OK``."""
+    if enabled is None:
+        return None
+    word = "on" if enabled else "off"
+    raw = await send_cmd_sync(
+        client,
+        target,
+        f"powersaving {word}",
+        timeout=cmd_timeout,
+        attempts=attempts,
+        log=log,
+        session=session,
+        attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
+    )
+    if raw is None:
+        log.step("powersaving: no response")
+        return None
+    if not _cli_on_off_ok(raw, enabled):
+        log.step(f"powersaving: set failed ({raw.strip()[:40]})")
+        return None
+    log.step(f"powersaving set OK ({word})")
+    return enabled
+
+
+async def set_fem_rxgain_policy(
+    client: MeshCore,
+    target: RouterTarget,
+    *,
+    cmd_timeout: float,
+    attempts: int,
+    log: PollLog,
+    session: FleetSession | None = None,
+    enabled: bool | None,
+    attempt_num: int | None = None,
+    attempt_cap: int | None = None,
+) -> bool | None:
+    """``set radio.fem.rxgain on|off``. Raises FemRxgainUnsupported if missing."""
+    if enabled is None:
+        return None
+    word = "on" if enabled else "off"
+    raw = await send_cmd_sync(
+        client,
+        target,
+        f"set radio.fem.rxgain {word}",
+        timeout=cmd_timeout,
+        attempts=attempts,
+        log=log,
+        session=session,
+        attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
+    )
+    if raw is None:
+        log.step("fem.rxgain: no response")
+        return None
+    if fem_rxgain_cli_missing(raw):
+        raise FemRxgainUnsupported()
+    if cli_error_reply(raw) or not cli_set_ok(raw):
+        log.step(f"fem.rxgain: set failed ({raw.strip()[:40]})")
+        return None
+    log.step(f"fem.rxgain set OK ({word})")
+    return enabled
+
+
 async def set_ota_autofetch_policy(
     client: MeshCore,
     target: RouterTarget,

@@ -814,6 +814,26 @@ body {
   text-transform: lowercase;
 }
 
+.pref-badge {
+  font-size: 0.65rem;
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  background: #1a2836;
+  color: #9ec0e0;
+}
+
+.pref-badge.pref-due {
+  background: #3d321a;
+  color: #ffd166;
+}
+
+.pref-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
 .ota-badge-staged {
   background: #1a3d28;
   color: #6ee7a0;

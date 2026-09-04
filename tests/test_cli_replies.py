@@ -8,6 +8,7 @@ from envybot.radio import (
     cli_admin_password_ok,
     cli_set_ok,
     cli_unknown_reply,
+    fem_rxgain_cli_missing,
     ota_self_heard_empty,
     parse_ota_self,
 )
@@ -36,8 +37,22 @@ class CliUnknownReplyTests(unittest.TestCase):
     def test_unknown_ota_command(self) -> None:
         self.assertTrue(cli_unknown_reply("Unknown OTA command. Type `ota help`."))
 
+    def test_unknown_config(self) -> None:
+        self.assertTrue(cli_unknown_reply("unknown config: radio.fem.rxgain off"))
+
     def test_ok_is_known(self) -> None:
         self.assertFalse(cli_unknown_reply("OK autofetch updated (saved)"))
+
+
+class FemRxgainMissingTests(unittest.TestCase):
+    def test_rak_unsupported(self) -> None:
+        self.assertTrue(fem_rxgain_cli_missing("Error: unsupported"))
+
+    def test_old_firmware_unknown_config(self) -> None:
+        self.assertTrue(fem_rxgain_cli_missing("unknown config: radio.fem.rxgain off"))
+
+    def test_ok_is_present(self) -> None:
+        self.assertFalse(fem_rxgain_cli_missing("OK - LoRa FEM RX gain off"))
 
 
 class ParseOtaSelfTests(unittest.TestCase):

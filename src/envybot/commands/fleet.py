@@ -727,6 +727,7 @@ async def run(args: argparse.Namespace) -> int:
                 await scheduler.wait_for_work(timeout=CADENCE_CHECK_S)
                 if scheduler._stop:
                     break
+                sync_paused(nodes_path, nodes)
                 cadence_policy = PollPolicy(
                     force=False,
                     live_only=args.live and not args.force,

@@ -6,6 +6,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Added
+
+- Apply optional `powersaving` and `fem_rxgain` from `nodes.yaml` (CLI
+  prefs, persist on the radio). Absent keys are left alone. Missing
+  `fem_rxgain` CLI (`unsupported` or `unknown config`) stamps done.
+- Fleet cards show book apply prefs (power saving, FEM LNA, duty cycle,
+  path hash, OTA autofetch) plus applied/due from sqlite stamps.
+
 ### Fixed
 
 - Trust and fleet contact sync drop the old companion record when a

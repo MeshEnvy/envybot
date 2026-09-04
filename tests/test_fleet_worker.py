@@ -11,9 +11,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from envybot.fleet_worker import PollAccumulator, WorkerContext, _execute_apply
 from envybot.apply import applicable_field_desireds
-from envybot.history import last_ok_apply, open_history, source_histories
+from envybot.history import last_ok_apply, open_history, source_histories, stamp_apply
 from envybot.jobs import JobOutcome, RadioJob, UnitQueue
-from envybot.radio import OtaAutofetchUnsupported, PollLog, RouterTarget
+from envybot.radio import (
+    FemRxgainUnsupported,
+    OtaAutofetchUnsupported,
+    PollLog,
+    RouterTarget,
+)
 
 
 class RecordGroupTests(unittest.TestCase):
@@ -146,6 +151,66 @@ class ApplyTimeoutTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(outcome, JobOutcome.HEARD)
             self.assertTrue(payload)
             self.assertEqual(last_ok_apply(ctx.conn, "me0048", "ota_autofetch"), want)
+
+    async def test_already_synced_field_logs_skip(self) -> None:
+        target = RouterTarget(
+            key="me0048",
+            unit_id="ME0048",
+            name="ME0048",
+            site=None,
+            pubkey_hex="aa" * 32,
+            admin_password="AdminOneStrong1",
+        )
+        node = {
+            "guest_password": "GuestOneStrong1",
+            "admin_password": "AdminOneStrong1",
+            "identity_pubkey": "aa" * 32,
+        }
+        job = RadioJob(kind="apply:advert", unit_key="me0048")
+        uq = UnitQueue(target=target, jobs=deque([job]))
+        log = MagicMock()
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = self._ctx(tmp, node)
+            ctx.log = log
+            want = applicable_field_desireds(
+                node, None, doc=ctx.doc, keys=ctx.keys, key="me0048"
+            )["advert"]
+            stamp_apply(ctx.conn, unit="me0048", field="advert", desired=want, ok=True)
+            outcome, payload = await _execute_apply(job, uq, ctx, node, 1)
+        self.assertEqual(outcome, JobOutcome.HEARD)
+        self.assertEqual(payload, "skip")
+        log.step.assert_called_once_with("advert: skip (synced)")
+
+    async def test_fem_rxgain_unsupported_stamps_done(self) -> None:
+        target = RouterTarget(
+            key="me0048",
+            unit_id="ME0048",
+            name="ME0048",
+            site=None,
+            pubkey_hex="aa" * 32,
+            admin_password="AdminOneStrong1",
+        )
+        node = {
+            "guest_password": "GuestOneStrong1",
+            "admin_password": "AdminOneStrong1",
+            "identity_pubkey": "aa" * 32,
+            "fem_rxgain": False,
+        }
+        job = RadioJob(kind="apply:fem_rxgain", unit_key="me0048")
+        uq = UnitQueue(target=target, jobs=deque([job]))
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = self._ctx(tmp, node)
+            with patch(
+                "envybot.fleet_worker.set_fem_rxgain_policy",
+                new=AsyncMock(side_effect=FemRxgainUnsupported()),
+            ):
+                outcome, payload = await _execute_apply(job, uq, ctx, node, 1)
+            want = applicable_field_desireds(
+                node, None, doc=ctx.doc, keys=ctx.keys, key="me0048"
+            )["fem_rxgain"]
+            self.assertEqual(outcome, JobOutcome.HEARD)
+            self.assertTrue(payload)
+            self.assertEqual(last_ok_apply(ctx.conn, "me0048", "fem_rxgain"), want)
 
 
 if __name__ == "__main__":
