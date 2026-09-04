@@ -28,8 +28,7 @@ class MigrateTests(unittest.TestCase):
                     "unit_id": "ME0001",
                     "name": MASK_NAME,
                     "site": "ophir",
-                    "lat": 39.5,
-                    "lon": -119.8,
+                    "loc": [39.5, -119.8],
                     "status": {"battery_mv": 1},
                     "firmware_version": "v0.1",
                     "firmware_pulled_at": 9,
@@ -43,22 +42,20 @@ class MigrateTests(unittest.TestCase):
         self.assertNotIn("status", node)
         self.assertNotIn("firmware_version", node)
         self.assertNotIn("firmware_pulled_at", node)
-        self.assertNotIn("lat", node)
-        self.assertNotIn("lon", node)
+        self.assertAlmostEqual(node["loc"][0], 39.5)
         self.assertNotIn("site", node)
         self.assertNotIn("name", node)
         self.assertNotIn("public", node)
         self.assertFalse(is_public(node))
 
-    def test_strips_offset_gps(self) -> None:
+    def test_strips_legacy_site_field(self) -> None:
         doc = {
             "next_unit": 2,
             "nodes": {
                 "me0001": {
                     "unit_id": "ME0001",
                     "site": "ophir",
-                    "lat": 39.51,
-                    "lon": -119.81,
+                    "loc": [39.51, -119.81],
                     "name": "Spanish Benchmark East",
                 }
             },
@@ -66,8 +63,7 @@ class MigrateTests(unittest.TestCase):
         sites = {"ophir": {"loc": [39.5, -119.8], "node": "me0001"}}
         migrate_desired(doc, sites)
         node = doc["nodes"]["me0001"]
-        self.assertNotIn("lat", node)
-        self.assertNotIn("lon", node)
+        self.assertAlmostEqual(node["loc"][0], 39.51)
         self.assertNotIn("site", node)
         self.assertNotIn("name", node)
 

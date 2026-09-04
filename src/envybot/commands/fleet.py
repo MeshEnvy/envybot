@@ -668,7 +668,9 @@ async def run(args: argparse.Namespace) -> int:
                 uq,
                 outcome,
                 payload,
-                site_loc=site_loc_for_unit(target.key, node_record, sites),
+                site_loc=site_loc_for_unit(
+                    target.key, node_record, sites, doc=doc
+                ),
             )
             await web_ctx.publish_unit(
                 target.key,

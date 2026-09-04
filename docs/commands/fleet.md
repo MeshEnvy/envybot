@@ -22,7 +22,7 @@ Contact sync drops an old companion record when a unit's pubkey changes
 
 | Store | Role |
 |-------|------|
-| `nodes.yaml` | Desired identity + `trust.admin` / `trust.guest`. Poll does not write. No GPS. |
+| `nodes.yaml` | Desired identity + `trust.admin` / `trust.guest`. Poll does not write. `bench_loc` + optional per-node `loc` for map/sun/history only (not radio apply). |
 | `keys.yaml` | Person → MeshCore companion pubkeys. Apply resolves names to ACL. |
 | `sites.yaml` | Places (`loc`) and the 1:1 `node:` bind. Fleet writes bind only. |
 | `data/fleet/history.sqlite` | Observed last-seen, telemetry, apply log, `cmd` audit |
@@ -110,9 +110,13 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
 Status, telemetry, neighbors, and ACL are **orthogonal** sqlite tables and UI
 sections. `/api/polls/{unit}` returns `{ histories: { status, telemetry,
 neighbors, acl } }` with per-source deltas (no merged status+telemetry spine).
-Status and telemetry samples store bound-site GPS. A one-shot sqlite
-backfill copies the current site onto older rows that lack loc
-(bench/unmapped stay blank). Status **V** and telemetry **Temp** **When**
+Status and telemetry samples store display GPS (bound site, else node
+`loc`, else book `bench_loc`). A one-shot sqlite backfill copies the
+current display loc onto older NULL rows (`sample_loc_backfill_v2`; v1
+was site-only). Opening fleet runs backfill once. The UI may POST
+`/api/bench` from browser geolocation (debounced) to move `bench_loc`
+while the laptop travels; that does not SET radio lat/lon and does not
+rewrite history. Status **V** and telemetry **Temp** **When**
 cells show ☀️ or 🌙: clear-sky sun above the horizon means charging
 expected. Hover for elevation. Voltage is status ``battery_mv`` only
 (telemetry voltage is stored, not shown). No weather or terrain. Detail

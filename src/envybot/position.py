@@ -1,4 +1,4 @@
-"""Book-canonical GPS. Location lives on sites.yaml only."""
+"""Book GPS. Radio apply uses sites.yaml. Sun/map can use bench_loc."""
 
 from __future__ import annotations
 
@@ -110,15 +110,13 @@ def bind_node_to_site(
         target["node"] = want
 
 
-def site_loc(site: dict[str, Any] | None) -> tuple[float, float] | None:
-    if not site:
-        return None
-    loc = site.get("loc")
-    if not isinstance(loc, (list, tuple)) or len(loc) < 2:
+def parse_loc(raw: Any) -> tuple[float, float] | None:
+    """``[lat, lon]`` or None when missing / placeholder."""
+    if not isinstance(raw, (list, tuple)) or len(raw) < 2:
         return None
     try:
-        lat = float(loc[0])
-        lon = float(loc[1])
+        lat = float(raw[0])
+        lon = float(raw[1])
     except (TypeError, ValueError):
         return None
     if is_placeholder_gps(lat, lon):
@@ -126,13 +124,35 @@ def site_loc(site: dict[str, Any] | None) -> tuple[float, float] | None:
     return lat, lon
 
 
+def site_loc(site: dict[str, Any] | None) -> tuple[float, float] | None:
+    if not site:
+        return None
+    return parse_loc(site.get("loc"))
+
+
+def bench_loc_from_doc(doc: dict[str, Any] | None) -> tuple[float, float] | None:
+    """Book-level HQ loc for unbound units (sun/map). Not applied."""
+    if not doc:
+        return None
+    return parse_loc(doc.get("bench_loc"))
+
+
 def site_loc_for_unit(
     key: str | None,
     node: dict[str, Any] | None,
     sites: dict[str, dict[str, Any]] | None,
+    *,
+    doc: dict[str, Any] | None = None,
+    bench_loc: tuple[float, float] | None = None,
 ) -> tuple[float, float] | None:
-    """Bound site GPS for logging with a poll sample."""
-    pos = resolve_book_position(node or {}, sites, key=key)
+    """Site GPS, else node loc, else book bench_loc. For sun/map samples."""
+    pos = resolve_display_position(
+        node or {},
+        sites,
+        key=key,
+        doc=doc,
+        bench_loc=bench_loc,
+    )
     if not pos:
         return None
     return float(pos["lat"]), float(pos["lon"])
@@ -144,7 +164,7 @@ def resolve_book_position(
     *,
     key: str | None = None,
 ) -> dict[str, Any] | None:
-    """Desired radio position from the bound site loc. Nodes have no GPS."""
+    """Desired radio position from the bound site loc. Apply/trust only."""
     bind = site_binding(key, node, sites)
     if not bind:
         return None
@@ -159,6 +179,39 @@ def resolve_book_position(
         "source": "site",
         "site": slug,
         "site_name": name.strip() if isinstance(name, str) and name.strip() else None,
+    }
+
+
+def resolve_display_position(
+    node: dict[str, Any],
+    sites: dict[str, dict[str, Any]] | None = None,
+    *,
+    key: str | None = None,
+    doc: dict[str, Any] | None = None,
+    bench_loc: tuple[float, float] | None = None,
+) -> dict[str, Any] | None:
+    """Sun/map loc: bound site, else node ``loc``, else book ``bench_loc``."""
+    site_pos = resolve_book_position(node, sites, key=key)
+    if site_pos:
+        return site_pos
+    node_loc = parse_loc((node or {}).get("loc"))
+    if node_loc:
+        return {
+            "lat": node_loc[0],
+            "lon": node_loc[1],
+            "source": "node",
+            "site": None,
+            "site_name": None,
+        }
+    loc = bench_loc if bench_loc is not None else bench_loc_from_doc(doc)
+    if not loc:
+        return None
+    return {
+        "lat": loc[0],
+        "lon": loc[1],
+        "source": "bench",
+        "site": None,
+        "site_name": None,
     }
 
 

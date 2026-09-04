@@ -30,6 +30,20 @@ export function connectEvents(handlers) {
   return es
 }
 
+/** @param {number} lat @param {number} lon */
+export async function postBenchLoc(lat, lon) {
+  const res = await fetch('/api/bench', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lat, lon }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `bench ${res.status}`)
+  }
+  return res.json()
+}
+
 /** @param {string} key @param {Record<string, unknown>} body */
 export async function patchUnit(key, body) {
   const res = await fetch(`/api/unit/${encodeURIComponent(key)}`, {

@@ -42,7 +42,7 @@ from envybot.position import (
     load_sites,
     lookup_site_name,
     node_alias,
-    resolve_book_position,
+    resolve_display_position,
     site_binding,
 )
 
@@ -160,8 +160,11 @@ def extract_telemetry(telemetry: Any) -> dict[str, float | None]:
 def resolve_position(
     node: dict[str, Any],
     sites: dict[str, dict[str, Any]],
+    *,
+    key: str | None = None,
+    doc: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    return resolve_book_position(node, sites)
+    return resolve_display_position(node, sites, key=key, doc=doc)
 
 
 def build_pubkey_index(nodes: dict[str, Any]) -> dict[str, str]:
@@ -428,10 +431,11 @@ def sanitize_unit(
     ota_raw: dict[str, Any] | None = None,
     apply_at: dict[str, int] | None = None,
     prefs: list[dict[str, str]] | None = None,
+    doc: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalize_fleet_node(node)
     heard = last_heard(node, seen)
-    position = resolve_position(node, sites)
+    position = resolve_position(node, sites, key=key, doc=doc)
     tele_src: list[dict[str, Any]] = []
     if seen:
         if seen.get("voltage") is not None:
@@ -592,6 +596,7 @@ def build_fleet_snapshot(
                     key=key,
                     apply_desireds=apply_desired_map.get(key),
                 ),
+                doc=doc,
             )
             status_rows = status_rows_map.get(key, [])
             units[key]["health"] = compute_health(

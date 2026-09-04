@@ -15,7 +15,8 @@ from envybot.jobs import FleetScheduler
 from envybot.poll import GET_GROUP_ORDER, refresh_due_groups
 from envybot.radio import load_targets
 from envybot.web.hub import FleetHub
-from envybot.web.server import MonitorWeb
+from envybot.nodes_doc import load_nodes_doc
+from envybot.web.server import MonitorWeb, make_app
 from aiohttp.test_utils import TestClient, TestServer
 
 
@@ -278,6 +279,19 @@ class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
         uq = self.scheduler.units.get("me0003")
         assert uq is not None
         self.assertTrue(uq.manual)
+
+    async def test_bench_loc_rejects_placeholder(self) -> None:
+        resp = await self.client.post("/api/bench", json={"lat": 0, "lon": 0})
+        self.assertEqual(resp.status, 400)
+
+    async def test_bench_loc_writes_yaml(self) -> None:
+        resp = await self.client.post("/api/bench", json={"lat": 39.5, "lon": -119.8})
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertAlmostEqual(body["bench_loc"][0], 39.5)
+        doc = load_nodes_doc(self.web_ctx.nodes_path)
+        self.assertAlmostEqual(doc["bench_loc"][0], 39.5)
+        self.assertAlmostEqual(doc["bench_loc"][1], -119.8)
 
 
 class FleetManualJobBuildTests(unittest.TestCase):

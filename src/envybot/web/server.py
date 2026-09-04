@@ -24,7 +24,13 @@ from envybot.nodes_doc import (
     load_sites_for_book,
     write_nodes_doc,
 )
-from envybot.position import bind_node_to_site, load_sites_doc, site_loc_for_unit, write_sites_doc
+from envybot.position import (
+    bind_node_to_site,
+    is_placeholder_gps,
+    load_sites_doc,
+    site_loc_for_unit,
+    write_sites_doc,
+)
 from envybot.sun import attach_sun, sun_series
 from envybot.radio import load_targets
 from envybot.web.console import ConsoleManager
@@ -556,12 +562,15 @@ async def _handle_history(request: web.Request) -> web.Response:
 
 
 def _site_loc_for_polls(web_ctx: MonitorWeb, unit: str) -> tuple[float, float] | None:
-    """Current bound-site GPS for sun on history rows that predate loc logging."""
+    """Site or bench_loc GPS for sun on history rows that predate loc logging."""
     binding = web_ctx._binding
     if binding is not None:
         node = binding.nodes.get(unit)
         return site_loc_for_unit(
-            unit, node if isinstance(node, dict) else None, binding.sites
+            unit,
+            node if isinstance(node, dict) else None,
+            binding.sites,
+            doc=binding.doc,
         )
     doc = load_nodes_doc(web_ctx.nodes_path)
     nodes = doc.get("nodes") or {}
@@ -570,6 +579,7 @@ def _site_loc_for_polls(web_ctx: MonitorWeb, unit: str) -> tuple[float, float] |
         unit,
         node if isinstance(node, dict) else None,
         load_sites_for_book(web_ctx.nodes_path),
+        doc=doc,
     )
 
 
@@ -874,6 +884,30 @@ async def _handle_console_close(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+async def _handle_bench(request: web.Request) -> web.Response:
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "json required"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "object required"}, status=400)
+    lat = body.get("lat")
+    lon = body.get("lon")
+    if is_placeholder_gps(lat, lon):
+        return web.json_response({"error": "invalid coordinates"}, status=400)
+    try:
+        lat_f = float(lat)
+        lon_f = float(lon)
+    except (TypeError, ValueError):
+        return web.json_response({"error": "invalid coordinates"}, status=400)
+    doc = load_nodes_doc(web_ctx.nodes_path)
+    doc["bench_loc"] = [lat_f, lon_f]
+    write_nodes_doc(web_ctx.nodes_path, doc)
+    await web_ctx.refresh_snapshot()
+    return web.json_response({"bench_loc": [lat_f, lon_f]})
+
+
 async def _handle_index(_request: web.Request) -> web.Response:
     return web.FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
@@ -891,6 +925,7 @@ def make_app(web_ctx: MonitorWeb) -> web.Application:
     app["hub"] = web_ctx.hub
     app["web_ctx"] = web_ctx
     app.router.add_get("/api/fleet", _handle_fleet)
+    app.router.add_post("/api/bench", _handle_bench)
     app.router.add_post("/api/unit/{key}", _handle_unit_edit)
     app.router.add_post("/api/refresh/{key}", lambda r: _handle_manual_job(r, "refresh"))
     app.router.add_post("/api/pull/{key}", lambda r: _handle_manual_job(r, "pull"))

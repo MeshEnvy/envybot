@@ -163,6 +163,7 @@ def legacy_jsonl_path(book: Path) -> Path:
 
 
 def open_history(book: Path) -> sqlite3.Connection:
+    book = Path(book)
     path = history_path(book)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
@@ -174,6 +175,7 @@ def open_history(book: Path) -> sqlite3.Connection:
     _ensure_audit_source_columns(conn)
     _ensure_sample_loc_columns(conn)
     _backfill_sample_loc_from_sites(conn, book)
+    _backfill_sample_loc_v2(conn, book)
     return conn
 
 
@@ -195,6 +197,7 @@ def _ensure_sample_loc_columns(conn: sqlite3.Connection) -> None:
 
 
 SAMPLE_LOC_BACKFILL_META = "sample_loc_backfill"
+SAMPLE_LOC_BACKFILL_V2_META = "sample_loc_backfill_v2"
 
 
 def _backfill_sample_loc_from_sites(conn: sqlite3.Connection, book: Path) -> int:
@@ -203,6 +206,7 @@ def _backfill_sample_loc_from_sites(conn: sqlite3.Connection, book: Path) -> int
     Bound units only. Bench/unmapped rows stay NULL. Does not overwrite a
     loc already on the sample. Re-run by deleting meta ``sample_loc_backfill``.
     """
+    book = Path(book)
     done = conn.execute(
         "SELECT value FROM meta WHERE key = ?", (SAMPLE_LOC_BACKFILL_META,)
     ).fetchone()
@@ -215,7 +219,8 @@ def _backfill_sample_loc_from_sites(conn: sqlite3.Connection, book: Path) -> int
     from envybot.nodes_doc import load_nodes_doc
     from envybot.position import load_sites, site_loc_for_unit
 
-    nodes = load_nodes_doc(nodes_path).get("nodes") or {}
+    doc = load_nodes_doc(nodes_path)
+    nodes = doc.get("nodes") or {}
     sites = load_sites(sites_path)
     stamped = 0
     if isinstance(nodes, dict):
@@ -229,6 +234,48 @@ def _backfill_sample_loc_from_sites(conn: sqlite3.Connection, book: Path) -> int
     conn.execute(
         "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
         (SAMPLE_LOC_BACKFILL_META, str(int(time.time()))),
+    )
+    conn.commit()
+    return stamped
+
+
+def _backfill_sample_loc_v2(conn: sqlite3.Connection, book: Path) -> int:
+    """One-shot: stamp display GPS (site, node loc, bench_loc) onto NULL rows.
+
+    Does not overwrite samples that already have lat/lon. Re-run by deleting
+    meta ``sample_loc_backfill_v2``.
+    """
+    book = Path(book)
+    done = conn.execute(
+        "SELECT value FROM meta WHERE key = ?", (SAMPLE_LOC_BACKFILL_V2_META,)
+    ).fetchone()
+    if done:
+        return 0
+    nodes_path = book / "nodes.yaml"
+    if not nodes_path.is_file():
+        return 0
+    from envybot.nodes_doc import load_nodes_doc
+    from envybot.position import load_sites, site_loc_for_unit
+
+    doc = load_nodes_doc(nodes_path)
+    nodes = doc.get("nodes") or {}
+    sites_path = book / "sites.yaml"
+    sites = load_sites(sites_path) if sites_path.is_file() else {}
+    stamped = 0
+    if isinstance(nodes, dict):
+        for unit, node in nodes.items():
+            loc = site_loc_for_unit(
+                str(unit),
+                node if isinstance(node, dict) else None,
+                sites,
+                doc=doc,
+            )
+            if not loc:
+                continue
+            stamped += _stamp_missing_sample_loc(conn, str(unit).lower(), loc)
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        (SAMPLE_LOC_BACKFILL_V2_META, str(int(time.time()))),
     )
     conn.commit()
     return stamped

@@ -23,7 +23,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/nodes_doc.py` | Desired `nodes.yaml` load/write/migrate |
 | `src/envybot/history.py` | `data/fleet/history.sqlite` (+ `mesh_audit` per send) |
 | `src/envybot/health.py` | Per-node health checks (snapshot + UI grade) |
-| `src/envybot/position.py` | Book GPS from `sites.yaml` (`node:` bind + `loc`) |
+| `src/envybot/position.py` | Display GPS: site → node `loc` → `bench_loc`; apply uses site only |
 | `src/envybot/sun.py` | Clear-sky elev: ☀️/🌙 + 72h elevation sparkline |
 | `src/envybot/radio.py` | Companion session, login, CLI/binary |
 | `src/envybot/poll.py` | GET cadence (live / inventory / audit) → sqlite |
@@ -45,9 +45,12 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 - Greenfield: no `monitor` alias, no `polls.jsonl`, no last-seen in YAML.
 - `nodes.yaml` is SoT for **desired** identity. Cite sqlite `last_seen` for
   reachability / fw / battery / uptime / temperature.
-- GPS lives only on `sites.yaml` (`loc` + `node: me####`). Nodes have no
-  `site` / `lat` / `lon`. Apply SETs `0,0` unless `public: true`. Never
-  GET device coords into YAML.
+- GPS for **apply** lives on `sites.yaml` (`loc` + `node:` bind). Apply
+  SETs `0,0` unless `public: true`. Never GET device coords into YAML.
+- **Display** GPS (map, sun, poll stamps): bound site → optional node
+  `loc` → book `bench_loc`. Fleet UI may POST `/api/bench` from browser
+  GPS (debounced); that does not SET radios. One-shot sqlite backfill v2
+  stamps NULL history rows once.
 - `fleet` / `trust` / `cmd` skip `firmware_platform: meshtastic` even
   when leftover MeshCore pubkey/admin exist. No UI, poll, apply, or
   edits. Blank platform = meshcore.

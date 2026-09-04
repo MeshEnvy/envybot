@@ -8,6 +8,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- Book `bench_loc` (HQ GPS for unbound bag/bench) and optional per-node
+  `loc`. Precedence for map, sun, and poll stamps: site → node `loc` →
+  `bench_loc`. Apply still uses bound site GPS only (`public: true`) or
+  `0,0`. Fleet UI watches browser geolocation and POSTs `/api/bench`
+  (debounced yaml write; no radio SET).
 - Apply optional `powersaving` and `fem_rxgain` from `nodes.yaml` (CLI
   prefs, persist on the radio). Absent keys are left alone. Missing
   `fem_rxgain` CLI (`unsupported` or `unknown config`) stamps done.

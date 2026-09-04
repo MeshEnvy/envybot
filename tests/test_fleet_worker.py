@@ -25,7 +25,7 @@ class RecordGroupTests(unittest.TestCase):
     def test_later_group_does_not_replay_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            ctx = SimpleNamespace(conn=conn, nodes={"me0001": {}}, sites={})
+            ctx = SimpleNamespace(conn=conn, nodes={"me0001": {}}, sites={}, doc={})
             acc = PollAccumulator()
             acc.status = {
                 "battery_mv": 3980,

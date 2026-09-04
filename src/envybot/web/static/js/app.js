@@ -14,6 +14,7 @@ import {
   fetchPolls,
   installUnit,
   patchUnit,
+  postBenchLoc,
   pullUnit,
   pushUnit,
   refreshUnit,
@@ -80,6 +81,47 @@ import {
 
 const DASH_SPARK_W = 96;
 const DASH_SPARK_H = 18;
+
+const BENCH_MOVE_M = 200;
+const BENCH_MAX_SEC = 60;
+
+/** @param {number} lat1 @param {number} lon1 @param {number} lat2 @param {number} lon2 */
+function haversineM(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+/** Debounced browser GPS → nodes.yaml bench_loc (map pins only). */
+function startBenchGeolocation() {
+  if (!navigator.geolocation) return () => {};
+  /** @type {{ lat: number, lon: number, ts: number } | null} */
+  let lastSent = null;
+  const watchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      const now = Date.now();
+      if (
+        lastSent &&
+        haversineM(lastSent.lat, lastSent.lon, lat, lon) < BENCH_MOVE_M &&
+        now - lastSent.ts < BENCH_MAX_SEC * 1000
+      ) {
+        return;
+      }
+      lastSent = { lat, lon, ts: now };
+      postBenchLoc(lat, lon).catch((err) => console.warn("bench_loc", err));
+    },
+    () => {},
+    { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 },
+  );
+  return () => navigator.geolocation.clearWatch(watchId);
+}
 
 const App = {
   setup() {
@@ -154,6 +196,7 @@ const App = {
     let mapCtrl = null;
     /** @type {EventSource | null} */
     let es = null;
+    let stopBenchGeo = null;
 
     function applyHello(snap) {
       replaceSnapshot(snap);
@@ -1580,12 +1623,14 @@ const App = {
           applyConsoleEvent(event);
         },
       });
+      stopBenchGeo = startBenchGeolocation();
     });
 
     watch(search, () => {});
 
     onUnmounted(() => {
       stopClock();
+      stopBenchGeo?.();
       es?.close();
       mapCtrl?.destroy();
     });

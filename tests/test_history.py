@@ -10,6 +10,7 @@ from pathlib import Path
 
 from envybot.history import (
     _backfill_sample_loc_from_sites,
+    _backfill_sample_loc_v2,
     count_reboots,
     get_last_seen,
     history_series,
@@ -166,6 +167,28 @@ class HistoryTests(unittest.TestCase):
             bench = source_histories(conn, "me0002", hours=99999, limit=10)
             self.assertIsNone(bench["status"][0]["lat"])
             self.assertEqual(_backfill_sample_loc_from_sites(conn, book), 0)
+
+    def test_backfill_v2_stamps_bench_loc(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            conn = open_history(book)
+            conn.execute(
+                "INSERT INTO status (ts, unit, payload) VALUES (?, ?, ?)",
+                (1_700_000_000, "me0002", json.dumps({"battery_mv": 3900})),
+            )
+            conn.commit()
+            (book / "nodes.yaml").write_text(
+                "bench_loc: [39.5296, -119.8138]\n"
+                "nodes:\n  me0002: {}\n",
+                encoding="utf-8",
+            )
+            (book / "sites.yaml").write_text("sites: {}\n", encoding="utf-8")
+            stamped = _backfill_sample_loc_v2(conn, book)
+            self.assertGreater(stamped, 0)
+            hist = source_histories(conn, "me0002", hours=99999, limit=10)
+            self.assertAlmostEqual(hist["status"][0]["lat"], 39.5296)
+            self.assertAlmostEqual(hist["status"][0]["lon"], -119.8138)
+            self.assertEqual(_backfill_sample_loc_v2(conn, book), 0)
 
     def test_apply_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

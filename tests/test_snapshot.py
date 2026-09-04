@@ -67,10 +67,23 @@ class GpsTests(unittest.TestCase):
         self.assertEqual(pos["source"], "site")
         self.assertAlmostEqual(pos["lat"], 40.0)
 
-    def test_unbound_has_no_position(self) -> None:
+    def test_unbound_uses_bench_loc(self) -> None:
         node = {"unit_id": "ME0041"}
         sites = {"foo": {"name": "Foo Peak", "loc": [40.0, -117.0], "node": "me0001"}}
-        self.assertIsNone(resolve_position(node, sites))
+        doc = {"bench_loc": [39.5296, -119.8138]}
+        pos = resolve_position(node, sites, key="me0041", doc=doc)
+        assert pos is not None
+        self.assertEqual(pos["source"], "bench")
+        self.assertAlmostEqual(pos["lat"], 39.5296)
+
+    def test_site_wins_over_bench(self) -> None:
+        node = {"unit_id": "ME0011"}
+        sites = {"slpt-north": {"name": "SLPT North", "loc": [41.56303, -119.04481], "node": "me0011"}}
+        doc = {"bench_loc": [39.5296, -119.8138]}
+        pos = resolve_position(node, sites, key="me0011", doc=doc)
+        assert pos is not None
+        self.assertEqual(pos["source"], "site")
+        self.assertAlmostEqual(pos["lat"], 41.56303)
 
 
 class SnapshotTests(unittest.TestCase):
@@ -146,6 +159,29 @@ class SnapshotTests(unittest.TestCase):
             nbs = [n for n in u1["neighbors"] if n.get("unit_key") == "me0002"]
             self.assertEqual(len(nbs), 1)
             self.assertEqual(nbs[0]["label"], "ME0002")
+
+    def test_unbound_bench_loc_pins_on_map(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            yaml = YAML()
+            yaml.dump({"sites": {}}, sites_path.open("w", encoding="utf-8"))
+            yaml.dump(
+                {
+                    "bench_loc": [39.5296, -119.8138],
+                    "next_unit": 42,
+                    "nodes": {
+                        "me0041": {"unit_id": "ME0041", "identity_pubkey": "c" * 64},
+                    },
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
+            u = snap["units"]["me0041"]
+            self.assertTrue(u["mapped"])
+            self.assertEqual(u["position"]["source"], "bench")
+            self.assertAlmostEqual(u["position"]["lat"], 39.5296)
 
     def test_exposes_base_hash_from_sqlite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -11,7 +11,9 @@ from envybot.position import (
     node_alias,
     public_radio_name,
     resolve_book_position,
+    resolve_display_position,
     site_binding,
+    site_loc_for_unit,
 )
 
 
@@ -52,6 +54,35 @@ class ResolveTests(unittest.TestCase):
         self.assertIsNone(resolve_book_position({"unit_id": "ME0041"}, {}))
         self.assertIsNone(book_coord({"unit_id": "ME0041"}, "lat", {}))
         self.assertIsNone(site_binding("me0041", {"unit_id": "ME0041"}, {}))
+
+    def test_bench_loc_is_display_only(self) -> None:
+        node = {"unit_id": "ME0041"}
+        doc = {"bench_loc": [39.5276, -119.8142]}
+        self.assertIsNone(resolve_book_position(node, {}, key="me0041"))
+        pos = resolve_display_position(node, {}, key="me0041", doc=doc)
+        assert pos is not None
+        self.assertEqual(pos["source"], "bench")
+        self.assertAlmostEqual(pos["lat"], 39.5276)
+        loc = site_loc_for_unit("me0041", node, {}, doc=doc)
+        assert loc is not None
+        self.assertAlmostEqual(loc[0], 39.5276)
+
+    def test_node_loc_overrides_bench(self) -> None:
+        node = {"unit_id": "ME0041", "loc": [39.6, -119.9]}
+        doc = {"bench_loc": [39.5276, -119.8142]}
+        pos = resolve_display_position(node, {}, key="me0041", doc=doc)
+        assert pos is not None
+        self.assertEqual(pos["source"], "node")
+        self.assertAlmostEqual(pos["lat"], 39.6)
+
+    def test_site_wins_over_bench(self) -> None:
+        node = {"unit_id": "ME0003", "loc": [39.6, -119.9]}
+        sites = {"foo": {"loc": [40.0, -117.0], "node": "me0003"}}
+        doc = {"bench_loc": [39.5276, -119.8142]}
+        pos = resolve_display_position(node, sites, key="me0003", doc=doc)
+        assert pos is not None
+        self.assertEqual(pos["source"], "site")
+        self.assertAlmostEqual(pos["lat"], 40.0)
 
 
 class DisplayNameTests(unittest.TestCase):

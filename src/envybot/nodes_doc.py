@@ -53,7 +53,10 @@ OBSERVED_KEYS = (
 NODES_YAML_HEADER = (
     "# MeshEnvy fleet nodes — desired identity (private).\n"
     "# One entry per physical unit (ME####): identity, credentials,\n"
-    "# optional public: true. Location lives only on sites.yaml (loc + node).\n"
+    "# optional public: true. Apply GPS from sites.yaml when bound + public.\n"
+    "# bench_loc: book HQ for unbound units (map/sun/history). Fleet UI may update it.\n"
+    "# Per-node loc: [lat, lon] overrides bench_loc when unbound. Not pushed to radio.\n"
+    "# Site loc wins when the unit is linked in sites.yaml.\n"
     "# Observed last-seen / telemetry live in data/fleet/history.sqlite.\n"
     "# Display name: sites.yaml name when bound, else alias, else unit_id.\n"
     "# alias is UI/selector only (not pushed to the radio). Default apply SETs\n"
@@ -228,12 +231,11 @@ def strip_observed(node: dict[str, Any]) -> bool:
 
 
 def drop_node_location(node: dict[str, Any]) -> bool:
-    """GPS and site bind live on sites.yaml. Strip leftover node fields."""
+    """Strip legacy site bind on the node row. Per-node loc is kept."""
     changed = False
-    for key in ("site", "lat", "lon"):
-        if key in node:
-            node.pop(key, None)
-            changed = True
+    if "site" in node:
+        node.pop("site", None)
+        changed = True
     return changed
 
 

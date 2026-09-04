@@ -188,7 +188,12 @@ class PollAccumulator:
             ctx.conn,
             unit=unit,
             res=res,
-            site_loc=site_loc_for_unit(unit, ctx.nodes.get(unit), ctx.sites),
+            site_loc=site_loc_for_unit(
+                unit,
+                ctx.nodes.get(unit),
+                ctx.sites,
+                doc=getattr(ctx, "doc", None),
+            ),
         )
 
 
