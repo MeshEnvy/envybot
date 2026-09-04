@@ -142,7 +142,7 @@ class LoadTargetsTests(unittest.TestCase):
             targets = load_targets(nodes, deployed_only=False, include=None)
             self.assertEqual([t.key for t in targets], ["me0003"])
 
-    def test_includes_flood(self) -> None:
+    def test_includes_routing_flood(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             book = Path(tmp)
             nodes = book / "nodes.yaml"
@@ -157,7 +157,7 @@ class LoadTargetsTests(unittest.TestCase):
                                 "firmware_platform": "meshcore",
                                 "identity_pubkey": "b" * 64,
                                 "admin_password": "AdminTwoStrong2",
-                                "flood": True,
+                                "routing": "flood",
                             },
                         }
                     },
@@ -167,5 +167,8 @@ class LoadTargetsTests(unittest.TestCase):
                 yaml.dump({"sites": {}}, fh)
             targets = load_targets(nodes, deployed_only=False, include=None)
             self.assertEqual([t.key for t in targets], ["me0003"])
-            self.assertTrue(targets[0].flood)
+            from envybot.routing import RoutingMode
+
+            self.assertEqual(targets[0].routing, RoutingMode.FLOOD)
+            self.assertEqual(targets[0].routing_explicit, "flood")
             self.assertIsNone(targets[0].site)

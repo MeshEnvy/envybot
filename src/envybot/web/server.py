@@ -439,6 +439,13 @@ class MonitorWeb:
             return
         unit = dict(unit)
         unit["session"] = session
+        if session.get("live_route"):
+            unit["live_route"] = session["live_route"]
+            label = session["live_route"].get("label")
+            if label:
+                from envybot.routing import abbrev_live_route_label
+
+                unit["live_route_label"] = abbrev_live_route_label(str(label))
         if sample is not None:
             source, row = sample
             unit["sample"] = {"source": source, "row": row}
@@ -718,11 +725,19 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
             node["paused"] = True
         else:
             node.pop("paused", None)
-    if "flood" in body:
-        if body["flood"] is True:
-            node["flood"] = True
+    if "routing" in body:
+        routing = body["routing"]
+        if routing is None or routing == "" or routing == "path":
+            node.pop("routing", None)
+        elif routing in ("direct", "flood"):
+            node["routing"] = routing
         else:
-            node.pop("flood", None)
+            return web.json_response({"error": "routing must be path, direct, or flood"}, status=400)
+    if "flood" in body:
+        return web.json_response(
+            {"error": "flood is removed; use routing: path|direct|flood"},
+            status=400,
+        )
     if "alias" in body:
         alias = body["alias"]
         if isinstance(alias, str) and alias.strip():

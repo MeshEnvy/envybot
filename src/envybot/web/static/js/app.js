@@ -61,12 +61,13 @@ import {
   hasTrafficStats,
   healthHeadline,
   healthMark,
+  healthEmoji,
+  showHealthMark,
   healthTooltip,
   compareUnits,
   unitLabel,
   unitTitle,
-  prefBadges,
-} from "./format.js?v=24";
+} from "./format.js?v=25";
 import {
   buildNeighborEdges,
   createMapController,
@@ -79,8 +80,8 @@ import {
   SPARK_MIN_SPAN,
 } from "./sparklines.js?v=10";
 
-const DASH_SPARK_W = 96;
-const DASH_SPARK_H = 18;
+const DASH_SPARK_W = 52;
+const DASH_SPARK_H = 16;
 
 const BENCH_MOVE_M = 200;
 const BENCH_MAX_SEC = 60;
@@ -156,6 +157,8 @@ const App = {
     /** @typedef {{ tab_id: string, key: string, state: string, attempt?: number, max_attempts?: number, cmd?: string | null, error?: string | null, history: { cmd: string, reply?: string, error?: string }[], pending: { id: string, cmd: string }[], draft: string, unread?: boolean, cmds?: string[], cmdIndex?: number | null, cmdHold?: string }} ConsoleTab */
     const consoleTabs = reactive(/** @type {ConsoleTab[]} */ ([]));
     let consoleSeeding = false;
+    /** localStorage seed runs once per page load, not on every SSE hello */
+    let consoleBootstrapped = false;
     const consoleCopied = ref(false);
     let consoleCopyTimer = 0;
 
@@ -200,7 +203,7 @@ const App = {
 
     function applyHello(snap) {
       replaceSnapshot(snap);
-      reconcileConsole(snap);
+      return reconcileConsole(snap);
     }
 
     function applyUnit(unit) {
@@ -828,11 +831,15 @@ const App = {
           consoleActiveId.value = serverTabs[0].tab_id;
         }
         persistConsole();
+        consoleBootstrapped = true;
         return;
       }
-      if (consoleSeeding) return;
+      if (consoleBootstrapped || consoleSeeding) return;
       const stored = loadConsoleStore();
-      if (!stored.tabs?.length) return;
+      if (!stored.tabs?.length) {
+        consoleBootstrapped = true;
+        return;
+      }
       consoleSeeding = true;
       try {
         for (const t of stored.tabs) {
@@ -864,6 +871,7 @@ const App = {
         }
         consoleActiveId.value = stored.active || consoleTabs[0]?.tab_id || null;
         persistConsole();
+        consoleBootstrapped = true;
       } finally {
         consoleSeeding = false;
       }
@@ -1365,11 +1373,6 @@ const App = {
       return !!id && id !== cardPrimary(unit);
     }
 
-    function cardStatusLine(unit) {
-      if (isInFlight(unit)) return unitStage(unit);
-      return healthMark(unit);
-    }
-
     function cardVoltage(unit) {
       const mv = unit?.status?.battery_mv;
       if (mv != null) return formatBattery(mv);
@@ -1530,6 +1533,64 @@ const App = {
       }
     }
 
+    /** @param {Record<string, unknown>} unit */
+    function effectiveRoutingPolicy(unit) {
+      const explicit = unit.routing_explicit;
+      if (explicit === "direct" || explicit === "flood") return explicit;
+      return "path";
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function routingPolicyLabel(unit) {
+      const p = effectiveRoutingPolicy(unit);
+      return p === "path" ? "path (default)" : p;
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function liveRouteLabel(unit) {
+      const lr = unit.live_route;
+      if (!lr || typeof lr !== "object") return "unknown";
+      return String(lr.label || "unknown");
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function liveRouteTitle(unit) {
+      const lr = unit.live_route;
+      if (!lr || typeof lr !== "object") return "Route unknown";
+      if (lr.kind === "flood" && lr.fallback) return "Rediscovering route";
+      if (lr.kind === "flood") return "Flood route";
+      return `Live route: ${lr.label}`;
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function liveRouteBadgeClass(unit) {
+      const lr = unit.live_route;
+      if (!lr || typeof lr !== "object") return "live-route-badge live-route-unknown";
+      if (lr.kind === "flood" && lr.fallback) {
+        return "live-route-badge live-route-flood-fallback";
+      }
+      if (lr.kind === "flood") return "live-route-badge live-route-flood";
+      return "live-route-badge";
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function showPolicyFloodBadge(unit) {
+      return unit.routing_explicit === "flood";
+    }
+
+    /** @param {Record<string, unknown>} unit @param {'path'|'direct'|'flood'} mode */
+    async function setRoutingPolicy(unit, mode) {
+      try {
+        const updated = await patchUnit(String(unit.key), {
+          routing: mode === "path" ? null : mode,
+        });
+        applyUnit(updated);
+        pushMap();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
     /** @param {Record<string, unknown>} unit @param {Event} [ev] */
     async function togglePaused(unit, ev) {
       ev?.stopPropagation?.();
@@ -1546,21 +1607,6 @@ const App = {
       }
     }
 
-    /** @param {Record<string, unknown>} unit @param {Event} [ev] */
-    async function toggleFlood(unit, ev) {
-      ev?.stopPropagation?.();
-      const next =
-        ev && ev.target && "checked" in ev.target
-          ? !!ev.target.checked
-          : !unit.flood;
-      try {
-        const updated = await patchUnit(String(unit.key), { flood: next });
-        applyUnit(updated);
-        pushMap();
-      } catch (err) {
-        console.error(err);
-      }
-    }
     function pushMap() {
       mapCtrl?.sync(fleet, mapHighlightKey.value, fleet.now);
     }
@@ -1594,7 +1640,7 @@ const App = {
         window.removeEventListener("pagehide", onPageHide);
       });
       try {
-        applyHello(await fetchFleet());
+        await applyHello(await fetchFleet());
         applyLocationUnit();
         await maybeReopenConsole();
         await maybeReopenMap();
@@ -1606,10 +1652,9 @@ const App = {
         () => pushMap(),
       );
       es = connectEvents({
-        onHello: (snap) => {
-          applyHello(snap);
+        onHello: async (snap) => {
+          await applyHello(snap);
           applyLocationUnit();
-          maybeReopenConsole();
           pushMap();
         },
         onUnit: (unit) => {
@@ -1657,12 +1702,12 @@ const App = {
       sessionBadgeTitle,
       healthHeadline,
       healthMark,
+      healthEmoji,
+      showHealthMark,
       healthTooltip,
       cardPrimary,
       cardNodeId,
       cardShowNodeId,
-      cardStatusLine,
-      prefBadges,
       cardVoltage,
       cardTraffic,
       cardTemp,
@@ -1725,7 +1770,13 @@ const App = {
       unitTitle,
       togglePublic,
       togglePaused,
-      toggleFlood,
+      setRoutingPolicy,
+      effectiveRoutingPolicy,
+      routingPolicyLabel,
+      liveRouteLabel,
+      liveRouteTitle,
+      liveRouteBadgeClass,
+      showPolicyFloodBadge,
       runManualJob,
       otaLocalLabel,
       otaHwLabel,
@@ -1903,23 +1954,8 @@ const App = {
               </button>
             </div>
           </div>
-          <div class="dash-meta">
-            <span v-if="cardShowNodeId(unit)" class="unit-id">{{ cardNodeId(unit) }}</span>
-            <span v-if="unit.ota_badge" class="ota-list-badge" :class="'ota-badge-' + unit.ota_badge.replace(' ', '-')">{{
-              unit.ota_badge
-            }}</span>
-            <span
-              v-for="badge in prefBadges(unit.prefs)"
-              :key="badge.id"
-              class="pref-badge"
-              :class="'pref-' + badge.state"
-              :title="badge.title"
-            >{{ badge.text }}</span>
-            <span class="unit-ago">{{ formatRelative(unit.last_heard, fleet.now) }}</span>
-          </div>
           <div class="dash-metrics">
             <div v-for="row in DASH_METRICS" :key="row.key" class="dash-metric">
-              <span class="dash-metric-label">{{ row.label }}</span>
               <span class="dash-metric-val">{{ cardMetricValue(unit, row.key) }}</span>
               <svg
                 v-if="dashboardSparkHasData(unit, row.key)"
@@ -1947,8 +1983,41 @@ const App = {
               </svg>
             </div>
           </div>
-          <div class="dash-status" :class="{ busy: isInFlight(unit) }" :title="sessionBadgeTitle(unit)">
-            {{ cardStatusLine(unit) }}
+          <div class="dash-foot" :class="{ busy: isInFlight(unit) }">
+            <span
+              v-if="isInFlight(unit)"
+              class="dash-foot-busy"
+              :title="sessionBadgeTitle(unit)"
+            >{{ unitStage(unit) }}</span>
+            <span
+              v-else-if="showHealthMark(unit)"
+              class="dash-health-badge"
+              :class="'dash-health-' + healthHeadline(unit)"
+              :title="healthTooltip(unit.health)"
+              :aria-label="healthMark(unit)"
+            >{{ healthEmoji(unit) }}</span>
+            <span class="dash-foot-meta">
+              <span v-if="cardShowNodeId(unit)" class="unit-id">{{ cardNodeId(unit) }}</span>
+              <span
+                v-if="unit.live_route?.label"
+                :class="liveRouteBadgeClass(unit)"
+                :title="liveRouteTitle(unit)"
+              >{{ unit.live_route_label || unit.live_route.label }}</span>
+              <span
+                v-if="showPolicyFloodBadge(unit)"
+                class="routing-policy-danger"
+                title="Always flood — high airtime"
+              >flood</span>
+              <span
+                v-if="unit.routing_explicit === 'direct'"
+                class="routing-policy-direct"
+                title="Direct override"
+              >direct*</span>
+              <span v-if="unit.ota_badge" class="ota-list-badge" :class="'ota-badge-' + unit.ota_badge.replace(' ', '-')">{{
+                unit.ota_badge
+              }}</span>
+              <span class="unit-ago">{{ formatRelative(unit.last_heard, fleet.now) }}</span>
+            </span>
           </div>
         </article>
       </div>
@@ -1986,6 +2055,16 @@ const App = {
               :title="pref.state === 'due' ? 'Book apply due' : 'Apply stamped'"
             >{{ pref.label }} {{ pref.value }}</span>
           </p>
+          <p class="live-route-line">
+            <span class="book-field-label">Route</span>
+            <span :class="liveRouteBadgeClass(selectedUnit)" :title="liveRouteTitle(selectedUnit)">
+              {{ liveRouteLabel(selectedUnit) }}
+              <span
+                v-if="selectedUnit.live_route?.kind === 'flood' && selectedUnit.live_route?.fallback"
+                class="live-route-sub"
+              >discovering</span>
+            </span>
+          </p>
           <div class="detail-toolbar">
             <label
               class="book-toggle"
@@ -2002,14 +2081,6 @@ const App = {
               <input type="checkbox" :checked="!!selectedUnit.paused" @change="togglePaused(selectedUnit, $event)" />
               <span class="switch" aria-hidden="true"></span>
               Pause
-            </label>
-            <label
-              class="book-toggle book-toggle-flood"
-              title="Bench uses flood instead of zero-hop direct. Site-bound already floods."
-            >
-              <input type="checkbox" :checked="!!selectedUnit.flood" @change="toggleFlood(selectedUnit, $event)" />
-              <span class="switch" aria-hidden="true"></span>
-              Flood
             </label>
             <div v-if="manualAccepting" class="manual-actions">
               <button
@@ -2038,6 +2109,33 @@ const App = {
               </button>
             </div>
           </div>
+          <section class="routing-group">
+            <span class="book-field-label">Routing policy</span>
+            <div class="routing-segment" role="group" aria-label="Routing policy">
+              <button
+                type="button"
+                class="routing-segment-btn"
+                :class="{ active: effectiveRoutingPolicy(selectedUnit) === 'path' }"
+                @click="setRoutingPolicy(selectedUnit, 'path')"
+              >Path</button>
+              <button
+                type="button"
+                class="routing-segment-btn"
+                :class="{ active: selectedUnit.routing_explicit === 'direct' }"
+                @click="setRoutingPolicy(selectedUnit, 'direct')"
+              >Direct</button>
+              <button
+                type="button"
+                class="routing-segment-btn routing-segment-danger"
+                :class="{ active: selectedUnit.routing_explicit === 'flood' }"
+                @click="setRoutingPolicy(selectedUnit, 'flood')"
+              >Flood</button>
+            </div>
+            <p v-if="selectedUnit.routing_explicit === 'flood'" class="routing-policy-warning">
+              Always flood. High airtime on every send.
+            </p>
+            <p class="routing-policy-hint">Book policy: {{ routingPolicyLabel(selectedUnit) }}</p>
+          </section>
           <section class="book-edit">
             <label class="book-field">
               <span class="book-field-label">Alias</span>
@@ -2698,13 +2796,6 @@ const App = {
                       <span v-if="unit.ota_badge" class="ota-list-badge" :class="'ota-badge-' + unit.ota_badge.replace(' ', '-')">{{
                         unit.ota_badge
                       }}</span>
-                      <span
-                        v-for="badge in prefBadges(unit.prefs)"
-                        :key="badge.id"
-                        class="pref-badge"
-                        :class="'pref-' + badge.state"
-                        :title="badge.title"
-                      >{{ badge.text }}</span>
                       <span class="unit-ago">{{ formatRelative(unit.last_heard, fleet.now) }}</span>
                     </span>
                   </span>

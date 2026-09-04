@@ -242,15 +242,21 @@ class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
         body = await resp.json()
         self.assertFalse(body.get("paused"))
 
-    async def test_post_unit_flood(self) -> None:
+    async def test_post_unit_routing(self) -> None:
+        resp = await self.client.post("/api/unit/me0003", json={"routing": "flood"})
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertEqual(body.get("routing"), "flood")
+        self.assertEqual(body.get("routing_explicit"), "flood")
+        resp = await self.client.post("/api/unit/me0003", json={"routing": "path"})
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertEqual(body.get("routing"), "path")
+        self.assertIsNone(body.get("routing_explicit"))
+
+    async def test_post_unit_flood_rejected(self) -> None:
         resp = await self.client.post("/api/unit/me0003", json={"flood": True})
-        self.assertEqual(resp.status, 200)
-        body = await resp.json()
-        self.assertTrue(body.get("flood"))
-        resp = await self.client.post("/api/unit/me0003", json={"flood": False})
-        self.assertEqual(resp.status, 200)
-        body = await resp.json()
-        self.assertFalse(body.get("flood"))
+        self.assertEqual(resp.status, 400)
 
     async def test_post_unit_alias_and_notes(self) -> None:
         resp = await self.client.post(

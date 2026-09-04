@@ -19,6 +19,7 @@ from envybot.history import (
     interval_traffic,
     last_ok_apply_desireds,
     last_ok_apply_times,
+    latest_mesh_audit_path,
     latest_neighbors,
     latest_ota,
     latest_status,
@@ -30,12 +31,17 @@ from envybot.ota_parse import ota_badge
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
     is_decommissioned,
-    is_flood,
     is_meshcore_platform,
     is_paused,
     is_public,
     load_nodes_doc,
     normalize_fleet_node,
+)
+from envybot.routing import (
+    abbrev_live_route_label,
+    live_route_from_audit_path,
+    resolve_routing,
+    routing_explicit,
 )
 from envybot.position import (
     display_name,
@@ -432,6 +438,7 @@ def sanitize_unit(
     apply_at: dict[str, int] | None = None,
     prefs: list[dict[str, str]] | None = None,
     doc: dict[str, Any] | None = None,
+    audit_path: str | None = None,
 ) -> dict[str, Any]:
     normalize_fleet_node(node)
     heard = last_heard(node, seen)
@@ -449,6 +456,14 @@ def sanitize_unit(
     site_slug = bind[0] if bind else None
     site_name = lookup_site_name(site_slug, sites) if site_slug else None
 
+    policy = resolve_routing(node)
+    explicit = routing_explicit(node)
+    live_route = None
+    if session and session.get("live_route"):
+        live_route = session.get("live_route")
+    elif audit_path:
+        live_route = live_route_from_audit_path(audit_path, policy=policy)
+
     unit: dict[str, Any] = {
         "key": key,
         "unit_id": node.get("unit_id") or key.upper(),
@@ -459,7 +474,12 @@ def sanitize_unit(
         "alias": node_alias(node),
         "public": is_public(node),
         "paused": is_paused(node),
-        "flood": is_flood(node),
+        "routing": policy.value,
+        "routing_explicit": explicit,
+        "live_route": live_route,
+        "live_route_label": abbrev_live_route_label(live_route["label"])
+        if live_route and live_route.get("label")
+        else None,
         "hardware": node.get("hardware"),
         "notes": node.get("notes"),
         "firmware_version": (seen or {}).get("firmware_version"),
@@ -531,6 +551,7 @@ def build_fleet_snapshot(
     status_rows_map: dict[str, list[dict[str, Any]]] = {}
     apply_at_map: dict[str, dict[str, int]] = {}
     apply_desired_map: dict[str, dict[str, str]] = {}
+    audit_path_map: dict[str, str] = {}
     conn = None
     try:
         conn = open_history(book_dir)
@@ -555,6 +576,9 @@ def build_fleet_snapshot(
             if window is not None:
                 window_map[key] = window
             status_rows_map[key] = status_series(conn, key)
+            audit_path = latest_mesh_audit_path(conn, key)
+            if audit_path:
+                audit_path_map[key] = audit_path
     except OSError:
         seen_map = seen_map or {}
         conn = None
@@ -597,6 +621,7 @@ def build_fleet_snapshot(
                     apply_desireds=apply_desired_map.get(key),
                 ),
                 doc=doc,
+                audit_path=audit_path_map.get(key),
             )
             status_rows = status_rows_map.get(key, [])
             units[key]["health"] = compute_health(

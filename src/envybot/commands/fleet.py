@@ -36,7 +36,6 @@ from envybot.jobs import (
 )
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
-    is_flood,
     is_paused,
     load_nodes_doc,
     load_sites_for_book,
@@ -44,6 +43,7 @@ from envybot.nodes_doc import (
     sync_paused,
     write_nodes_doc,
 )
+from envybot.routing import resolve_routing, routing_explicit
 from envybot.poll import (
     PollPolicy,
     due_groups,
@@ -116,7 +116,7 @@ def _migrate_book(nodes_path: Path) -> tuple[dict[str, Any], Any]:
     conn = migrate_legacy(nodes_path.parent, nodes)
     if migrate_desired(doc, sites):
         write_nodes_doc(nodes_path, doc)
-        print("Migrated nodes.yaml (stripped observed keys / leftover node GPS).")
+        print("Migrated nodes.yaml (stripped observed keys / routing / leftover node GPS).")
     return doc, conn
 
 
@@ -672,9 +672,13 @@ async def run(args: argparse.Namespace) -> int:
                     target.key, node_record, sites, doc=doc
                 ),
             )
+            sess = dict(session_states.get(target.key, {}))
+            live_route = uq.session_extra.get("live_route")
+            if live_route:
+                sess["live_route"] = live_route
             await web_ctx.publish_unit(
                 target.key,
-                session=session_states.get(target.key, {}),
+                session=sess,
                 session_states=session_states,
                 companion=companion_short,
                 poll=web_ctx._poll_state,
@@ -685,7 +689,9 @@ async def run(args: argparse.Namespace) -> int:
         if not await session.ensure_companion_connected(log=log):
             return JobOutcome.TIMEOUT, "companion disconnected"
         sync_paused(nodes_path, nodes)
-        uq.target.flood = is_flood(nodes.get(uq.target.key))
+        node_row = nodes.get(uq.target.key) or {}
+        uq.target.routing = resolve_routing(node_row)
+        uq.target.routing_explicit = routing_explicit(node_row)
         if (
             is_paused(nodes.get(uq.target.key))
             and uq.target.key not in manual_keys

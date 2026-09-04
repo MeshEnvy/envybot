@@ -60,10 +60,13 @@ map modal. **Refresh**, **Pull**, and **Push** still work from the UI. Unpause
 (or delete the key) returns the unit to the next fleet run. Mid-run pause
 takes effect at the next job boundary. `trust` / `cmd` do not honor pause.
 
-`flood: true` forces flood login on bag/bench (default zero-hop direct).
-Site-bound units always flood-login once per session, then path-route
-GET/CLI/binary. The detail **Flood** toggle writes the key. Mid-run
-change takes effect on the next login.
+`routing: direct | path | flood` is mesh send policy (default **path** when
+omitted). Path uses cached route (including learned zero-hop direct),
+flood-logins when cache is empty, and discards stale cache after 3 timeouts.
+`direct` forces zero-hop every send. `flood` always floods (danger). First
+fleet run migrates leftover `flood: true` → `routing: flood` (one-shot). Mid-run
+change takes effect on the next login/send. Detail **Routing policy** control;
+list/detail show **live route**.
 
 ## Job queue
 
@@ -86,11 +89,11 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
   priority. Two manuals interleave with each other.
 - `--attempts` (default 10) caps retries **per command** at the scheduler.
   Logs show scheduler `N/max` (e.g. `8/10`), not inner one-shot `N/1`.
-  Login flood-routes deployed units (and bench with ``flood: true``) to
-  learn path; later GET/CLI/binary in that session use the cached hops
-  (`mesh_audit.path` = hop string, or ``flood`` on login/retry). Unbound
-  bag/bench always SET zero-hop (``direct``) before each send unless
-  ``flood: true``. A missing contact cache does not skip bench SET.
+  Login uses book routing policy (default path). Later GET/CLI/binary in that
+  session use the cached route when path mode has one
+  (`mesh_audit.path` = hop string, `direct`, or `flood` on discover/retry).
+  Path mode flood-discovers when cache is empty. Three consecutive timeouts on
+  a cached path discard the cache and re-flood.
   `--retry-delay` (default 60s) parks auto poll/apply units after a timeout
   before retry; `--miss-cooldown` (default 3600s) skips re-seed after max
   attempts. Console and manual Refresh/Pull/Push are exempt; manual UI also
@@ -259,8 +262,8 @@ Map pins use **book** position (`sites.yaml` loc for the bound unit), never
 device `0,0`. Pin color is last-heard age (green now, amber at 12h, red at
 24h+; never-heard is gray). Labels are `Site (3h)` when bound, else book
 alias, else unit id. Age ticks live from `last_heard`. Detail shows unit id and site name, editable **alias** and **notes**
-(when bag/bench, alias becomes the list title), `public` / `pause` /
-`flood` toggles, and drift
+(when bag/bench, alias becomes the list title), `public` / `pause`,
+**routing policy** and **live route**, and drift
 from the apply stamp (`due` when the profile is stale) or a later pull
 that still shows advert on (`leak`). Leftover name or GPS is not an advert.
 List cards show the same primary label with unit id
@@ -268,7 +271,8 @@ as secondary when it differs. While the companion worker is live, **Refresh** on
 unit pulls live telemetry now; **Pull** also GETs fw/name/GPS/advert/acl;
 **Push** force-SETs the book profile (overrides `--skip`, `paused`, and
 up-to-date skips). Pause is a checkbox on the detail card
-(`paused: true`). Flood (`flood: true`) makes bench units use flood
-instead of direct. Sidebar rows fade and badge as paused. Rows with
+(`paused: true`). Routing policy is Path (default) / Direct / Flood on the
+detail card; list cards show live route and a danger badge when policy is flood.
+Sidebar rows fade and badge as paused. Rows with
 `decommissioned:` or `firmware_platform: meshtastic` are omitted
 entirely.

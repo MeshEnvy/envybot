@@ -56,9 +56,13 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   edits. Blank platform = meshcore.
 - `paused: true` stays in the UI. Fleet skips auto poll/apply. Refresh,
   Pull, and Push still hit the radio. Trust/cmd ignore the flag.
-- `flood: true` forces flood login on bag/bench (default zero-hop direct).
-  Site-bound units flood-login once per session, then path-route polls.
-  Detail **Flood** toggle next to Public/Pause.
+- `routing: direct | path | flood` is mesh send policy (default **path** when
+  omitted). Path uses cached route (including learned zero-hop direct),
+  flood-logins when cache is empty, and discards stale cache after 3 timeouts.
+  `direct` forces zero-hop every send. `flood` always floods (danger).
+  First fleet `migrate_desired` rewrites leftover `flood: true` → `routing: flood`
+  (one-shot; no dual-path read). Detail **Routing policy** control; list/detail
+  show **live route** from companion cache.
 - `decommissioned:` (epoch) rows stay in `nodes.yaml` for the number
   but envybot ignores them: no UI, poll, apply, trust, cmd, or onboard.
 - `fleet` and `trust` poll every pollable MeshCore unit, including
@@ -117,10 +121,10 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Successful GET_STATUS / GET_TELEMETRY / CLI log a one-line result as soon
   as they land (same beat as `login OK`). An apply field whose stamp
   already matches logs `field: skip (synced)` (no radio).
-  Every poll session flood-logins deployed units once, then GET/CLI/binary
-  ride the learned path (`mesh_audit.path` = hop hashes). Unbound bag/bench
-  always SET zero-hop (`direct`) unless `flood: true`. Timeout retries on
-  deployed units fall back to flood.
+  Every poll session logins use book routing policy (default path). GET/CLI/binary
+  ride the learned path (`mesh_audit.path` = hop hashes, `direct`, or `flood`).
+  Path mode flood-discovers when cache is empty; timeout on cached path (3x)
+  discards cache and re-floods.
   Neighbor discover wait (default 12s) is a background timer, not radio hold.
   Manual Refresh/Pull/Push replace that unit's remaining jobs except a
   queued console send (stays in front). A click mid-GET supersedes the
@@ -180,7 +184,9 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
   **Pause** (detail checkbox) writes `paused: true` and drops the unit from
   auto poll/apply on the next job boundary (in-flight exchange finishes).
   Map sidebar and dashboard cards fade paused rows.
-  **Flood** writes `flood: true` (bench flood path; next send).
+  **Routing policy** (detail segmented control) writes `routing: direct|flood`
+  or clears the key for default path. **Live route** badge shows companion
+  cache (direct, hops, or flood). Policy flood shows a danger badge on list cards.
   Units carry `health` (worst-of component checks) and interval traffic
   deltas. Hello snapshot includes compact 72h `sparks` (battery V, temp,
   in/h, unreadable %) per unit; SSE status/telemetry samples extend them

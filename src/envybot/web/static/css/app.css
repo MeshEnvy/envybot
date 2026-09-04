@@ -278,41 +278,24 @@ body {
   text-overflow: ellipsis;
 }
 
-.dash-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px;
-  margin-top: 2px;
-  font-size: 0.68rem;
-  color: #8aa0b5;
-}
-
 .dash-metrics {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  margin-top: 8px;
+  gap: 4px 6px;
+  margin-top: 6px;
 }
 
 .dash-metric {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
   min-width: 0;
 }
 
-.dash-metric-label {
-  font-size: 0.6rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #6b7d8f;
-  line-height: 1.1;
-}
-
 .dash-metric-val {
-  font-size: 0.72rem;
+  flex-shrink: 0;
+  font-size: 0.74rem;
   font-variant-numeric: tabular-nums;
   color: #c5d4e3;
   line-height: 1.2;
@@ -320,23 +303,70 @@ body {
 
 .dash-spark {
   display: block;
-  max-width: 100%;
+  flex: 1;
+  min-width: 0;
+  height: 16px;
 }
 
-.dash-status {
+.dash-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-top: 6px;
-  font-size: 0.66rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  min-width: 0;
+  font-size: 0.68rem;
   color: #8aa0b5;
   line-height: 1.25;
+}
+
+.dash-foot-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.dash-foot-busy {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: #a896ff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 45%;
 }
 
-.dash-status.busy {
-  color: #a896ff;
+.dash-foot.busy .dash-foot-meta {
+  justify-content: flex-end;
+}
+
+.dash-health-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 3px;
+  font-size: 0.62rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.dash-health-attention {
+  background: #3d3214;
+  color: #f5c14a;
+}
+
+.dash-health-unreachable {
+  background: #3d1a1a;
+  color: #f06e6e;
+}
+
+.dash-health-paused {
+  background: #2a3440;
+  color: #8aa0b5;
 }
 
 .overlay-modal {
@@ -1014,6 +1044,113 @@ body {
 
 .book-toggle-flood input:focus-visible + .switch {
   box-shadow: 0 0 0 2px rgba(78, 207, 158, 0.25);
+}
+
+.live-route-badge {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #1e2a36;
+  border: 1px solid #3a4a5c;
+  color: #b8c9da;
+}
+
+.live-route-flood-fallback {
+  background: #3d2e1a;
+  border-color: #c9923a;
+  color: #f0c070;
+}
+
+.live-route-flood {
+  background: #3d1a1a;
+  border-color: #c94a4a;
+  color: #f08080;
+}
+
+.live-route-unknown {
+  opacity: 0.6;
+}
+
+.live-route-sub {
+  margin-left: 4px;
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+.routing-policy-danger {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #3d1a1a;
+  border: 1px solid #c94a4a;
+  color: #f08080;
+}
+
+.routing-policy-direct {
+  font-size: 0.68rem;
+  opacity: 0.65;
+  text-transform: lowercase;
+}
+
+.live-route-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+}
+
+.routing-group {
+  margin: 12px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid #2a3440;
+}
+
+.routing-segment {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.routing-segment-btn {
+  flex: 1;
+  padding: 6px 8px;
+  font-size: 0.78rem;
+  border: 1px solid #2a3440;
+  border-radius: 6px;
+  background: #1a222c;
+  color: #9fb0c0;
+  cursor: pointer;
+}
+
+.routing-segment-btn.active {
+  background: #1a2e3d;
+  border-color: #4ea1ff;
+  color: #e8f0f8;
+}
+
+.routing-segment-danger.active {
+  background: #3d1a1a;
+  border-color: #c94a4a;
+  color: #f08080;
+}
+
+.routing-policy-warning {
+  margin: 8px 0 0;
+  font-size: 0.75rem;
+  color: #f08080;
+}
+
+.routing-policy-hint {
+  margin: 6px 0 0;
+  font-size: 0.72rem;
+  color: #7a8a9a;
 }
 
 @keyframes pulse {

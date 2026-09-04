@@ -1890,6 +1890,16 @@ def finish_mesh_audit(
     conn.commit()
 
 
+def latest_mesh_audit_path(conn: sqlite3.Connection, unit_key: str) -> str | None:
+    """Most recent mesh_audit.path for a unit (idle snapshot fallback)."""
+    row = conn.execute(
+        "SELECT path FROM mesh_audit WHERE unit = ? AND path IS NOT NULL AND path != '' "
+        "ORDER BY ts_sent DESC LIMIT 1",
+        (unit_key.lower(),),
+    ).fetchone()
+    return str(row[0]) if row else None
+
+
 def mark_mesh_audit_late(
     conn: sqlite3.Connection | None,
     audit_id: int | None,

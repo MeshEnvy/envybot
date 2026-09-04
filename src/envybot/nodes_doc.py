@@ -70,8 +70,9 @@ NODES_YAML_HEADER = (
     "# firmware_platform: meshcore | meshtastic. Meshtastic rows stay in the\n"
     "#   book; envybot ignores them (no UI, poll, apply, trust, cmd).\n"
     "# paused: true skips auto fleet poll/apply. Still in the UI. Refresh/Pull/Push override.\n"
-    "# flood: true forces flood path on bag/bench (default is zero-hop direct).\n"
-    "#   Site-bound units always flood; the stamp is a no-op until unbound.\n"
+    "# routing: direct | path | flood — mesh send policy (default path when omitted).\n"
+    "#   path: use cached route; flood-login to discover; discard stale cache after 3 fails.\n"
+    "#   direct: always zero-hop. flood: always flood (danger — high airtime).\n"
     "# decommissioned: unix epoch when pulled from service. Envybot ignores the row.\n"
     "# next_unit: next free ME number (never reuse).\n"
     "# admin_password / guest_password: unique + strong per unit. Privacy apply\n"
@@ -163,11 +164,6 @@ def is_paused(node: dict[str, Any] | None) -> bool:
     return bool(node and node.get("paused") is True)
 
 
-def is_flood(node: dict[str, Any] | None) -> bool:
-    """True when the book stamps flood: true (bench uses flood instead of direct)."""
-    return bool(node and node.get("flood") is True)
-
-
 def sync_paused(nodes_path: Path, nodes: dict[str, Any]) -> None:
     """Copy UI book fields from disk so in-memory persist does not clobber them."""
     try:
@@ -187,19 +183,16 @@ def sync_paused(nodes_path: Path, nodes: dict[str, Any]) -> None:
             mem["paused"] = True
         else:
             mem.pop("paused", None)
-        if disk.get("flood") is True:
-            mem["flood"] = True
-        else:
-            mem.pop("flood", None)
-        for field in ("alias", "notes"):
+        for field in ("routing", "alias", "notes"):
             val = disk.get(field)
-            if field == "notes":
+            if field == "routing":
                 if isinstance(val, str) and val.strip():
-                    mem[field] = val
+                    mem["routing"] = val.strip().lower()
                 else:
-                    mem.pop(field, None)
-            elif isinstance(val, str) and val.strip():
-                mem[field] = val.strip()
+                    mem.pop("routing", None)
+                continue
+            if isinstance(val, str) and val.strip():
+                mem[field] = val.strip() if field == "alias" else val
             else:
                 mem.pop(field, None)
         for field in ("powersaving", "fem_rxgain"):
@@ -216,9 +209,28 @@ def is_decommissioned(node: dict[str, Any] | None) -> bool:
     return node.get("decommissioned") not in (None, "", False)
 
 
+def migrate_routing(node: dict[str, Any]) -> bool:
+    """One-shot: ``flood: true`` → ``routing: flood``; drop obsolete key.
+
+    Not a runtime dual-path. Call from migrate_desired / normalize so the
+    book is rewritten once, then only ``routing`` remains.
+    """
+    changed = False
+    if node.get("flood") is True:
+        if not isinstance(node.get("routing"), str) or not str(node.get("routing")).strip():
+            node["routing"] = "flood"
+        node.pop("flood", None)
+        changed = True
+    elif "flood" in node:
+        node.pop("flood", None)
+        changed = True
+    return changed
+
+
 def normalize_fleet_node(node: dict[str, Any]) -> None:
     """Drop obsolete keys (greenfield — no field aliasing)."""
     strip_observed(node)
+    migrate_routing(node)
 
 
 def strip_observed(node: dict[str, Any]) -> bool:
@@ -250,6 +262,8 @@ def migrate_desired(doc: dict[str, Any], sites: dict[str, dict[str, Any]]) -> bo
         if not isinstance(node, dict):
             continue
         if strip_observed(node):
+            changed = True
+        if migrate_routing(node):
             changed = True
         if drop_node_location(node):
             changed = True

@@ -9,13 +9,13 @@ from pathlib import Path
 from envybot.nodes_doc import (
     MASK_NAME,
     is_decommissioned,
-    is_flood,
     is_paused,
     is_public,
     migrate_desired,
     sync_paused,
     write_nodes_doc,
 )
+from envybot.routing import resolve_routing, routing_explicit
 from ruamel.yaml import YAML
 
 
@@ -180,35 +180,53 @@ class PausedTests(unittest.TestCase):
             self.assertEqual(disk["nodes"]["me0001"]["guest_password"], "rolled")
 
 
-class FloodTests(unittest.TestCase):
-    def test_blank_is_direct(self) -> None:
-        self.assertFalse(is_flood(None))
-        self.assertFalse(is_flood({}))
-        self.assertFalse(is_flood({"flood": False}))
-        self.assertFalse(is_flood({"flood": None}))
+class RoutingMigrateTests(unittest.TestCase):
+    def test_migrate_desired_converts_flood_true(self) -> None:
+        doc = {
+            "next_unit": 3,
+            "nodes": {
+                "me0001": {"unit_id": "ME0001", "routing": "direct"},
+                "me0002": {"unit_id": "ME0002", "flood": True},
+            },
+        }
+        self.assertTrue(migrate_desired(doc, {}))
+        self.assertEqual(doc["nodes"]["me0002"]["routing"], "flood")
+        self.assertNotIn("flood", doc["nodes"]["me0002"])
+        self.assertEqual(doc["nodes"]["me0001"]["routing"], "direct")
 
-    def test_true_is_flood(self) -> None:
-        self.assertTrue(is_flood({"flood": True}))
+    def test_migrate_keeps_explicit_routing_over_flood(self) -> None:
+        doc = {
+            "next_unit": 2,
+            "nodes": {"me0001": {"unit_id": "ME0001", "routing": "direct", "flood": True}},
+        }
+        self.assertTrue(migrate_desired(doc, {}))
+        self.assertEqual(doc["nodes"]["me0001"]["routing"], "direct")
+        self.assertNotIn("flood", doc["nodes"]["me0001"])
 
-    def test_sync_flood_from_disk(self) -> None:
+    def test_resolve_ignores_unmigrated_flood(self) -> None:
+        # Runtime resolve never dual-reads flood; migrate first.
+        self.assertEqual(resolve_routing({"flood": True}), resolve_routing({}))
+        self.assertIsNone(routing_explicit({"flood": True}))
+
+    def test_sync_routing_from_disk(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "nodes.yaml"
             disk = {
                 "next_unit": 3,
                 "nodes": {
-                    "me0001": {"unit_id": "ME0001", "flood": True},
-                    "me0002": {"unit_id": "ME0002"},
+                    "me0001": {"unit_id": "ME0001", "routing": "direct"},
+                    "me0002": {"unit_id": "ME0002", "routing": "flood"},
                 },
             }
             write_nodes_doc(path, disk)
             mem = {
                 "me0001": {"unit_id": "ME0001", "guest_password": "new"},
-                "me0002": {"unit_id": "ME0002", "flood": True},
+                "me0002": {"unit_id": "ME0002", "routing": "direct"},
             }
             sync_paused(path, mem)
-            self.assertTrue(is_flood(mem["me0001"]))
-            self.assertEqual(mem["me0001"]["guest_password"], "new")
-            self.assertFalse(is_flood(mem["me0002"]))
+            self.assertEqual(routing_explicit(mem["me0001"]), "direct")
+            self.assertEqual(routing_explicit(mem["me0002"]), "flood")
+            self.assertNotIn("flood", mem["me0002"])
 
 
 class DecommissionedTests(unittest.TestCase):

@@ -8,6 +8,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- **`routing: direct | path | flood`** replaces removed `flood: true`. Default path
+  for all units (site-bound and benched). Path flood-discovers when cache is
+  empty, rides cached direct or multi-hop routes, and discards stale cache after
+  3 timeouts. Fleet UI: routing policy segmented control, live route badge on
+  list/detail, danger badge when policy is flood. First `./envybot fleet` run
+  migrates any leftover `flood: true` rows to `routing: flood`.
 - Book `bench_loc` (HQ GPS for unbound bag/bench) and optional per-node
   `loc`. Precedence for map, sun, and poll stamps: site → node `loc` →
   `bench_loc`. Apply still uses bound site GPS only (`public: true`) or
@@ -18,6 +24,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   `fem_rxgain` CLI (`unsupported` or `unknown config`) stamps done.
 - Fleet cards show book apply prefs (power saving, FEM LNA, duty cycle,
   path hash, OTA autofetch) plus applied/due from sqlite stamps.
+
+### Removed
+
+- **`flood: true`** book key and detail Flood toggle. First fleet
+  `migrate_desired` rewrites leftover stamps to `routing: flood`. Use
+  `routing: flood` or the UI Flood policy option afterward.
 
 ### Fixed
 

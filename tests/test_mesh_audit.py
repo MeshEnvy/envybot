@@ -173,7 +173,7 @@ class MeshAuditTests(unittest.TestCase):
 
 
 class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
-    async def test_deployed_clears_in_memory_path(self) -> None:
+    async def test_path_mode_rides_cached_route(self) -> None:
         contact = {
             "out_path_len": 2,
             "out_path_hash_mode": 1,
@@ -192,8 +192,8 @@ class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
             admin_password="pw",
         )
         await prepare_login_route(client, target, log=PollLog())
-        self.assertEqual(contact["out_path_len"], -1)
-        self.assertEqual(contact["out_path"], "")
+        self.assertEqual(contact["out_path_len"], 2)
+        client.commands.reset_path.assert_not_awaited()
         lines: list[str] = []
 
         class CaptureLog(PollLog):
@@ -201,8 +201,8 @@ class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
                 lines.append(msg)
 
         log_contact_path(client, target, log=CaptureLog())
-        self.assertEqual(lines, ["path: flood"])
-        self.assertEqual(audit_path_at_send(client, target), "flood")
+        self.assertEqual(lines, ["path: 266a b3b3"])
+        self.assertEqual(audit_path_at_send(client, target), "266a b3b3")
 
 
 class LoginErrCoercionTests(unittest.TestCase):

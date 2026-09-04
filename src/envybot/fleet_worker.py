@@ -668,6 +668,7 @@ async def _execute_console_cli(
         return bool(manager.cancel_check(tab_id, cancel_gen))
 
     cancelled: list[bool] = []
+    route_extra = uq.session_extra
     raw = await send_cmd_once(
         ctx.client,
         target,
@@ -679,6 +680,7 @@ async def _execute_console_cli(
         attempt_cap=attempt_cap,
         cancel_check=cancel_check,
         cancelled_out=cancelled,
+        route_extra=route_extra,
     )
     if cancelled:
         return JobOutcome.CANCELLED, "cancelled"
@@ -721,6 +723,7 @@ async def execute_job(
     attempt_cap = _attempt_cap(ctx)
     acc = _poll_acc(uq)
     node = ctx.nodes.get(target.key) or {}
+    route_extra = uq.session_extra
 
     if job.kind == "login":
         ok, err, clock = await admin_login_attempt(
@@ -731,6 +734,7 @@ async def execute_job(
             log=ctx.log,
             attempt_num=attempt_num,
             attempt_cap=attempt_cap,
+            route_extra=route_extra,
         )
         if ok:
             acc.node_clock = clock
@@ -759,6 +763,7 @@ async def execute_job(
             attempt_num=attempt_num,
             attempt_cap=attempt_cap,
             cancel_check=cancel_check,
+            route_extra=route_extra,
         )
         if ok:
             acc.node_clock = clock
@@ -803,6 +808,7 @@ async def execute_job(
             log=ctx.log,
             attempt_num=attempt_num,
             attempt_cap=attempt_cap,
+            route_extra=route_extra,
         )
         if ok:
             return JobOutcome.HEARD, True
@@ -810,7 +816,7 @@ async def execute_job(
 
     if job.kind == "get:status":
         status = await pull_repeater_status_once(
-            ctx, target, attempt_num=attempt_num, attempt_cap=attempt_cap
+            ctx, target, attempt_num=attempt_num, attempt_cap=attempt_cap, route_extra=route_extra
         )
         if status:
             acc.status = status
@@ -833,6 +839,7 @@ async def execute_job(
             cap=ctx.cmd_timeout,
             attempt_num=attempt_num,
             attempt_cap=attempt_cap,
+            route_extra=route_extra,
         )
         if telem is not None:
             acc.telemetry = telem if isinstance(telem, list) else None
@@ -855,6 +862,7 @@ async def execute_job(
             cap=ctx.cmd_timeout,
             attempt_num=attempt_num,
             attempt_cap=attempt_cap,
+            route_extra=route_extra,
         )
         acl = normalize_acl_payload(acl_raw)
         if acl is not None:
@@ -880,6 +888,7 @@ async def execute_job(
             cap=ctx.cmd_timeout,
             attempt_num=attempt_num,
             attempt_cap=attempt_cap,
+            route_extra=route_extra,
         )
         neighbors = normalize_neighbors_payload(neigh_raw)
         if neighbors is not None:
@@ -907,6 +916,7 @@ async def execute_job(
             log=ctx.log,
             attempt_num=attempt_num,
             attempt_cap=attempt_cap,
+            route_extra=route_extra,
         )
         if raw is None:
             return JobOutcome.TIMEOUT, None
@@ -929,6 +939,7 @@ async def execute_job(
             log=ctx.log,
             attempt_num=attempt_num,
             attempt_cap=attempt_cap,
+            route_extra=route_extra,
         )
         if raw is None:
             return JobOutcome.TIMEOUT, None
@@ -959,6 +970,7 @@ async def pull_repeater_status_once(
     *,
     attempt_num: int,
     attempt_cap: int | None = None,
+    route_extra: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     wait_cap = mesh_wait_seconds(6000, cap=ctx.cmd_timeout)
 
@@ -975,6 +987,7 @@ async def pull_repeater_status_once(
         cap=ctx.cmd_timeout,
         attempt_num=attempt_num,
         attempt_cap=attempt_cap,
+        route_extra=route_extra,
     )
     from envybot.radio import normalize_status_payload
 
@@ -990,6 +1003,7 @@ async def _execute_ota_status(
 ) -> tuple[JobOutcome, Any | None]:
     target = uq.target
     acc = _poll_acc(uq)
+    route_extra = uq.session_extra
     raw = await send_cmd_once(
         ctx.client,
         target,
@@ -999,6 +1013,7 @@ async def _execute_ota_status(
         log=ctx.log,
         attempt_num=attempt_num,
         attempt_cap=attempt_cap,
+        route_extra=route_extra,
     )
     if raw is None:
         return JobOutcome.TIMEOUT, None
@@ -1021,6 +1036,7 @@ async def _execute_ota_ls(
 ) -> tuple[JobOutcome, Any | None]:
     target = uq.target
     acc = _poll_acc(uq)
+    route_extra = uq.session_extra
     raw = await send_cmd_once(
         ctx.client,
         target,
@@ -1030,6 +1046,7 @@ async def _execute_ota_ls(
         log=ctx.log,
         attempt_num=attempt_num,
         attempt_cap=attempt_cap,
+        route_extra=route_extra,
     )
     if raw is None:
         return JobOutcome.TIMEOUT, None
@@ -1056,6 +1073,7 @@ async def _execute_get_cli(
 ) -> tuple[JobOutcome, Any | None]:
     target = uq.target
     acc = _poll_acc(uq)
+    route_extra = uq.session_extra
     cmd_map = {
         "firmware": "ver",
         "bootloader": "get bootloader.ver",
@@ -1128,6 +1146,7 @@ async def _execute_apply(
 
     target = uq.target
     field = job.kind.split(":", 1)[1]
+    route_extra = uq.session_extra
     force = bool(uq.session_extra.get("force_apply"))
     applicable = applicable_field_desireds(
         node, ctx.sites, doc=ctx.doc, keys=ctx.keys, key=target.key
@@ -1307,6 +1326,7 @@ async def _execute_apply(
                 cap=ctx.cmd_timeout,
                 attempt_num=attempt_num,
                 attempt_cap=attempt_cap,
+                route_extra=route_extra,
             )
             heard = normalize_acl_payload(acl_raw)
             if heard is None:

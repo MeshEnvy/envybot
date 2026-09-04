@@ -12,10 +12,10 @@ from envybot.nodes_doc import (
     PLACEHOLDER_PW,
     UNIT_NUM_RE,
     is_decommissioned,
-    is_flood,
     is_meshcore_platform,
     normalize_fleet_node,
 )
+from envybot.routing import resolve_routing, routing_explicit
 from envybot.position import display_name, lookup_site_name, node_alias, site_binding
 from envybot.radio import RouterTarget, target_label
 
@@ -103,7 +103,8 @@ def _node_to_target(
         site=bind[0] if bind else None,
         pubkey_hex=pubkey,
         admin_password=admin_pw,
-        flood=is_flood(node),
+        routing=resolve_routing(node),
+        routing_explicit=routing_explicit(node),
     )
 
 
