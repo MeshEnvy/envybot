@@ -53,8 +53,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   edits. Blank platform = meshcore.
 - `paused: true` stays in the UI. Fleet skips auto poll/apply. Refresh,
   Pull, and Push still hit the radio. Trust/cmd ignore the flag.
-- `flood: true` forces flood path on bag/bench (default zero-hop direct).
-  Site-bound already floods. Detail **Flood** toggle next to Public/Pause.
+- `flood: true` forces flood login on bag/bench (default zero-hop direct).
+  Site-bound units flood-login once per session, then path-route polls.
+  Detail **Flood** toggle next to Public/Pause.
 - `decommissioned:` (epoch) rows stay in `nodes.yaml` for the number
   but envybot ignores them: no UI, poll, apply, trust, cmd, or onboard.
 - `fleet` and `trust` poll every pollable MeshCore unit, including
@@ -113,11 +114,10 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Successful GET_STATUS / GET_TELEMETRY / CLI log a one-line result as soon
   as they land (same beat as `login OK`). An apply field whose stamp
   already matches logs `field: skip (synced)` (no radio).
-  Every mesh send prepares companion route first: site-bound units flood
-  (`mesh_audit.path` = ``flood``); unbound bag/bench always
-  ``update_contact`` to zero-hop (``direct``) unless `flood: true`.
-  A cache miss does not skip that SET. Hop strings on deployed sends
-  indicate a firmware leak.
+  Every poll session flood-logins deployed units once, then GET/CLI/binary
+  ride the learned path (`mesh_audit.path` = hop hashes). Unbound bag/bench
+  always SET zero-hop (`direct`) unless `flood: true`. Timeout retries on
+  deployed units fall back to flood.
   Neighbor discover wait (default 12s) is a background timer, not radio hold.
   Manual Refresh/Pull/Push replace that unit's remaining jobs except a
   queued console send (stays in front). A click mid-GET supersedes the

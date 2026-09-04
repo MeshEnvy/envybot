@@ -24,7 +24,8 @@ from envybot.radio import (
     _audit_finish,
     audit_path_at_send,
     log_contact_path,
-    prepare_send_route,
+    prepare_login_route,
+    reset_to_flood,
 )
 
 
@@ -190,7 +191,7 @@ class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
             pubkey_hex="b2f84713d830" + "0" * 52,
             admin_password="pw",
         )
-        await prepare_send_route(client, target, log=PollLog())
+        await prepare_login_route(client, target, log=PollLog())
         self.assertEqual(contact["out_path_len"], -1)
         self.assertEqual(contact["out_path"], "")
         lines: list[str] = []

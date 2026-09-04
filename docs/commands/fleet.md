@@ -60,10 +60,10 @@ map modal. **Refresh**, **Pull**, and **Push** still work from the UI. Unpause
 (or delete the key) returns the unit to the next fleet run. Mid-run pause
 takes effect at the next job boundary. `trust` / `cmd` do not honor pause.
 
-`flood: true` forces flood path on bag/bench. Those units default to
-zero-hop direct. Site-bound units already flood (the stamp is a no-op
-until unbound). The detail **Flood** toggle writes the key. Mid-run
-change takes effect on the next mesh send.
+`flood: true` forces flood login on bag/bench (default zero-hop direct).
+Site-bound units always flood-login once per session, then path-route
+GET/CLI/binary. The detail **Flood** toggle writes the key. Mid-run
+change takes effect on the next login.
 
 ## Job queue
 
@@ -86,9 +86,11 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
   priority. Two manuals interleave with each other.
 - `--attempts` (default 10) caps retries **per command** at the scheduler.
   Logs show scheduler `N/max` (e.g. `8/10`), not inner one-shot `N/1`.
-  Every mesh send prepares companion route first: site-bound units flood,
-  unbound bag/bench always SET zero-hop (`mesh_audit.path` = ``direct``)
-  unless `flood: true`. A missing contact cache does not skip that SET.
+  Login flood-routes deployed units (and bench with ``flood: true``) to
+  learn path; later GET/CLI/binary in that session use the cached hops
+  (`mesh_audit.path` = hop string, or ``flood`` on login/retry). Unbound
+  bag/bench always SET zero-hop (``direct``) before each send unless
+  ``flood: true``. A missing contact cache does not skip bench SET.
   `--retry-delay` (default 60s) parks auto poll/apply units after a timeout
   before retry; `--miss-cooldown` (default 3600s) skips re-seed after max
   attempts. Console and manual Refresh/Pull/Push are exempt; manual UI also
@@ -145,8 +147,9 @@ console. The header icon also toggles.
 
 - **+** opens another tab. The same unit can have more than one session
   (labels `Ophir`, `Ophir 2`). Tab `×` cancels that session only.
-- Typed lines are MeshCore CLI (`ota status`, `get name`, …) with flood before
-  each send. Login runs on the first send if that unit is not already authed
+- Typed lines are MeshCore CLI (`ota status`, `get name`, …). Login floods
+  deployed units once; later lines in that session use the learned path.
+  Login runs on the first send if that unit is not already authed
   (same `--attempts` cap as GET/SET).
 - That command jumps to the front of the radio until heard, cancelled, or
   `--attempts` timeouts (default 10, same unit, no rotate). **Cancel** is

@@ -66,7 +66,10 @@ DUTYCYCLE_CLI_SINCE = (1, 15)
 ADMIN_PASSWORD_NOW_RE = re.compile(r"^password now:\s*(.*)\s*$", re.I)
 
 # Decision notes (do not reintroduce the opposite without updating this):
-# - Password login (0x1a) before poll GET or apply SET on every unit.
+# - Login floods on deployed units (and bench with ``flood: true``) to learn
+#   mesh path; GET/CLI/binary in the same session ride that path. Bench
+#   defaults to zero-hop direct every send. Timeout retries fall back to flood
+#   on deployed units only.
 #   Book ACL admin is not enough: remote repeaters need the login handshake
 #   to register the companion and refresh mesh paths. Live RTC comes from
 #   LOGIN_SUCCESS timestamp or ``clock`` CLI. STATUS is uptime, not wall
@@ -1584,12 +1587,16 @@ async def pull_repeater_status(
             target.pubkey_hex, timeout=dest_wait, min_timeout=8
         )
 
+    async def flood_on_retry(_attempt: int) -> None:
+        await reset_to_flood(client, target, log=log)
+
     raw = await retry_binary_req(
         "GET_STATUS",
         fetch,
         client=client,
         attempts=attempts,
         log=log,
+        on_retry=flood_on_retry,
         session=session,
         target=target,
         wait_s=wait_cap,
@@ -1723,7 +1730,12 @@ def contact_route_audit_label(contact: dict[str, Any] | None) -> str:
 def log_contact_path(
     client: MeshCore, target: RouterTarget, *, log: PollLog | None = None
 ) -> None:
-    """Log the companion's cached route for this target before a mesh send."""
+    """Log the companion's cached route for this target before a mesh send.
+
+    ``out_path`` is learned when a flood login succeeds and the repeater
+    returns a path. Later GET/CLI/binary sends ride that route until reset
+    or a timeout retry falls back to flood.
+    """
     log = log or PollLog()
     contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])
     log.step(f"path: {contact_route_audit_label(contact)}")
@@ -2151,18 +2163,37 @@ async def send_login_frame(client: MeshCore, dst_hex: str, password: str) -> Any
     return await client.commands.send(data, [EventType.MSG_SENT, EventType.ERROR])
 
 
-async def prepare_send_route(
+async def reset_to_flood(
     client: MeshCore, target: RouterTarget, *, log: PollLog | None = None
 ) -> None:
-    """Set companion route before every mesh send (flood vs zero-hop direct).
+    """Clear the companion's saved out_path so the next send floods.
 
-    Bench must always ``update_contact`` to zero-hop. A cache miss used to
-    skip that SET and leave a leftover flood path on the device (first
-    login after a console flood or contact import).
+    Used for login (path discovery) and as a fallback after a direct-path
+    timeout. A successful flood login makes the repeater return a path for
+    later sends in the same session.
     """
+    if not uses_flood_route(target):
+        return
     log = log or PollLog()
     prefix = target.pubkey_hex[:12]
-    flood = uses_flood_route(target)
+    contact = client.get_contact_by_key_prefix(prefix)
+    if not isinstance(contact, dict):
+        contact = contact_stub_for_target(target)
+        contacts = getattr(client, "contacts", None)
+        if isinstance(contacts, dict):
+            contacts[contact["public_key"]] = contact
+    res = await client.commands.reset_path(target.pubkey_hex)
+    if res.type == EventType.ERROR:
+        log.detail(f"reset_path warning: {res.payload}")
+    pin_contact_route(contact, flood=True)
+
+
+async def prepare_bench_direct_route(
+    client: MeshCore, target: RouterTarget, *, log: PollLog | None = None
+) -> None:
+    """Force zero-hop direct on unbound bench units before a mesh send."""
+    log = log or PollLog()
+    prefix = target.pubkey_hex[:12]
     contact = client.get_contact_by_key_prefix(prefix)
     if not isinstance(contact, dict):
         contact = contact_stub_for_target(target)
@@ -2170,23 +2201,44 @@ async def prepare_send_route(
         if isinstance(contacts, dict):
             contacts[contact["public_key"]] = contact
         log.detail("prepare_route: no cached contact, using stub")
-    if flood:
-        res = await client.commands.reset_path(target.pubkey_hex)
-        if res.type == EventType.ERROR:
-            log.detail(f"reset_path warning: {res.payload}")
-        pin_contact_route(contact, flood=True)
-        return
     res = await client.commands.update_contact(contact, path="", path_hash_mode=0)
     if res.type == EventType.ERROR:
         log.detail(f"prepare_route direct warning: {res.payload}")
     pin_contact_route(contact, flood=False)
 
 
-async def reset_to_flood(
+async def prepare_send_route(
     client: MeshCore, target: RouterTarget, *, log: PollLog | None = None
 ) -> None:
-    """Deprecated alias for prepare_send_route."""
-    await prepare_send_route(client, target, log=log)
+    """Prepare companion route before a mesh send.
+
+    Site-bound units (and bench with ``flood: true``) keep the path learned
+    at login. Only unbound bench units SET zero-hop direct every send.
+    """
+    if uses_flood_route(target):
+        return
+    await prepare_bench_direct_route(client, target, log=log)
+
+
+async def prepare_login_route(
+    client: MeshCore, target: RouterTarget, *, log: PollLog | None = None
+) -> None:
+    """Flood login for deployed units; zero-hop direct for bench."""
+    if uses_flood_route(target):
+        await reset_to_flood(client, target, log=log)
+    else:
+        await prepare_bench_direct_route(client, target, log=log)
+
+
+async def refresh_path_after_flood_login(
+    client: MeshCore, target: RouterTarget, *, log: PollLog | None = None
+) -> None:
+    """Pull companion out_path after a successful flood login."""
+    if not uses_flood_route(target):
+        return
+    log = log or PollLog()
+    await refresh_contact_from_device(client, target)
+    log_contact_path(client, target, log=log)
 
 
 async def wait_login_response(
@@ -2257,7 +2309,7 @@ async def admin_login(
         audit_id: int | None = None
         async with client.commands._mesh_request_lock:
             await ensure_contact_on_device(client, target, log=log)
-            await prepare_send_route(client, target, log=log)
+            await prepare_login_route(client, target, log=log)
             log_contact_path(client, target, log=log)
             path = audit_path_at_send(client, target)
             sent = await send_login_frame(client, dst, target.admin_password)
@@ -2331,6 +2383,7 @@ async def admin_login(
             log.detail(f"LOGIN_SUCCESS {event.payload if event else ''}")
             if session is not None:
                 session.mark_authed(target.key)
+            await refresh_path_after_flood_login(client, target, log=log)
             return True, None, node_clock
         if status == "failed":
             _audit_finish(session, audit_id, ok=False, outcome="rejected", reply="rejected")
@@ -2368,7 +2421,7 @@ async def admin_login_attempt(
     audit_id: int | None = None
     async with client.commands._mesh_request_lock:
         await ensure_contact_on_device(client, target, log=log)
-        await prepare_send_route(client, target, log=log)
+        await prepare_login_route(client, target, log=log)
         log_contact_path(client, target, log=log)
         path = audit_path_at_send(client, target)
         sent = await send_login_frame(client, dst, target.admin_password)
@@ -2444,6 +2497,7 @@ async def admin_login_attempt(
             log.step("login OK")
         if session is not None:
             session.mark_authed(target.key)
+        await refresh_path_after_flood_login(client, target, log=log)
         return True, None, node_clock
     if status == "failed":
         _audit_finish(session, audit_id, ok=False, outcome="rejected", reply="rejected")
@@ -2654,6 +2708,8 @@ async def send_cmd_sync(
         if single or (attempts and attempt >= attempts):
             log.step(f"send {framed!r} {n_of}: timeout after {wait_s:.0f}s")
             break
+        if uses_flood_route(target):
+            await reset_to_flood(client, target, log=log)
         log.step(f"send {framed!r} {n_of}: timeout after {wait_s:.0f}s, retrying …")
 
     return None
@@ -2743,6 +2799,12 @@ async def retry_binary_req(
             return success(val)
         return val is not None
 
+    async def default_flood_on_retry(_attempt: int) -> None:
+        if target is not None and uses_flood_route(target):
+            await reset_to_flood(client, target, log=log)
+
+    retry_hook = on_retry if on_retry is not None else default_flood_on_retry
+
     attempt = 0
     single = attempt_num is not None
     max_attempts = 1 if single else attempts
@@ -2803,8 +2865,7 @@ async def retry_binary_req(
         if single or (attempts and attempt >= attempts):
             log.step(f"{label} {n_of}: no response")
             break
-        if on_retry is not None:
-            await on_retry(attempt)
+        await retry_hook(attempt)
         log.step(f"{label} {n_of}: no response, retrying …")
     return None
 

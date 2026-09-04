@@ -13,7 +13,10 @@ from envybot.radio import (
     contact_route_audit_label,
     log_contact_path,
     PollLog,
+    prepare_bench_direct_route,
+    prepare_login_route,
     prepare_send_route,
+    reset_to_flood,
     uses_flood_route,
 )
 
@@ -107,7 +110,7 @@ class ContactOutPathTests(unittest.TestCase):
 
 
 class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
-    async def test_deployed_resets_flood(self) -> None:
+    async def test_deployed_login_resets_flood(self) -> None:
         contact = {
             "out_path_len": 2,
             "out_path_hash_mode": 1,
@@ -118,11 +121,27 @@ class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
         ok = MagicMock(type=EventType.OK)
         client.commands.reset_path = AsyncMock(return_value=ok)
         client.commands.update_contact = AsyncMock()
-        await prepare_send_route(client, _target(site="ophir"), log=PollLog())
+        await prepare_login_route(client, _target(site="ophir"), log=PollLog())
         client.commands.reset_path.assert_awaited_once()
         client.commands.update_contact.assert_not_awaited()
         self.assertEqual(contact["out_path_len"], -1)
         self.assertEqual(contact["out_path"], "")
+
+    async def test_deployed_send_keeps_learned_path(self) -> None:
+        contact = {
+            "out_path_len": 2,
+            "out_path_hash_mode": 1,
+            "out_path": "266ab3b3",
+        }
+        client = MagicMock()
+        client.get_contact_by_key_prefix.return_value = contact
+        client.commands.reset_path = AsyncMock()
+        client.commands.update_contact = AsyncMock()
+        await prepare_send_route(client, _target(site="ophir"), log=PollLog())
+        client.commands.reset_path.assert_not_awaited()
+        client.commands.update_contact.assert_not_awaited()
+        self.assertEqual(contact["out_path_len"], 2)
+        self.assertEqual(contact["out_path"], "266ab3b3")
 
     async def test_bench_sets_zero_hop(self) -> None:
         contact = {
@@ -149,7 +168,7 @@ class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
 
         client.commands.update_contact = AsyncMock(side_effect=_update)
         client.commands.reset_path = AsyncMock()
-        await prepare_send_route(client, _target(site=None), log=PollLog())
+        await prepare_bench_direct_route(client, _target(site=None), log=PollLog())
         client.commands.update_contact.assert_awaited_once()
         client.commands.reset_path.assert_not_awaited()
         self.assertEqual(contact["out_path_len"], 0)
@@ -161,7 +180,7 @@ class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
         ok = MagicMock(type=EventType.OK)
         client.commands.update_contact = AsyncMock(return_value=ok)
         client.commands.reset_path = AsyncMock()
-        await prepare_send_route(client, _target(site=None), log=PollLog())
+        await prepare_bench_direct_route(client, _target(site=None), log=PollLog())
         client.commands.update_contact.assert_awaited_once()
         self.assertEqual(client.commands.update_contact.await_args.kwargs.get("path"), "")
         client.commands.reset_path.assert_not_awaited()
@@ -185,7 +204,7 @@ class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
         client.get_contact_by_key_prefix.return_value = contact
         ok = MagicMock(type=EventType.OK)
         client.commands.update_contact = AsyncMock(return_value=ok)
-        await prepare_send_route(client, _target(site=None), log=PollLog())
+        await prepare_bench_direct_route(client, _target(site=None), log=PollLog())
         self.assertEqual(contact["out_path_len"], 0)
 
     async def test_bench_flood_flag_resets_flood(self) -> None:
@@ -201,7 +220,7 @@ class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
         client.commands.update_contact = AsyncMock()
         target = _target(site=None, flood=True)
         self.assertTrue(uses_flood_route(target))
-        await prepare_send_route(client, target, log=PollLog())
+        await reset_to_flood(client, target, log=PollLog())
         client.commands.reset_path.assert_awaited_once()
         client.commands.update_contact.assert_not_awaited()
         self.assertEqual(contact["out_path_len"], -1)
