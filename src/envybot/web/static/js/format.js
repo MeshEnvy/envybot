@@ -17,7 +17,7 @@ export function formatRelative(ts, now = Date.now() / 1000) {
 /** @param {number | null | undefined} mv battery millivolts from status */
 export function formatBattery(mv) {
   if (mv == null) return '—'
-  return `${(mv / 1000).toFixed(2)} V`
+  return `${(mv / 1000).toFixed(3)} V`
 }
 
 /** Device telemetry is °C. Display °F. */
@@ -130,13 +130,22 @@ export const HEALTH_MARKS = {
   attention: { emoji: '⚠️', label: 'Needs attention' },
 }
 
-/** @param {Record<string, unknown> | undefined} unit */
-export function healthHeadline(unit) {
+/** Silence longer than this → needs attention (matches server REACHABILITY_ATTENTION_SECS). */
+const SILENT_ATTENTION_SECS = 86400
+
+/** @param {Record<string, unknown> | undefined} unit @param {number} [nowSec] */
+export function healthHeadline(unit, nowSec) {
+  if (unit?.paused) return 'paused'
+  const lh = unit?.last_heard
+  const now = nowSec ?? Math.floor(Date.now() / 1000)
+  if (lh != null) {
+    const age = now - Number(lh)
+    if (Number.isFinite(age) && age > SILENT_ATTENTION_SECS) return 'attention'
+  }
   const raw = unit?.health && typeof unit.health === 'object' ? unit.health.headline : null
   if (raw === 'paused' || raw === 'healthy' || raw === 'unreachable' || raw === 'attention') {
     return raw
   }
-  if (unit?.paused) return 'paused'
   const state = unit?.session && typeof unit.session === 'object' ? unit.session.state : null
   if (state === 'unreachable' || unit?.freshness === 'never') return 'unreachable'
   if (hasHealthIssues(unit?.health)) return 'attention'
@@ -148,15 +157,15 @@ export function showHealthMark(unit) {
   return healthHeadline(unit) !== 'healthy'
 }
 
-/** @param {Record<string, unknown> | undefined} unit */
-export function healthEmoji(unit) {
-  const mark = HEALTH_MARKS[healthHeadline(unit)] || HEALTH_MARKS.healthy
+/** @param {Record<string, unknown> | undefined} unit @param {number} [nowSec] */
+export function healthEmoji(unit, nowSec) {
+  const mark = HEALTH_MARKS[healthHeadline(unit, nowSec)] || HEALTH_MARKS.healthy
   return mark.emoji
 }
 
-/** @param {Record<string, unknown> | undefined} unit */
-export function healthMark(unit) {
-  const mark = HEALTH_MARKS[healthHeadline(unit)] || HEALTH_MARKS.healthy
+/** @param {Record<string, unknown> | undefined} unit @param {number} [nowSec] */
+export function healthMark(unit, nowSec) {
+  const mark = HEALTH_MARKS[healthHeadline(unit, nowSec)] || HEALTH_MARKS.healthy
   return mark.label
 }
 

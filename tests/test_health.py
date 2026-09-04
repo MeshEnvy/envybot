@@ -168,6 +168,25 @@ class HealthTests(unittest.TestCase):
         reach = next(c for c in health["checks"] if c["name"] == "Reachability")
         self.assertEqual(reach["status"], "unknown")
 
+    def test_silent_while_queued_still_attention(self) -> None:
+        now = 1_000_000
+        heard = now - 3 * 86400
+        health = compute_health(
+            freshness="stale",
+            session={"state": "queued"},
+            drift="due",
+            status={"battery_mv": 3770},
+            telemetry=None,
+            traffic_interval=None,
+            traffic_window=None,
+            status_rows=[{"ts": heard, "battery_mv": 3770, "uptime_secs": 3_000_000}],
+            last_heard=heard,
+            now=now,
+        )
+        self.assertEqual(health["headline"], "attention")
+        reach = next(c for c in health["checks"] if c["name"] == "Reachability")
+        self.assertEqual(reach["status"], "bad")
+
     def test_in_flight_reachability_unknown(self) -> None:
         health = compute_health(
             freshness="never",
@@ -198,6 +217,38 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(reach["status"], "unknown")
         self.assertEqual(reach["reason"], "Polling paused")
         self.assertEqual(health["headline"], "paused")
+
+    def test_power_warn_rounding_boundary(self) -> None:
+        """3699 mV warns; two-decimal display used to show 3.70 V and look OK."""
+        health = compute_health(
+            freshness="fresh",
+            session=None,
+            drift=None,
+            status={"battery_mv": 3699},
+            telemetry=None,
+            traffic_interval={"packets_recv": 10, "packets_sent": 5, "duration_secs": 3600},
+            traffic_window=_traffic_window(recv=10, sent=5),
+            status_rows=[{"battery_mv": 3699, "uptime_secs": 100}],
+            reboot_count=0,
+        )
+        power = next(c for c in health["checks"] if c["name"] == "Power")
+        self.assertEqual(power["status"], "warn")
+        self.assertIn("3.700", power.get("reason") or "")
+
+    def test_power_at_warn_threshold_ok(self) -> None:
+        health = compute_health(
+            freshness="fresh",
+            session=None,
+            drift=None,
+            status={"battery_mv": 3700},
+            telemetry=None,
+            traffic_interval={"packets_recv": 10, "packets_sent": 5, "duration_secs": 3600},
+            traffic_window=_traffic_window(recv=10, sent=5),
+            status_rows=[{"battery_mv": 3700, "uptime_secs": 100}],
+            reboot_count=0,
+        )
+        power = next(c for c in health["checks"] if c["name"] == "Power")
+        self.assertEqual(power["status"], "ok")
 
     def test_power_low_voltage(self) -> None:
         health = compute_health(
@@ -266,7 +317,7 @@ class HealthTests(unittest.TestCase):
         )
         power = next(c for c in health["checks"] if c["name"] == "Power")
         self.assertEqual(power["status"], "ok")
-        self.assertIn("4.20 V", power.get("reason") or "")
+        self.assertIn("4.200 V", power.get("reason") or "")
 
     def test_stability_reboots(self) -> None:
         health = compute_health(

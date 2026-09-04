@@ -67,7 +67,7 @@ import {
   compareUnits,
   unitLabel,
   unitTitle,
-} from "./format.js?v=25";
+} from "./format.js?v=26";
 import {
   buildNeighborEdges,
   createMapController,
@@ -1080,7 +1080,7 @@ const App = {
     const attentionCount = computed(
       () =>
         Object.values(fleet.units || {}).filter((u) => {
-          const h = healthHeadline(u);
+          const h = healthHeadline(u, fleet.now);
           return h === "attention" || h === "unreachable";
         }).length,
     );
@@ -1094,7 +1094,7 @@ const App = {
       const f = listFilter.value;
       if (f === "active") return isInFlight(unit);
       if (f === "attention") {
-        const h = healthHeadline(unit);
+        const h = healthHeadline(unit, fleet.now);
         return h === "attention" || h === "unreachable";
       }
       if (f === "paused") return !!unit.paused;
@@ -1177,7 +1177,7 @@ const App = {
     });
 
     const SPARK_VALUE_FORMAT = {
-      battery_mv: (v) => `${v.toFixed(2)} V`,
+      battery_mv: (v) => `${v.toFixed(3)} V`,
       temperature: (v) => formatTemp(v),
       unreadable_pct: (v) => `${v.toFixed(1)}%`,
       recv_rate: (v) => `${v.toFixed(1)}/h`,
@@ -1411,7 +1411,7 @@ const App = {
       const pts = unit?.sparks?.battery_mv || [];
       const last = pts[pts.length - 1];
       if (last?.value != null && Number.isFinite(Number(last.value))) {
-        return `${Number(last.value).toFixed(2)} V`;
+        return `${Number(last.value).toFixed(3)} V`;
       }
       return "—";
     }
@@ -2048,11 +2048,11 @@ const App = {
               <span
                 v-if="showHealthMark(unit)"
                 class="dash-health-badge"
-                :class="'dash-health-' + healthHeadline(unit)"
+                :class="'dash-health-' + healthHeadline(unit, fleet.now)"
                 :title="healthTooltip(unit.health)"
-                :aria-label="healthMark(unit)"
-              >{{ healthEmoji(unit) }}</span>
-              <span class="unit-name" :class="'unit-name-' + healthHeadline(unit)">{{ cardPrimary(unit) }}</span>
+                :aria-label="healthMark(unit, fleet.now)"
+              >{{ healthEmoji(unit, fleet.now) }}</span>
+              <span class="unit-name" :class="'unit-name-' + healthHeadline(unit, fleet.now)">{{ cardPrimary(unit) }}</span>
             </span>
             <div class="unit-actions">
               <button
@@ -2290,9 +2290,9 @@ const App = {
             <div class="health-summary">
               <span
                 class="health-chip"
-                :class="'health-' + healthHeadline(selectedUnit)"
+                :class="'health-' + healthHeadline(selectedUnit, fleet.now)"
               >
-                {{ healthMark(selectedUnit) }}
+                {{ healthMark(selectedUnit, fleet.now) }}
               </span>
             </div>
             <ul v-if="hasHealthIssues(selectedUnit.health)" class="health-issues">

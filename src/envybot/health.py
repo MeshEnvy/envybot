@@ -12,11 +12,11 @@ Headline = Literal["paused", "healthy", "unreachable", "attention"]
 
 _IN_FLIGHT = frozenset({"queued", "refreshing", "pulling", "pushing", "polling"})
 
-# Power (volts) — 1S Li-ion / WisBlock (charge 4.2 V, operating max 4.3 V)
-POWER_WARN_V = 3.7
-POWER_BAD_V = 3.5
-POWER_HIGH_WARN_V = 4.25
-POWER_HIGH_BAD_V = 4.35
+# Power (mV) — 1S Li-ion / WisBlock (charge 4.2 V, operating max 4.3 V)
+POWER_WARN_MV = 3700
+POWER_BAD_MV = 3500
+POWER_HIGH_WARN_MV = 4250
+POWER_HIGH_BAD_MV = 4350
 POWER_TREND_DROP_V = 0.15
 POWER_TREND_POLLS = 3
 
@@ -57,6 +57,18 @@ def _check(
     if fix:
         row["fix"] = fix
     return row
+
+
+def _battery_mv(status: dict[str, Any] | None) -> int | None:
+    if not status:
+        return None
+    mv = status.get("battery_mv")
+    if mv is None:
+        return None
+    try:
+        return int(mv)
+    except (TypeError, ValueError):
+        return None
 
 
 def _voltage_volts(status: dict[str, Any] | None) -> float | None:
@@ -144,7 +156,18 @@ def compute_health(
     session_state = (session or {}).get("state")
     if paused:
         checks.append(_check("Reachability", "unknown", "Polling paused"))
-    elif session_state in ("queued", "refreshing", "pulling", "pushing", "polling"):
+    elif session_state in _IN_FLIGHT and (freshness == "never" or last_heard is None):
+        checks.append(_check("Reachability", "unknown", "Poll in progress"))
+    elif heard_age is not None and heard_age > REACHABILITY_ATTENTION_SECS:
+        checks.append(
+            _check(
+                "Reachability",
+                "bad",
+                f"Not heard for {_format_heard_age(heard_age)}",
+                fix="Refresh. If it stays silent, check path, power, flood, and that the radio is up.",
+            )
+        )
+    elif session_state in _IN_FLIGHT:
         checks.append(_check("Reachability", "unknown", "Poll in progress"))
     elif freshness == "never":
         checks.append(
@@ -153,15 +176,6 @@ def compute_health(
                 "bad",
                 "Never heard from node",
                 fix="Refresh. If it stays silent, check companion path and that the unit is on.",
-            )
-        )
-    elif heard_age is not None and heard_age > REACHABILITY_ATTENTION_SECS:
-        checks.append(
-            _check(
-                "Reachability",
-                "bad",
-                f"Not heard for {_format_heard_age(heard_age)}",
-                fix="Refresh. If it stays silent, check path, power, flood, and that the radio is up.",
             )
         )
     elif session_state == "unreachable":
@@ -186,9 +200,10 @@ def compute_health(
         checks.append(_check("Reachability", "ok"))
 
     # Power
-    volts = _voltage_volts(status)
+    mv = _battery_mv(status)
+    volts = (mv / 1000.0) if mv is not None else None
     volt_history = _voltages_from_rows(status_rows)
-    if volts is None:
+    if mv is None or volts is None:
         checks.append(_check("Power", "unknown", "No voltage reading"))
     else:
         trend_drop = False
@@ -196,37 +211,37 @@ def compute_health(
             recent = volt_history[-POWER_TREND_POLLS :]
             if recent[0] - recent[-1] >= POWER_TREND_DROP_V:
                 trend_drop = True
-        if volts > POWER_HIGH_BAD_V:
+        if mv > POWER_HIGH_BAD_MV:
             checks.append(
                 _check(
                     "Power",
                     "bad",
-                    f"Above {POWER_HIGH_BAD_V:.2f} V critical threshold",
+                    f"Above {POWER_HIGH_BAD_MV / 1000:.3f} V critical threshold",
                     fix="Above WisBlock 4.3 V operating max. Check solar input and charge path.",
                 )
             )
-        elif volts > POWER_HIGH_WARN_V:
+        elif mv > POWER_HIGH_WARN_MV:
             checks.append(
                 _check(
                     "Power",
                     "warn",
-                    f"Above {POWER_HIGH_WARN_V:.2f} V warn threshold",
+                    f"Above {POWER_HIGH_WARN_MV / 1000:.3f} V warn threshold",
                     fix="Solar may push high in sun. OK if it falls after dark; investigate if sustained.",
                 )
             )
-        elif volts < POWER_BAD_V:
+        elif mv < POWER_BAD_MV:
             checks.append(
                 _check(
                     "Power",
                     "bad",
-                    f"Below {POWER_BAD_V:.1f} V critical threshold",
+                    f"Below {POWER_BAD_MV / 1000:.3f} V critical threshold",
                     fix="Check solar, battery, and charger. Replace the pack if it does not recover in sun.",
                 )
             )
-        elif volts < POWER_WARN_V or trend_drop:
+        elif mv < POWER_WARN_MV or trend_drop:
             parts: list[str] = []
-            if volts < POWER_WARN_V:
-                parts.append(f"below {POWER_WARN_V:.1f} V warn threshold")
+            if mv < POWER_WARN_MV:
+                parts.append(f"below {POWER_WARN_MV / 1000:.3f} V warn threshold")
             if trend_drop:
                 parts.append("falling over recent polls")
             reason = " and ".join(parts)
@@ -239,7 +254,7 @@ def compute_health(
                 )
             )
         else:
-            checks.append(_check("Power", "ok", f"{volts:.2f} V"))
+            checks.append(_check("Power", "ok", f"{volts:.3f} V"))
 
     # Stability
     if reboot_count is None:
@@ -445,16 +460,15 @@ def compute_health(
     in_flight = session_state in _IN_FLIGHT
     silent_too_long = (
         not paused
-        and not in_flight
         and heard_age is not None
         and heard_age > REACHABILITY_ATTENTION_SECS
     )
     if paused and not in_flight:
         headline: Headline = "paused"
+    elif silent_too_long or (not in_flight and freshness == "never"):
+        headline = "attention"
     elif not in_flight and session_state == "unreachable":
         headline = "unreachable"
-    elif not in_flight and (silent_too_long or freshness == "never"):
-        headline = "attention"
     elif issues:
         headline = "attention"
     else:
