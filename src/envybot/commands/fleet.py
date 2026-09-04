@@ -198,6 +198,13 @@ def _seed_auto_work(
 async def run(args: argparse.Namespace) -> int:
     nodes_path: Path = args.nodes
     doc, conn = _migrate_book(nodes_path)
+    from envybot.weather import weather_backfill_pending
+
+    if weather_backfill_pending(conn) and not args.quiet:
+        print(
+            "weather: run ./envybot weather backfill once to cache historical conditions",
+            file=sys.stderr,
+        )
     nodes = doc.get("nodes") or {}
     sites = load_sites_for_book(nodes_path)
     keys = load_keys(keys_path(nodes_path))
@@ -290,19 +297,6 @@ async def run(args: argparse.Namespace) -> int:
 
     for target in paused_targets:
         session_states[target.key] = {"state": "paused"}
-    for target in auto_targets:
-        due = target.due_groups if hasattr(target, "due_groups") else []
-        apply_due = do_apply and apply_is_due(
-            conn, target.key, nodes.get(target.key) or {}, sites, force=args.force, doc=doc, keys=keys
-        )
-        if due or apply_due:
-            session_states[target.key] = in_flight_session(
-                manual_job=None,
-                job_kind="login",
-                due_groups=list(due),
-                apply=apply_due,
-                queued=True,
-            )
 
     _seed_auto_work(
         scheduler,

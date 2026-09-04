@@ -176,6 +176,16 @@ class DueTests(unittest.TestCase):
             )
             self.assertFalse(apply_is_due(conn, "me0001", _STRONG, None))
 
+    def test_legacy_private_profile_stamp_when_fields_synced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            applicable = applicable_field_desireds(_STRONG, None)
+            for field, des in applicable.items():
+                insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
+            insert_apply(conn, unit="me0001", field="profile", desired="private", ok=True)
+            self.assertFalse(apply_is_due(conn, "me0001", _STRONG, None))
+            self.assertEqual(apply_due_fields(conn, "me0001", _STRONG, None), [])
+
     def test_yaml_edit_is_due(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))

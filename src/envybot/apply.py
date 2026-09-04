@@ -261,7 +261,14 @@ def profile_legacy_synced(
     keys: dict[str, list[str]] | None = None,
 ) -> bool:
     desired = profile_id(node, sites, doc=doc, keys=keys, key=unit)
-    return last_ok_apply(conn, unit, "profile") == desired
+    stamped = last_ok_apply(conn, unit, "profile")
+    if stamped == desired:
+        return True
+    # USB onboard used to stamp profile="private" before v1 hashes existed.
+    if stamped != "private" or is_public(node):
+        return False
+    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=unit)
+    return all(last_ok_apply(conn, unit, field) == des for field, des in applicable.items())
 
 
 def apply_due_fields(

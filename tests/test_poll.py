@@ -26,8 +26,9 @@ class _Res:
         self.advert_interval_min = None
         self.flood_advert_interval_h = None
         self.acl = None
-        self.neighbors = None
+        self.neighbors = kwargs.get("neighbors")
         self.polled_groups = kwargs.get("polled_groups", frozenset())
+        self.ota = kwargs.get("ota")
 
 
 class JobStageTests(unittest.TestCase):
@@ -418,6 +419,112 @@ class SeedAutoWorkTests(unittest.TestCase):
             )
             self.assertEqual(again, 0)
             self.assertEqual([j.kind for j in sched.units["me0001"].jobs], kinds)
+
+    def test_seed_skips_fresh_periodic_on_restart(self) -> None:
+        from envybot.commands.fleet import _seed_auto_work
+        from envybot.history import record_poll
+        from envybot.jobs import FleetScheduler
+
+        target = RouterTarget(
+            key="me0001",
+            unit_id="ME0001",
+            name="Test",
+            site=None,
+            pubkey_hex="a" * 64,
+            admin_password="AdminOneStrong1",
+        )
+        node = {
+            "unit_id": "ME0001",
+            "admin_password": "AdminOneStrong1",
+            "guest_password": "GuestOneStrong1",
+            "identity_pubkey": "aa" * 32,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            now = 1_700_000_000
+            record_poll(
+                conn,
+                unit="me0001",
+                res=_Res(
+                    firmware_version="v1.0.0",
+                    bootloader_version="1",
+                    base_hash="abc",
+                    status={"battery_mv": 3900},
+                    telemetry=[{"channel": "power", "type": "voltage", "value": 3.9}],
+                    neighbors=[],
+                    ota={"running": {}, "local": {"state": "none"}, "heard": []},
+                    polled_groups=frozenset(
+                        {
+                            "firmware",
+                            "bootloader",
+                            "ota",
+                            "status",
+                            "telemetry",
+                            "ota_status",
+                            "ota_ls",
+                            "neighbors",
+                        }
+                    ),
+                ),
+                ts=now - 300,
+            )
+            sched = FleetScheduler()
+            session_states: dict[str, dict] = {}
+            seeded = _seed_auto_work(
+                sched,
+                auto_targets=[target],
+                conn=conn,
+                nodes={"me0001": node},
+                sites={},
+                doc={"nodes": {"me0001": node}},
+                keys={},
+                policy=PollPolicy(min_interval=3600.0),
+                do_poll=True,
+                do_apply=False,
+                force=False,
+                now=now,
+                session_states=session_states,
+            )
+            self.assertEqual(seeded, 0)
+            self.assertNotIn("me0001", session_states)
+
+    def test_seed_respects_cooldown_without_false_queued_state(self) -> None:
+        import time
+
+        from envybot.commands.fleet import _seed_auto_work
+        from envybot.jobs import FleetScheduler
+
+        target = RouterTarget(
+            key="me0001",
+            unit_id="ME0001",
+            name="Test",
+            site=None,
+            pubkey_hex="a" * 64,
+            admin_password="secret",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            sched = FleetScheduler(miss_cooldown=3600.0)
+            uq = sched.get_or_create(target)
+            uq.cooldown_until = time.monotonic() + 3600.0
+            session_states: dict[str, dict] = {}
+            seeded = _seed_auto_work(
+                sched,
+                auto_targets=[target],
+                conn=conn,
+                nodes={"me0001": {"unit_id": "ME0001"}},
+                sites={},
+                doc={"nodes": {}},
+                keys={},
+                policy=PollPolicy(),
+                do_poll=True,
+                do_apply=False,
+                force=False,
+                now=1_700_000_000,
+                session_states=session_states,
+            )
+            self.assertEqual(seeded, 0)
+            self.assertNotIn("me0001", session_states)
 
 
 class BuildPollJobsTests(unittest.TestCase):
