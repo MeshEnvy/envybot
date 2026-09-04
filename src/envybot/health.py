@@ -28,6 +28,9 @@ STABILITY_BAD_REBOOTS = 2
 TRAFFIC_DEAD_AIR_HOURS = 6
 TRAFFIC_DEAF_HOURS = 12
 
+# Reachability — silent longer than this → needs attention (when not paused)
+REACHABILITY_ATTENTION_SECS = 86400
+
 # RF quality
 RF_WARN_LIFETIME_DELTA_PTS = 15.0
 RF_BAD_PCT = 90.0
@@ -92,6 +95,16 @@ def _voltages_from_rows(status_rows: list[dict[str, Any]]) -> list[float]:
     return out
 
 
+def _format_heard_age(secs: int) -> str:
+    if secs >= 86400:
+        days = secs / 86400
+        if days >= 10:
+            return f"{days:.0f} days"
+        return f"{days:.1f} days"
+    hours = max(1, secs // 3600)
+    return f"{hours} h"
+
+
 def _worst_grade(checks: list[dict[str, Any]]) -> Grade:
     worst: Grade = "ok"
     for chk in checks:
@@ -117,9 +130,15 @@ def compute_health(
     stability_ack_ts: int | None = None,
     paused: bool = False,
     drift_detail: str | None = None,
+    last_heard: int | None = None,
+    now: int = 0,
 ) -> dict[str, Any]:
     """Return grade + component checks for a fleet unit."""
     checks: list[dict[str, Any]] = []
+
+    heard_age: int | None = None
+    if last_heard is not None and now:
+        heard_age = max(0, now - last_heard)
 
     # Reachability
     session_state = (session or {}).get("state")
@@ -134,6 +153,15 @@ def compute_health(
                 "bad",
                 "Never heard from node",
                 fix="Refresh. If it stays silent, check companion path and that the unit is on.",
+            )
+        )
+    elif heard_age is not None and heard_age > REACHABILITY_ATTENTION_SECS:
+        checks.append(
+            _check(
+                "Reachability",
+                "bad",
+                f"Not heard for {_format_heard_age(heard_age)}",
+                fix="Refresh. If it stays silent, check path, power, flood, and that the radio is up.",
             )
         )
     elif session_state == "unreachable":
@@ -415,10 +443,18 @@ def compute_health(
         summary = f"{first['name']}: {first.get('reason') or first['status']}"
 
     in_flight = session_state in _IN_FLIGHT
+    silent_too_long = (
+        not paused
+        and not in_flight
+        and heard_age is not None
+        and heard_age > REACHABILITY_ATTENTION_SECS
+    )
     if paused and not in_flight:
         headline: Headline = "paused"
-    elif not in_flight and (session_state == "unreachable" or freshness == "never"):
+    elif not in_flight and session_state == "unreachable":
         headline = "unreachable"
+    elif not in_flight and (silent_too_long or freshness == "never"):
+        headline = "attention"
     elif issues:
         headline = "attention"
     else:

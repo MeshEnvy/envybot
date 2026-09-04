@@ -113,10 +113,60 @@ class HealthTests(unittest.TestCase):
             telemetry=None,
             traffic_interval=None,
             status_rows=[],
+            last_heard=None,
+            now=1_000_000,
         )
         self.assertEqual(health["grade"], "bad")
-        self.assertEqual(health["headline"], "unreachable")
+        self.assertEqual(health["headline"], "attention")
         self.assertTrue(any(i["name"] == "Reachability" for i in health["issues"]))
+
+    def test_silent_over_one_day_needs_attention(self) -> None:
+        now = 1_000_000
+        heard = now - int(3.3 * 86400)
+        health = compute_health(
+            freshness="stale",
+            session={"state": "ok"},
+            drift="due",
+            status={"battery_mv": 3770, "packets_recv": 1000, "recv_errors": 10},
+            telemetry={"temperature": 24.0},
+            traffic_interval={
+                "packets_recv": 50,
+                "packets_sent": 10,
+                "recv_errors": 2,
+                "duration_secs": 3600,
+                "rx_airtime_pct": 5.0,
+            },
+            traffic_window=_traffic_window(),
+            status_rows=[
+                {"ts": heard, "battery_mv": 3770, "uptime_secs": 3_000_000},
+            ],
+            reboot_count=0,
+            last_heard=heard,
+            now=now,
+        )
+        self.assertEqual(health["headline"], "attention")
+        reach = next(c for c in health["checks"] if c["name"] == "Reachability")
+        self.assertEqual(reach["status"], "bad")
+        self.assertIn("days", (reach.get("reason") or "").lower())
+
+    def test_silent_over_one_day_paused_stays_paused(self) -> None:
+        now = 1_000_000
+        heard = now - 5 * 86400
+        health = compute_health(
+            freshness="stale",
+            session={"state": "unreachable"},
+            drift=None,
+            status=None,
+            telemetry=None,
+            traffic_interval=None,
+            status_rows=[],
+            paused=True,
+            last_heard=heard,
+            now=now,
+        )
+        self.assertEqual(health["headline"], "paused")
+        reach = next(c for c in health["checks"] if c["name"] == "Reachability")
+        self.assertEqual(reach["status"], "unknown")
 
     def test_in_flight_reachability_unknown(self) -> None:
         health = compute_health(

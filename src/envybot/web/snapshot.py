@@ -646,6 +646,8 @@ def build_fleet_snapshot(
                 status_rows=status_rows,
                 paused=units[key]["paused"],
                 stability_ack_ts=_stability_ack_ts(node),
+                last_heard=units[key].get("last_heard"),
+                now=now,
             )
             units[key]["sparks"] = compact_sparks(status_rows, conn=conn, unit=key, now=now)
     finally:
