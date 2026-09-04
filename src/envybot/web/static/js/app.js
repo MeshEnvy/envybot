@@ -60,6 +60,10 @@ import {
   sunWhenTitle,
   ambientDelta,
   formatPollWeather,
+  formatPollWeatherStats,
+  formatPollTempF,
+  ambientTempStock,
+  weatherEmoji,
   pollSynthetic,
   weatherLabel,
   hasHealthIssues,
@@ -72,7 +76,7 @@ import {
   compareUnits,
   unitLabel,
   unitTitle,
-} from "./format.js?v=29";
+} from "./format.js?v=33";
 import {
   buildNeighborEdges,
   createMapController,
@@ -83,9 +87,10 @@ import {
   seriesFromHistories,
   seriesFromPolls,
   sparklineWallTime,
+  sparklineWallTimeDual,
   SPARK_MIN_SPAN,
   withSunSeries,
-} from "./sparklines.js?v=11";
+} from "./sparklines.js?v=12";
 
 const DASH_SPARK_W = 52;
 const DASH_SPARK_H = 16;
@@ -197,7 +202,7 @@ const App = {
     const METRIC_ROWS = [
       { key: "sun", label: "Sun", stroke: "#f5c14a", wave: true },
       { key: "battery_mv", label: "Voltage", stroke: "#6ee7a0" },
-      { key: "temperature", label: "Temp", stroke: "#f0b86e" },
+      { key: "temperature", label: "Temp", stroke: "#f0b86e", stroke2: "#4ea1ff" },
       { key: "unreadable_pct", label: "Unreadable", stroke: "#f06e6e" },
       { key: "recv_rate", label: "In / h", stroke: "#4ea1ff" },
       { key: "noise_floor", label: "Noise", stroke: "#a78bfa" },
@@ -1165,19 +1170,37 @@ const App = {
     });
 
     const sparkModels = computed(() => {
-      /** @type {Record<string, ReturnType<typeof sparklineWallTime>>} */
+      /** @type {Record<string, ReturnType<typeof sparklineWallTime> | ReturnType<typeof sparklineWallTimeDual>>} */
       const out = {};
       const domain = sparkDomain.value;
+      const baseOpts = {
+        tMin: domain.tMin,
+        tMax: domain.tMax,
+      };
       for (const row of METRIC_ROWS) {
         const wave = !!row.wave;
+        if (row.key === "temperature") {
+          out.temperature = sparklineWallTimeDual(
+            sparkSeries.value.temperature || [],
+            sparkSeries.value.ambient_temp || [],
+            168,
+            22,
+            {
+              ...baseOpts,
+              minSpan: SPARK_MIN_SPAN.temperature || 0,
+              strokePrimary: row.stroke,
+              strokeSecondary: row.stroke2 || "#4ea1ff",
+            },
+          );
+          continue;
+        }
         out[row.key] = sparklineWallTime(
           sparkSeries.value[row.key] || [],
           168,
           22,
           {
             minSpan: SPARK_MIN_SPAN[row.key] || 0,
-            tMin: domain.tMin,
-            tMax: domain.tMax,
+            ...baseOpts,
             ...(wave ? { yMin: -90, yMax: 90, dots: false } : {}),
           },
         );
@@ -1207,6 +1230,17 @@ const App = {
         if (mv != null) return formatBattery(mv);
       }
       if (metric === "temperature") {
+        const findLast = (points) =>
+          [...(points || [])]
+            .reverse()
+            .find((p) => p.value != null && Number.isFinite(Number(p.value)));
+        const iLast = findLast(sparkSeries.value.temperature);
+        const aLast = findLast(sparkSeries.value.ambient_temp);
+        if (iLast && aLast) {
+          return `${formatTemp(iLast.value)} / ${formatTemp(aLast.value)}`;
+        }
+        if (iLast) return formatTemp(iLast.value);
+        if (aLast) return formatTemp(aLast.value);
         const t = unit?.telemetry?.temperature;
         if (t != null) return formatTemp(t);
       }
@@ -1235,6 +1269,12 @@ const App = {
       if (poll?.battery_mv != null) return formatBattery(poll.battery_mv);
       if (poll?.voltage != null) return `${Number(poll.voltage).toFixed(3)} V`;
       return "—";
+    }
+
+    function pollPrevRow(pi) {
+      const list = unitHistory.value?.polls;
+      if (!Array.isArray(list)) return null;
+      return list[pi + 1] ?? null;
     }
 
     function formatPollTemp(poll) {
@@ -1882,8 +1922,13 @@ const App = {
       sunWhenTitle,
       ambientDelta,
       formatPollWeather,
+      formatPollWeatherStats,
+      formatPollTempF,
+      ambientTempStock,
+      weatherEmoji,
       pollSynthetic,
       weatherLabel,
+      pollPrevRow,
       unitLabel,
       unitTitle,
       togglePublic,
@@ -2342,32 +2387,59 @@ const App = {
                   viewBox="0 0 168 22"
                   aria-hidden="true"
                 >
-                  <line
-                    v-if="row.wave && sparkModels[row.key].zeroY != null"
-                    class="spark-horizon"
-                    x1="2"
-                    x2="166"
-                    :y1="sparkModels[row.key].zeroY"
-                    :y2="sparkModels[row.key].zeroY"
-                  />
-                  <polyline
-                    v-if="sparkModels[row.key].line"
-                    fill="none"
-                    :stroke="row.stroke"
-                    :stroke-width="row.wave ? 1.7 : 1.5"
-                    :points="sparkModels[row.key].line"
-                  />
-                  <circle
-                    v-for="(dot, di) in sparkModels[row.key].dots"
-                    :key="di"
-                    :cx="dot.x"
-                    :cy="dot.y"
-                    r="1.6"
-                    :fill="dot.synthetic ? 'none' : row.stroke"
-                    :stroke="row.stroke"
-                    :stroke-width="dot.synthetic ? 1.2 : 0"
-                    :opacity="dot.synthetic ? 0.65 : 1"
-                  />
+                  <template v-if="sparkModels[row.key].layers">
+                    <polyline
+                      v-for="(layer, li) in sparkModels[row.key].layers"
+                      :key="'ln-' + li"
+                      v-show="layer.line"
+                      fill="none"
+                      :stroke="layer.stroke"
+                      stroke-width="1.5"
+                      :stroke-dasharray="layer.dashed ? '3 2' : undefined"
+                      :points="layer.line"
+                    />
+                    <template v-for="(layer, li) in sparkModels[row.key].layers" :key="'dt-' + li">
+                      <circle
+                        v-for="(dot, di) in layer.dots"
+                        :key="'d' + li + '-' + di"
+                        :cx="dot.x"
+                        :cy="dot.y"
+                        r="1.6"
+                        :fill="dot.synthetic ? 'none' : layer.stroke"
+                        :stroke="layer.stroke"
+                        :stroke-width="dot.synthetic ? 1.2 : 0"
+                        :opacity="layer.dashed ? 0.85 : dot.synthetic ? 0.65 : 1"
+                      />
+                    </template>
+                  </template>
+                  <template v-else>
+                    <line
+                      v-if="row.wave && sparkModels[row.key].zeroY != null"
+                      class="spark-horizon"
+                      x1="2"
+                      x2="166"
+                      :y1="sparkModels[row.key].zeroY"
+                      :y2="sparkModels[row.key].zeroY"
+                    />
+                    <polyline
+                      v-if="sparkModels[row.key].line"
+                      fill="none"
+                      :stroke="row.stroke"
+                      :stroke-width="row.wave ? 1.7 : 1.5"
+                      :points="sparkModels[row.key].line"
+                    />
+                    <circle
+                      v-for="(dot, di) in sparkModels[row.key].dots"
+                      :key="di"
+                      :cx="dot.x"
+                      :cy="dot.y"
+                      r="1.6"
+                      :fill="dot.synthetic ? 'none' : row.stroke"
+                      :stroke="row.stroke"
+                      :stroke-width="dot.synthetic ? 1.2 : 0"
+                      :opacity="dot.synthetic ? 0.65 : 1"
+                    />
+                  </template>
                 </svg>
                 <span v-else class="spark-empty">{{ sparkFallback(row.key) }}</span>
               </div>
@@ -2594,21 +2666,37 @@ const App = {
                     </td>
                     <td>{{ formatPollDelta(row.delta_packets_recv, row.delta_packets_sent) }}</td>
                     <td
-                      class="poll-metric"
+                      class="poll-metric poll-temp-pair"
                       :class="{ synthetic: pollSynthetic(row, 'temperature') }"
                     >
-                      {{ formatPollTemp(row) }}
-                      <span v-if="ambientDelta(row)" class="stock-delta stock-neutral">{{
-                        ambientDelta(row)
-                      }}</span>
-                      <span
-                        v-if="tempStock(row)"
-                        class="stock-delta"
-                        :class="'stock-' + tempStock(row).dir"
-                      >{{ tempStock(row).text }}</span>
+                      <template v-if="row.temperature != null">
+                        {{ formatPollTempF(row.temperature) }}
+                        <span
+                          v-if="tempStock(row)"
+                          class="stock-delta"
+                          :class="'stock-' + tempStock(row).dir"
+                        >{{ tempStock(row).text }}</span>
+                      </template>
+                      <template
+                        v-if="row.temperature != null && row.weather?.temp_c != null"
+                      > / </template>
+                      <template v-if="row.weather?.temp_c != null">
+                        {{ formatPollTempF(row.weather.temp_c) }}
+                        <span
+                          v-if="ambientTempStock(row, pollPrevRow(pi))"
+                          class="stock-delta"
+                          :class="'stock-' + ambientTempStock(row, pollPrevRow(pi)).dir"
+                        >{{ ambientTempStock(row, pollPrevRow(pi)).text }}</span>
+                      </template>
+                      <template
+                        v-if="row.temperature == null && row.weather?.temp_c == null"
+                      >—</template>
                     </td>
                     <td class="poll-weather" :title="weatherLabel(row.weather)">
-                      {{ formatPollWeather(row.weather) }}
+                      <span v-if="weatherEmoji(row.weather)" class="poll-wx-emoji">{{
+                        weatherEmoji(row.weather)
+                      }}</span>
+                      {{ formatPollWeatherStats(row.weather) }}
                     </td>
                     <td>
                       <template v-if="row.reboot">reboot</template>

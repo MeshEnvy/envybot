@@ -68,11 +68,16 @@ class WeatherHelpersTests(unittest.TestCase):
                 "temperature_2m": 18.4,
                 "cloud_cover": 45,
                 "precipitation": 0.0,
-                "wind_speed_10m": 0.5,
+                "wind_speed_10m": 5.4,
+                "wind_direction_10m": 270,
+                "weather_code": 2,
             }
         )
+        self.assertEqual(payload["weather_code"], 2)
+        self.assertEqual(payload["wind_dir"], 270.0)
         self.assertIn("18 °C ambient", payload["label"])
         self.assertIn("45% cloud", payload["label"])
+        self.assertIn("→", payload["label"])
 
 
 class WeatherCacheTests(unittest.TestCase):

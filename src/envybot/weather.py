@@ -116,11 +116,31 @@ def weather_backfill_pending(conn: sqlite3.Connection) -> bool:
     return row is None
 
 
+_WIND_ARROWS = ("↑", "↗", "→", "↘", "↓", "↙", "←", "↖")
+
+
+def _wind_dir_arrow(deg: float) -> str:
+    to_deg = (float(deg) + 180.0) % 360.0
+    return _WIND_ARROWS[int(round(to_deg / 45.0)) % 8]
+
+
+def _format_wind_line(wind_ms: float | None, wind_dir: float | None) -> str | None:
+    if wind_ms is None:
+        return None
+    if wind_ms < 1.0:
+        return "calm"
+    text = f"{wind_ms:.1f} m/s"
+    if wind_dir is not None:
+        text += f" {_wind_dir_arrow(wind_dir)}"
+    return text
+
+
 def _format_label(payload: dict[str, Any]) -> str:
     temp = payload.get("temp_c")
     cloud = payload.get("cloud_pct")
     precip = payload.get("precip_mm")
     wind = payload.get("wind_ms")
+    wind_dir = payload.get("wind_dir")
     parts: list[str] = []
     if temp is not None:
         parts.append(f"{temp:.0f} °C ambient")
@@ -130,11 +150,12 @@ def _format_label(payload: dict[str, Any]) -> str:
         parts.append(f"{precip:.1f} mm/h precip")
     else:
         parts.append("dry")
-    if wind is not None:
-        if wind < 1.0:
-            parts.append("calm")
-        else:
-            parts.append(f"{wind:.1f} m/s wind")
+    wind_line = _format_wind_line(
+        float(wind) if wind is not None else None,
+        float(wind_dir) if wind_dir is not None else None,
+    )
+    if wind_line:
+        parts.append(wind_line)
     return " · ".join(parts)
 
 

@@ -88,6 +88,58 @@ export function sparklineWallTime(points, width, height, opts = {}) {
   }
 }
 
+function sparklineLayer(points, width, height, yMin, ySpan, opts = {}) {
+  const padding = opts.padding ?? 2
+  const valid = validPoints(points)
+  if (!valid.length) return null
+  valid.sort((a, b) => Number(a.ts) - Number(b.ts))
+  const domain =
+    opts.tMin != null && opts.tMax != null ? { tMin: Number(opts.tMin), tMax: Number(opts.tMax) } : null
+  const xs = layoutTimeX(
+    valid.map((p) => Number(p.ts)),
+    width,
+    padding,
+    domain ? 0 : opts.minGap ?? 7,
+    domain
+  )
+  const innerH = height - padding * 2
+  const dots = valid.map((p, i) => {
+    const y = padding + innerH - ((p.value - yMin) / ySpan) * innerH
+    return { x: xs[i], y: Number(y.toFixed(1)), synthetic: !!p.synthetic }
+  })
+  const line = dots.length >= 2 ? dots.map((d) => `${d.x},${d.y}`).join(' ') : null
+  return { line, dots }
+}
+
+/**
+ * Two series on one wall-clock chart with a shared Y scale (e.g. internal + ambient temp).
+ * @returns {{ layers: Array<{ line: string | null, dots: Array<{ x: number, y: number }>, stroke: string, dashed?: boolean }> } | null}
+ */
+export function sparklineWallTimeDual(primary, secondary, width, height, opts = {}) {
+  const merged = [...validPoints(primary), ...validPoints(secondary)]
+  if (!merged.length) return null
+  const values = merged.map((p) => p.value)
+  const { min, span } =
+    opts.yMin != null && opts.yMax != null
+      ? { min: Number(opts.yMin), span: Number(opts.yMax) - Number(opts.yMin) || 1 }
+      : yRange(values, opts.minSpan ?? 0)
+  const layers = []
+  const primaryLayer = sparklineLayer(primary, width, height, min, span, opts)
+  if (primaryLayer && (primaryLayer.line || primaryLayer.dots.length)) {
+    layers.push({ ...primaryLayer, stroke: opts.strokePrimary || '#f0b86e' })
+  }
+  const secondaryLayer = sparklineLayer(secondary, width, height, min, span, opts)
+  if (secondaryLayer && (secondaryLayer.line || secondaryLayer.dots.length)) {
+    layers.push({
+      ...secondaryLayer,
+      stroke: opts.strokeSecondary || '#4ea1ff',
+      dashed: true,
+    })
+  }
+  if (!layers.length) return null
+  return { layers }
+}
+
 /** @param {Record<string, unknown> | null | undefined} poll @param {string} field */
 export function isSynthetic(poll, field) {
   const syn = poll?.synthetic
@@ -120,6 +172,7 @@ export function seriesFromPolls(polls) {
   const out = {
     battery_mv: [],
     temperature: [],
+    ambient_temp: [],
     noise_floor: [],
     recv_rate: [],
     unreadable_pct: [],
@@ -139,6 +192,10 @@ export function seriesFromPolls(polls) {
         value: Number(p.temperature),
         synthetic: isSynthetic(p, 'temperature'),
       })
+    }
+    const ambient = p.weather?.temp_c
+    if (ambient != null && Number.isFinite(Number(ambient))) {
+      out.ambient_temp.push({ ts, value: Number(ambient) })
     }
     if (p.noise_floor != null && Number.isFinite(Number(p.noise_floor))) {
       out.noise_floor.push({

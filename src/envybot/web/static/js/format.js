@@ -235,22 +235,93 @@ export function sunTitle(sun) {
   return typeof sun?.label === 'string' ? sun.label : ''
 }
 
+/** @param {number | null | undefined} c — rounded °F for poll table (no unit) */
+export function formatPollTempF(c) {
+  if (c == null || !Number.isFinite(Number(c))) return '—'
+  return String(Math.round(cToF(Number(c))))
+}
+
+/** @param {Record<string, unknown> | null | undefined} row @param {Record<string, unknown> | null | undefined} prevRow */
+export function ambientTempStock(row, prevRow) {
+  const curr = Number(row?.weather?.temp_c)
+  const prev = Number(prevRow?.weather?.temp_c)
+  if (!Number.isFinite(curr) || !Number.isFinite(prev)) return null
+  return formatSignedDelta(cToF(curr) - cToF(prev), 0)
+}
+
+/** WMO weather_code → emoji (Open-Meteo). Falls back to cloud/precip. */
+export function weatherEmoji(weather) {
+  if (!weather || typeof weather !== 'object') return ''
+  const raw = weather.weather_code
+  if (raw != null && Number.isFinite(Number(raw))) {
+    return wmoWeatherEmoji(Number(raw))
+  }
+  const precip = Number(weather.precip_mm)
+  if (Number.isFinite(precip) && precip > 0.05) return '🌧️'
+  const cloud = Number(weather.cloud_pct)
+  if (!Number.isFinite(cloud)) return ''
+  if (cloud >= 80) return '☁️'
+  if (cloud >= 40) return '⛅'
+  if (cloud >= 10) return '🌤️'
+  return '☀️'
+}
+
+/** @param {number} code WMO WW interpretation code */
+function wmoWeatherEmoji(code) {
+  if (code === 0) return '☀️'
+  if (code === 1) return '🌤️'
+  if (code === 2) return '⛅'
+  if (code === 3) return '☁️'
+  if (code === 45 || code === 48) return '🌫️'
+  if (code >= 51 && code <= 57) return '🌦️'
+  if (code >= 61 && code <= 67) return '🌧️'
+  if (code >= 71 && code <= 77) return '❄️'
+  if (code >= 80 && code <= 82) return '🌦️'
+  if (code >= 85 && code <= 86) return '🌨️'
+  if (code >= 95) return '⛈️'
+  return '☀️'
+}
+
+const WIND_ARROWS = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖']
+
+/** Meteorological degrees (wind from) → arrow pointing downwind. */
+export function windDirArrow(deg) {
+  if (deg == null || !Number.isFinite(Number(deg))) return ''
+  const from = ((Number(deg) % 360) + 360) % 360
+  const to = (from + 180) % 360
+  return WIND_ARROWS[Math.round(to / 45) % 8]
+}
+
 /** @param {Record<string, unknown> | null | undefined} weather */
-export function formatPollWeather(weather) {
+export function formatPollWind(weather) {
+  if (!weather || typeof weather !== 'object') return null
+  const wind = Number(weather.wind_ms)
+  if (!Number.isFinite(wind)) return null
+  if (wind < 1) return 'calm'
+  const mph = Math.round(wind * 2.237)
+  const arrow = windDirArrow(weather.wind_dir)
+  return arrow ? `${mph}mph ${arrow}` : `${mph}mph`
+}
+
+/** @param {Record<string, unknown> | null | undefined} weather */
+export function formatPollWeatherStats(weather) {
   if (!weather || typeof weather !== 'object') return '—'
   const parts = []
-  const tempC = Number(weather.temp_c)
-  if (Number.isFinite(tempC)) parts.push(`${cToF(tempC).toFixed(0)}°`)
-  const cloud = Number(weather.cloud_pct)
-  if (Number.isFinite(cloud)) parts.push(`${Math.round(cloud)}%`)
+  const windPart = formatPollWind(weather)
+  if (windPart) parts.push(windPart)
   const precip = Number(weather.precip_mm)
-  if (Number.isFinite(precip) && precip > 0.05) parts.push(`${precip.toFixed(1)}mm`)
-  const wind = Number(weather.wind_ms)
-  if (Number.isFinite(wind)) {
-    if (wind < 1) parts.push('calm')
-    else parts.push(`${Math.round(wind * 2.237)}mph`)
+  if (Number.isFinite(precip) && precip > 0.05) {
+    parts.push(`${precip.toFixed(1)}mm`)
   }
-  return parts.length ? parts.join(' · ') : '—'
+  return parts.length ? parts.join(' ') : '—'
+}
+
+/** @param {Record<string, unknown> | null | undefined} weather */
+export function formatPollWeather(weather) {
+  const emoji = weatherEmoji(weather)
+  const stats = formatPollWeatherStats(weather)
+  if (stats === '—') return emoji || '—'
+  return emoji ? `${emoji} ${stats}` : stats
 }
 
 /** @param {Record<string, unknown> | null | undefined} row */
@@ -271,6 +342,10 @@ export function sunWhenTitle(sun, weather) {
   const wxPart = weatherLabel(weather)
   if (sunPart) parts.push(sunPart)
   if (wxPart) parts.push(wxPart)
+  const code = weather?.weather_code
+  if (code != null && Number.isFinite(Number(code))) {
+    parts.push(`WMO ${Number(code)}`)
+  }
   return parts.join('\n')
 }
 

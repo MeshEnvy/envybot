@@ -1551,6 +1551,14 @@ body {
   text-overflow: ellipsis;
 }
 
+.poll-wx-emoji {
+  margin-right: 4px;
+}
+
+.poll-temp-pair .stock-delta {
+  margin-left: 2px;
+}
+
 .stock-neutral {
   color: #8aa0b5;
 }
