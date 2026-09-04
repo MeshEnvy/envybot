@@ -27,6 +27,7 @@ export ENVYBOT_HOME=/path/to/book
 | [`cmd`](docs/commands/cmd.md) | [docs/commands/cmd.md](docs/commands/cmd.md) | Run remote MeshCore CLI on one unit (one-shot or REPL). |
 | [`onboard`](docs/commands/onboard.md) | [docs/commands/onboard.md](docs/commands/onboard.md) | USB text-CLI onboard of a repeater under test. |
 | [`seed`](docs/commands/seed.md) | [docs/commands/seed.md](docs/commands/seed.md) | USB OTA seeder — relay a folder of `.mota` to a repeater. |
+| [`weather`](docs/commands/weather.md) | [docs/commands/weather.md](docs/commands/weather.md) | One-time Open-Meteo cache backfill for poll history. |
 
 Global flags (before the command): `--book DIR`.
 

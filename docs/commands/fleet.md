@@ -121,9 +121,9 @@ was site-only). Opening fleet runs backfill once. The UI may POST
 while the laptop travels; that does not SET radio lat/lon and does not
 rewrite history. Status **V** and telemetry **Temp** **When**
 cells show ☀️ or 🌙: clear-sky sun above the horizon means charging
-expected. Hover for elevation. Voltage is status ``battery_mv`` only
-(telemetry voltage is stored, not shown). No weather or terrain. Detail
-tables stay open (no collapse):
+expected. Hover for elevation and Open-Meteo ambient (temp, cloud, precip,
+wind). Voltage is status ``battery_mv`` only
+(telemetry voltage is stored, not shown). Detail
 10 rows each, **Load more** reveals 10 more. Sparklines share a 72h
 wall-clock axis. Sun is clear-sky elevation vs the horizon. Default history limit is 80 (72h of hourly samples).
 Sparklines use native `/api/history/{unit}?metric=`. SSE `unit` events include

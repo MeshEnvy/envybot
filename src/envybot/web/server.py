@@ -32,6 +32,7 @@ from envybot.position import (
     write_sites_doc,
 )
 from envybot.sun import attach_sun, sun_series
+from envybot.weather import attach_weather
 from envybot.radio import load_targets
 from envybot.web.console import ConsoleManager
 from envybot.web.hub import FleetHub
@@ -600,15 +601,17 @@ async def _handle_polls(request: web.Request) -> web.Response:
     conn = open_history(web_ctx.nodes_path.parent)
     try:
         histories = source_histories(conn, unit, hours=hours, limit=limit)
+        loc = _site_loc_for_polls(web_ctx, unit)
+        attach_sun(histories.get("status"), loc=loc)
+        attach_sun(histories.get("telemetry"), loc=loc)
+        attach_weather(conn, histories.get("status"), loc=loc)
+        attach_weather(conn, histories.get("telemetry"), loc=loc)
+        now = int(time.time())
+        histories["sun"] = (
+            sun_series(loc[0], loc[1], now - hours * 3600, now) if loc else []
+        )
     finally:
         conn.close()
-    loc = _site_loc_for_polls(web_ctx, unit)
-    attach_sun(histories.get("status"), loc=loc)
-    attach_sun(histories.get("telemetry"), loc=loc)
-    now = int(time.time())
-    histories["sun"] = (
-        sun_series(loc[0], loc[1], now - hours * 3600, now) if loc else []
-    )
     payload = {"unit": unit, "hours": hours, "histories": histories}
     assert_no_secrets(payload)
     return web.json_response(payload)

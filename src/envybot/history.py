@@ -110,6 +110,15 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT
 );
 
+CREATE TABLE IF NOT EXISTS weather_hourly (
+  lat_cell REAL NOT NULL,
+  lon_cell REAL NOT NULL,
+  hour_ts INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY (lat_cell, lon_cell, hour_ts)
+);
+CREATE INDEX IF NOT EXISTS weather_hourly_cell_hour ON weather_hourly (lat_cell, lon_cell, hour_ts);
+
 CREATE TABLE IF NOT EXISTS mesh_audit (
   id INTEGER PRIMARY KEY,
   ts_sent REAL NOT NULL,

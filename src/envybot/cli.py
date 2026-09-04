@@ -51,12 +51,19 @@ def cmd_seed(book: Path, argv: list[str]) -> int:
     return seed.main(argv)
 
 
+def cmd_weather(book: Path, argv: list[str]) -> int:
+    from envybot.commands import weather
+
+    return weather.main(_inject_flag(argv, "--book", str(book)))
+
+
 COMMANDS: dict[str, tuple[str, Command]] = {
     "fleet": ("Localhost fleet manager (map, poll, apply)", cmd_fleet),
     "trust": ("Companion contacts and keys.yaml ACL grant", cmd_trust),
     "onboard": ("USB-serial onboard a repeater (idempotent)", cmd_onboard),
     "cmd": ("Run remote MeshCore CLI on one unit", cmd_cmd),
     "seed": ("USB-serial OTA seeder (.mota folder relay)", cmd_seed),
+    "weather": ("Open-Meteo cache for fleet poll history", cmd_weather),
 }
 
 

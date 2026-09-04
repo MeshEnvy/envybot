@@ -8,7 +8,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | Repo | [MeshEnvy/envybot](https://github.com/MeshEnvy/envybot) |
 | Version | 0.1.0 |
 | Tooling | `uv` + `pyproject.toml` |
-| Commands | `fleet`, `trust`, `cmd`, `onboard`, `seed` |
+| Commands | `fleet`, `trust`, `cmd`, `onboard`, `seed`, `weather` |
 | Book | `--book` / `ENVYBOT_HOME` / cwd with `nodes.yaml` (+ `keys.yaml`, `channels.yaml`) |
 
 ## Layout
@@ -25,6 +25,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/health.py` | Per-node health checks (snapshot + UI grade) |
 | `src/envybot/position.py` | Display GPS: site → node `loc` → `bench_loc`; apply uses site only |
 | `src/envybot/sun.py` | Clear-sky elev: ☀️/🌙 + 72h elevation sparkline |
+| `src/envybot/weather.py` | Open-Meteo cache + attach on poll history |
 | `src/envybot/radio.py` | Companion session, login, CLI/binary |
 | `src/envybot/poll.py` | GET cadence (live / inventory / audit) → sqlite |
 | `src/envybot/apply.py` | SET mask unless `public: true`; `v1:` profile hash |
@@ -38,6 +39,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/mota.py` | Light `.mota` parse for USB seeder catalog |
 | `src/envybot/seeder.py` | mota-seeder host (COUNT / DESCRIBE / READ); sets `dutycycle 10` on launch |
 | `src/envybot/commands/seed.py` | USB OTA folder relay (`envybot seed`) |
+| `src/envybot/commands/weather.py` | Open-Meteo cache backfill (`envybot weather backfill`) |
 | `src/envybot/web/` | Fleet UI (`:8787`); header **Console** (tabbed priority CLI) |
 
 ## Contract
@@ -199,7 +201,8 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
   List meta line shows a headline mark: Paused, Healthy, Unreachable,
   Needs attention. Status/telemetry history times show ☀️ or 🌙
   (clear-sky sun up = charging expected). Voltage sparkline and health
-  Power use status `battery_mv`; telemetry table is temp only. Detail
+  Power use status `battery_mv`; telemetry table is temp only. Poll **When**
+  cells: ☀️/🌙 + hover Open-Meteo ambient. `./envybot weather backfill` once.
   sparklines share a 72h wall-clock axis; Sun is elevation vs horizon.
   Detail card edits book `alias` and `notes` (blur saves).
   Map pins color by last-heard age (green→red over 24h); labels include
@@ -217,4 +220,4 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-04 (fleet UI apply prefs)
+Last updated: 2026-09-04 (Open-Meteo weather join)

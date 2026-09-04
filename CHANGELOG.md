@@ -8,6 +8,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- **`weather backfill`** — Open-Meteo hourly cache for bound site GPS. Poll
+  history **When** cells show ambient temp, cloud, precip, and wind on hover;
+  telemetry rows show radio temp vs ambient. Run `./envybot weather backfill`
+  once per book; `./envybot fleet` warns until the meta stamp exists.
 - **`routing: direct | path | flood`** replaces removed `flood: true`. Default path
   for all units (site-bound and benched). Path flood-discovers when cache is
   empty, rides cached direct or multi-hop routes, and discards stale cache after
