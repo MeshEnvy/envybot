@@ -158,7 +158,8 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
   sending (Retry only after the line has stopped, not during attempts).
   Busy send stages the next line. Hide
   keeps running. Dashboard card click opens detail. Map sidebar/pin: first
-  click selects + flies; second opens detail. Per-tab up/down command recall (survives Clear history).
+  click selects + flies; second opens detail over the map (map stays open;
+  Esc / backdrop closes the card first). Per-tab up/down command recall (survives Clear history).
   Clipboard copies the transcript.
   Unread `*` on a tab (header icon too when hidden).
   `localStorage` + hello survive refresh / fleet restart.
@@ -199,4 +200,4 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-03 (dashboard + map modal)
+Last updated: 2026-09-03 (map stays open under node card)

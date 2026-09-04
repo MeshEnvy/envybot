@@ -1202,7 +1202,6 @@ const App = {
 
     function openDetail(key, { fly = false } = {}) {
       hideConsole();
-      hideMap();
       selectedKey.value = key;
       mapHighlightKey.value = key;
       syncLocation(key);
@@ -1528,11 +1527,14 @@ const App = {
             hideConsole();
             return;
           }
+          if (selectedKey.value) {
+            clearSelection();
+            return;
+          }
           if (mapOpen.value) {
             hideMap();
             return;
           }
-          clearSelection();
         }
       };
       const onPageHide = () => persistConsole();

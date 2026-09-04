@@ -351,7 +351,7 @@ body {
 }
 
 .detail-modal.overlay-modal {
-  z-index: 30;
+  z-index: 50;
   align-items: center;
   justify-content: center;
   padding: 24px;
@@ -1008,7 +1008,7 @@ body {
 
 .detail-modal {
   /* position set by .overlay-modal */
-  z-index: 30;
+  z-index: 50;
 }
 
 .detail {
@@ -1355,7 +1355,7 @@ body {
 }
 
 .console-modal.overlay-modal {
-  /* inherits fixed overlay from .overlay-modal */
+  z-index: 60;
 }
 
 .console-shell {
