@@ -88,9 +88,10 @@ import {
   seriesFromPolls,
   sparklineWallTime,
   sparklineWallTimeDual,
+  seriesNeighborCount,
   SPARK_MIN_SPAN,
   withSunSeries,
-} from "./sparklines.js?v=12";
+} from "./sparklines.js?v=13";
 
 const DASH_SPARK_W = 52;
 const DASH_SPARK_H = 16;
@@ -154,7 +155,6 @@ const App = {
     const LOG_PAGE = 10;
     const logShown = reactive({
       polls: LOG_PAGE,
-      neighbors: LOG_PAGE,
       acl: LOG_PAGE,
     });
     const CONSOLE_STORE_KEY = "envybot.console.v1";
@@ -177,24 +177,23 @@ const App = {
 
     function resetLogShown() {
       logShown.polls = LOG_PAGE;
-      logShown.neighbors = LOG_PAGE;
       logShown.acl = LOG_PAGE;
     }
 
-    /** @param {'polls' | 'neighbors' | 'acl'} source */
+    /** @param {'polls' | 'acl'} source */
     function logSlice(source) {
       const list = unitHistory.value?.[source];
       if (!Array.isArray(list)) return [];
       return list.slice(0, logShown[source]);
     }
 
-    /** @param {'polls' | 'neighbors' | 'acl'} source */
+    /** @param {'polls' | 'acl'} source */
     function logHasMore(source) {
       const list = unitHistory.value?.[source];
       return Array.isArray(list) && list.length > logShown[source];
     }
 
-    /** @param {'polls' | 'neighbors' | 'acl'} source */
+    /** @param {'polls' | 'acl'} source */
     function loadMoreLog(source) {
       logShown[source] += LOG_PAGE;
     }
@@ -205,6 +204,7 @@ const App = {
       { key: "temperature", label: "Temp", stroke: "#f0b86e", stroke2: "#4ea1ff" },
       { key: "unreadable_pct", label: "Unreadable", stroke: "#f06e6e" },
       { key: "recv_rate", label: "In / h", stroke: "#4ea1ff" },
+      { key: "neighbor_count", label: "Heard", stroke: "#67e8f9" },
       { key: "noise_floor", label: "Noise", stroke: "#a78bfa" },
     ];
     /** @type {ReturnType<typeof createMapController> | null} */
@@ -1147,6 +1147,29 @@ const App = {
 
     const unitHistory = computed(() => selectedUnit.value?.history || null);
 
+    /** @param {Record<string, unknown> | undefined} nb */
+    function neighborLabel(nb) {
+      if (!nb) return "?";
+      const label = nb.label;
+      if (typeof label === "string" && label) return label;
+      const unitId = nb.unit_id;
+      if (typeof unitId === "string" && unitId) return unitId;
+      const prefix = nb.pubkey_prefix;
+      if (typeof prefix === "string" && prefix) return prefix;
+      return "?";
+    }
+
+    const liveNeighbors = computed(() => {
+      const list = selectedUnit.value?.neighbors;
+      if (!Array.isArray(list)) return [];
+      return [...list].sort((a, b) =>
+        neighborLabel(a).localeCompare(neighborLabel(b), undefined, {
+          numeric: true,
+          sensitivity: "base",
+        }),
+      );
+    });
+
     async function loadHistoriesFor(key) {
       try {
         const res = await fetchPolls(key, historyHours);
@@ -1158,10 +1181,18 @@ const App = {
 
     const sparkSeries = computed(() => {
       const hist = unitHistory.value || {};
+      let base;
       if (Array.isArray(hist.polls) && hist.polls.length) {
-        return withSunSeries(seriesFromPolls(hist.polls), hist.sun);
+        base = withSunSeries(seriesFromPolls(hist.polls), hist.sun);
+      } else {
+        base = seriesFromHistories(hist);
       }
-      return seriesFromHistories(hist);
+      base.neighbor_count = seriesNeighborCount(
+        hist.neighbors,
+        liveNeighbors.value.length,
+        fleet.now,
+      );
+      return base;
     });
 
     const sparkDomain = computed(() => {
@@ -1202,6 +1233,7 @@ const App = {
             minSpan: SPARK_MIN_SPAN[row.key] || 0,
             ...baseOpts,
             ...(wave ? { yMin: -90, yMax: 90, dots: false } : {}),
+            ...(row.key === "neighbor_count" ? { yMin: 0 } : {}),
           },
         );
       }
@@ -1214,6 +1246,7 @@ const App = {
       unreadable_pct: (v) => `${v.toFixed(1)}%`,
       recv_rate: (v) => `${v.toFixed(1)}/h`,
       noise_floor: (v) => `${Math.trunc(v)} dBm`,
+      neighbor_count: (v) => String(Math.round(v)),
     };
 
     function metricNow(metric) {
@@ -1228,6 +1261,11 @@ const App = {
       if (metric === "battery_mv") {
         const mv = unit?.status?.battery_mv;
         if (mv != null) return formatBattery(mv);
+      }
+      if (metric === "neighbor_count") {
+        if (Array.isArray(unit?.neighbors)) {
+          return String(liveNeighbors.value.length);
+        }
       }
       if (metric === "temperature") {
         const findLast = (points) =>
@@ -1904,6 +1942,8 @@ const App = {
       healthTooltip,
       METRIC_ROWS,
       unitHistory,
+      liveNeighbors,
+      neighborLabel,
       historyHours,
       sparkModels,
       sparkFallback,
@@ -2606,14 +2646,15 @@ const App = {
               </template>
             </dl>
           </section>
-          <section v-if="selectedUnit.neighbors?.length">
-            <h3>Neighbors · {{ selectedUnit.neighbors.filter(n => n.unit_key).length }}</h3>
+          <section v-if="liveNeighbors.length">
+            <h3>Heard · {{ liveNeighbors.length }}</h3>
             <div
-              v-for="(nb, i) in selectedUnit.neighbors.filter(n => n.unit_key)"
-              :key="i"
+              v-for="(nb, i) in liveNeighbors"
+              :key="nb.unit_key || nb.pubkey_prefix || i"
               class="neighbor-row"
+              :class="{ 'neighbor-off-book': !nb.unit_key }"
             >
-              {{ nb.label || nb.unit_id || nb.pubkey_prefix }}
+              {{ neighborLabel(nb) }}
               · {{ nb.snr ?? '?' }} dB
               · {{ formatAgo(nb.secs_ago) }}
             </div>
@@ -2713,42 +2754,6 @@ const App = {
                 type="button"
                 class="load-more"
                 @click="loadMoreLog('polls')"
-              >
-                Load more
-              </button>
-            </div>
-          </section>
-          <section v-if="unitHistory?.neighbors?.length" class="poll-log-section">
-            <div class="poll-log">
-              <h3>Neighbors · {{ unitHistory.neighbors.length }}</h3>
-              <table class="poll-table">
-                <thead>
-                  <tr>
-                    <th>When</th>
-                    <th>Count</th>
-                    <th>Δ</th>
-                    <th>Gap</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(row, pi) in logSlice('neighbors')" :key="'nb-' + pi">
-                    <td>{{ formatRelative(row.ts, fleet.now) }}</td>
-                    <td>{{ row.count ?? '—' }}</td>
-                    <td>{{ row.delta_count != null ? (row.delta_count >= 0 ? '+' : '') + row.delta_count : '—' }}</td>
-                    <td>
-                      <template v-if="row.since_prev_secs != null">{{
-                        formatPollWindow(row.since_prev_secs)
-                      }}</template>
-                      <template v-else>—</template>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-              <button
-                v-if="logHasMore('neighbors')"
-                type="button"
-                class="load-more"
-                @click="loadMoreLog('neighbors')"
               >
                 Load more
               </button>

@@ -240,6 +240,31 @@ export const SPARK_MIN_SPAN = {
   unreadable_pct: 20,
   recv_rate: 200,
   noise_floor: 20,
+  neighbor_count: 3,
+}
+
+/**
+ * Neighbor count over time from neighbors poll history.
+ * @param {Array<{ ts?: number, count?: number }>} rows newest-first or mixed
+ * @param {number | null | undefined} liveCount append current heard count at nowSec
+ * @param {number | null | undefined} nowSec
+ */
+export function seriesNeighborCount(rows, liveCount, nowSec) {
+  const series = []
+  for (const row of rows || []) {
+    if (row?.ts == null || row.count == null) continue
+    const n = Number(row.count)
+    if (!Number.isFinite(n)) continue
+    series.push({ ts: Number(row.ts), value: n })
+  }
+  series.sort((a, b) => a.ts - b.ts)
+  if (liveCount != null && liveCount >= 0 && nowSec != null && Number.isFinite(Number(nowSec))) {
+    const last = series[series.length - 1]
+    if (!last || last.value !== liveCount) {
+      series.push({ ts: Number(nowSec), value: liveCount })
+    }
+  }
+  return series
 }
 
 /**

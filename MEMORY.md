@@ -193,8 +193,8 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
   deltas. Hello snapshot includes compact 72h `sparks` (battery V, temp,
   in/h, unreadable %) per unit; SSE status/telemetry samples extend them
   live. Detail sparklines prefer merged `polls` from `/api/polls/{unit}`
-  (`poll_snapshots`); neighbors and ACL stay separate sections. Unified
-  **Polls** table (status+telemetry+weather, deltas, 10 rows + Load more).
+  (`poll_snapshots`); ACL poll log only (no neighbor count history). **Heard**
+  list is live snapshot from latest neighbors GET (book + off-book by pubkey).
   Each GET persists only that
   group (no replay of earlier status). SSE `unit` events carry
   `{ source, sample }` so the open card updates live via `state.js`.

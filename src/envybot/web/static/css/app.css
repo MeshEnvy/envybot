@@ -1377,6 +1377,12 @@ body {
   color: #c5d3df;
 }
 
+.neighbor-row.neighbor-off-book {
+  color: #8aa0b5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+}
+
 .health-section .health-summary {
   margin: 0 0 6px;
   display: flex;
