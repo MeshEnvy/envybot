@@ -187,6 +187,28 @@ class HealthTests(unittest.TestCase):
         reach = next(c for c in health["checks"] if c["name"] == "Reachability")
         self.assertEqual(reach["status"], "bad")
 
+    def test_transient_unreachable_session_stays_healthy(self) -> None:
+        """Login/GET miss this pass; worker retries. No UI flag until silent 24h."""
+        now = 1_000_000
+        heard = now - 7200
+        health = compute_health(
+            freshness="fresh",
+            session={"state": "unreachable", "stage": "Logging in"},
+            drift=None,
+            status={"battery_mv": 4100, "packets_recv": 100, "recv_errors": 0},
+            telemetry=None,
+            traffic_interval={"packets_recv": 10, "packets_sent": 5, "duration_secs": 3600},
+            traffic_window=_traffic_window(recv=10, sent=5),
+            status_rows=[{"battery_mv": 4100, "uptime_secs": 100}],
+            last_heard=heard,
+            now=now,
+            reboot_count=0,
+        )
+        self.assertEqual(health["headline"], "healthy")
+        reach = next(c for c in health["checks"] if c["name"] == "Reachability")
+        self.assertEqual(reach["status"], "ok")
+        self.assertEqual(health["issues"], [])
+
     def test_in_flight_reachability_unknown(self) -> None:
         health = compute_health(
             freshness="never",

@@ -146,8 +146,7 @@ export function healthHeadline(unit, nowSec) {
   if (raw === 'paused' || raw === 'healthy' || raw === 'unreachable' || raw === 'attention') {
     return raw
   }
-  const state = unit?.session && typeof unit.session === 'object' ? unit.session.state : null
-  if (state === 'unreachable' || unit?.freshness === 'never') return 'unreachable'
+  if (unit?.freshness === 'never' && lh == null) return 'attention'
   if (hasHealthIssues(unit?.health)) return 'attention'
   return 'healthy'
 }
@@ -234,6 +233,31 @@ export function sunEmoji(sun) {
 /** @param {Record<string, unknown> | null | undefined} sun */
 export function sunTitle(sun) {
   return typeof sun?.label === 'string' ? sun.label : ''
+}
+
+/** @param {Record<string, unknown> | null | undefined} weather */
+export function weatherLabel(weather) {
+  return typeof weather?.label === 'string' ? weather.label : ''
+}
+
+/** @param {Record<string, unknown> | null | undefined} sun @param {Record<string, unknown> | null | undefined} weather */
+export function sunWhenTitle(sun, weather) {
+  const parts = []
+  const sunPart = sunTitle(sun)
+  const wxPart = weatherLabel(weather)
+  if (sunPart) parts.push(sunPart)
+  if (wxPart) parts.push(wxPart)
+  return parts.join('\n')
+}
+
+/** @param {Record<string, unknown> | null | undefined} row */
+export function ambientDelta(row) {
+  const radio = Number(row?.temperature)
+  const ambient = Number(row?.weather?.temp_c)
+  if (!Number.isFinite(radio) || !Number.isFinite(ambient)) return null
+  const delta = radio - ambient
+  const sign = delta >= 0 ? '+' : ''
+  return `${sign}${delta.toFixed(1)}° vs ambient`
 }
 
 /** @param {Record<string, unknown> | null | undefined} sun */

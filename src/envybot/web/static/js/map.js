@@ -97,7 +97,6 @@ export function unitStatus(unit) {
     return headline
   }
   if (unit?.paused) return 'paused'
-  if (state === 'unreachable') return 'unreachable'
   if (!unit?.mapped) return 'unmapped'
   return typeof unit?.freshness === 'string' ? unit.freshness : 'never'
 }

@@ -57,6 +57,8 @@ import {
   sunEmoji,
   sunElev,
   sunTitle,
+  sunWhenTitle,
+  ambientDelta,
   hasHealthIssues,
   hasTrafficStats,
   healthHeadline,
@@ -67,13 +69,13 @@ import {
   compareUnits,
   unitLabel,
   unitTitle,
-} from "./format.js?v=26";
+} from "./format.js?v=28";
 import {
   buildNeighborEdges,
   createMapController,
   unitStage,
   unitStatus,
-} from "./map.js?v=30";
+} from "./map.js?v=31";
 import {
   seriesFromHistories,
   sparklineWallTime,
@@ -1869,6 +1871,8 @@ const App = {
       sunEmoji,
       sunElev,
       sunTitle,
+      sunWhenTitle,
+      ambientDelta,
       unitLabel,
       unitTitle,
       togglePublic,
@@ -2555,7 +2559,7 @@ const App = {
                       <span
                         v-if="sunEmoji(row.sun)"
                         class="poll-sun"
-                        :title="sunTitle(row.sun)"
+                        :title="sunWhenTitle(row.sun, row.weather)"
                       >
                         {{ sunEmoji(row.sun) }}
                         <span v-if="sunElev(row.sun)" class="poll-sun-elev">{{
@@ -2612,7 +2616,7 @@ const App = {
                       <span
                         v-if="sunEmoji(row.sun)"
                         class="poll-sun"
-                        :title="sunTitle(row.sun)"
+                        :title="sunWhenTitle(row.sun, row.weather)"
                       >
                         {{ sunEmoji(row.sun) }}
                         <span v-if="sunElev(row.sun)" class="poll-sun-elev">{{
@@ -2623,6 +2627,9 @@ const App = {
                     </td>
                     <td class="poll-metric">
                       {{ formatPollTemp(row) }}
+                      <span v-if="ambientDelta(row)" class="stock-delta stock-neutral">{{
+                        ambientDelta(row)
+                      }}</span>
                       <span
                         v-if="tempStock(row)"
                         class="stock-delta"

@@ -178,15 +178,6 @@ def compute_health(
                 fix="Refresh. If it stays silent, check companion path and that the unit is on.",
             )
         )
-    elif session_state == "unreachable":
-        checks.append(
-            _check(
-                "Reachability",
-                "bad",
-                "Unreachable this poll pass",
-                fix="Refresh again. If login keeps timing out, check path, flood, and that the radio is up.",
-            )
-        )
     elif freshness == "stale":
         checks.append(
             _check(
@@ -467,8 +458,6 @@ def compute_health(
         headline: Headline = "paused"
     elif silent_too_long or (not in_flight and freshness == "never"):
         headline = "attention"
-    elif not in_flight and session_state == "unreachable":
-        headline = "unreachable"
     elif issues:
         headline = "attention"
     else:
