@@ -59,7 +59,7 @@ CLOCK_CLI_RE = re.compile(
 
 DEFAULT_MIN_POLL_INTERVAL = 3600.0  # status + telemetry
 NEIGHBOR_POLL_INTERVAL = 86400.0  # discover is airtime-heavy
-OTA_POLL_INTERVAL = 86400.0  # ota status + ls; also on manual Refresh
+OTA_POLL_INTERVAL = 86400.0  # ota status + ls; auto + Pull, not Refresh
 NEIGHBOR_DISCOVER_WAIT_S = 12.0  # after remote discover.neighbors, before GET
 OTA_LS_WAIT_S = 5.0  # after first `ota ls` (queryAll), before second catalog read
 POST_INSTALL_WAIT_S = 20.0  # after `ota install`, before liveness GET

@@ -326,10 +326,10 @@ class FleetManualJobBuildTests(unittest.TestCase):
             )
             refresh_get = {j.kind for j in refresh if j.kind.startswith("get:")}
             for g in refresh_due_groups():
-                if g == "neighbors":
-                    self.assertIn("get:neighbors", refresh_get)
-                else:
-                    self.assertIn(f"get:{g}", refresh_get)
+                self.assertIn(f"get:{g}", refresh_get)
+            self.assertNotIn("get:neighbors", refresh_get)
+            self.assertNotIn("get:ota_status", refresh_get)
+            self.assertNotIn("get:ota_ls", refresh_get)
             pull = build_manual_jobs(
                 target, "pull", do_poll=True, do_apply=True, apply_due=False, skip_discover=False
             )

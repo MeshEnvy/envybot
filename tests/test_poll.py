@@ -66,12 +66,15 @@ class JobStageTests(unittest.TestCase):
 
 
 class ManualDueGroupsTests(unittest.TestCase):
-    def test_refresh_is_periodic_only(self) -> None:
-        from envybot.poll import GET_GROUP_ORDER, PERIODIC_GROUPS, refresh_due_groups
+    def test_refresh_is_live_only(self) -> None:
+        from envybot.poll import DAILY_GROUPS, GET_GROUP_ORDER, LIVE_GROUPS, refresh_due_groups
 
-        self.assertEqual(refresh_due_groups(), list(PERIODIC_GROUPS))
+        self.assertEqual(refresh_due_groups(), list(LIVE_GROUPS))
+        self.assertEqual(set(LIVE_GROUPS), {"status", "telemetry"})
+        self.assertEqual(set(DAILY_GROUPS), {"ota_status", "ota_ls", "neighbors"})
         for group in refresh_due_groups():
             self.assertIn(group, GET_GROUP_ORDER)
+            self.assertNotIn(group, DAILY_GROUPS)
 
     def test_pull_is_all_groups(self) -> None:
         from envybot.poll import GET_GROUP_ORDER, pull_due_groups
@@ -111,6 +114,18 @@ class PollCadenceTests(unittest.TestCase):
         self.assertTrue(group_is_due(seen, "telemetry", policy=policy, now=now))
         self.assertFalse(group_is_due(seen, "neighbors", policy=policy, now=now))
         self.assertTrue(group_is_due(seen, "neighbors", policy=policy, now=now + 86400))
+
+    def test_ota_daily_like_neighbors(self) -> None:
+        policy = PollPolicy(min_interval=3600.0)
+        now = 1_700_000_000
+        seen = {
+            "ota_status_at": now - 4000,
+            "ota_ls_at": now - 4000,
+        }
+        self.assertFalse(group_is_due(seen, "ota_status", policy=policy, now=now))
+        self.assertFalse(group_is_due(seen, "ota_ls", policy=policy, now=now))
+        self.assertTrue(group_is_due(seen, "ota_status", policy=policy, now=now + 86400))
+        self.assertTrue(group_is_due(seen, "ota_ls", policy=policy, now=now + 86400))
 
     def test_inventory_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

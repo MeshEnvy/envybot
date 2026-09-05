@@ -2568,7 +2568,7 @@ const App = {
                       </button>
                     </li>
                   </ul>
-                  <template v-else>none seen (Refresh to re-poll)</template>
+                  <template v-else>none seen (Pull to re-poll)</template>
                 </dd>
               </dl>
             </template>

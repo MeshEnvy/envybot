@@ -62,6 +62,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Fleet UI **Refresh** is status/telemetry only. OTA (`ota status` +
+  `ota ls`) and neighbors stay on the 24h auto cadence. **Pull** still
+  fetches them on demand.
+
 - `trust` does not apply `public` or `MeshEnvy` channel rows (Public was
   already skipped; MeshEnvy is the same). Remaining grants (SLPT, 911, …)
   still SET.

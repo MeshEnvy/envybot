@@ -97,8 +97,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   UI ``due`` is that stamp (apply needed). ``leak`` is a later pull that
   still shows advert or flood advert on. Name or GPS is not an advert.
   A last-seen interval older than the apply stamp is ignored. Poll default: status/telemetry every 1h
-  (`--min-interval`); neighbors
-  stay 24h (`discover.neighbors` + wait + GET; UI drops rows older
+  (`--min-interval`); neighbors and OTA (`ota status` + delayed `ota ls`)
+  stay 24h (`discover.neighbors` + wait + GET; UI drops neighbor rows older
   than 7d). Long-running fleet re-checks due groups about every 60s
   while idle, and after each swim-lane batch (so apply-due units
   do not wait for the whole fleet to go quiet). fw/bl/ota once; name/gps/advert/acl audit-only (Pull /
@@ -164,7 +164,8 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
   `--web-only` browses the book without a radio. Never expose secrets.
   **Refresh**, **Pull**, and **Push** always enqueue (even while that unit
   is polling) and run ahead of auto work until the click is done. Overrides
-  `--skip` and `paused`. Refresh is live GET only; Pull adds sticky GET;
+  `--skip` and `paused`. Refresh is live GET only (status/telemetry);
+  Pull adds sticky GET plus OTA/neighbors;
   Push is SET-only force.   **Console** (header or unit-row icon): tabbed modal, optional extra sessions to the
   same unit. Row icon focuses the first tab for that unit or opens one.
   Open is radio-free. CLI jumps that unit (login on first send if not
@@ -210,8 +211,8 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
   Map pins color by last-heard age (green→red over 24h); labels include
   `(3h)` and tick from `last_heard` + store clock.
   In-flight cards show the current job stage (Logging in, Fetching ACL, …).
-  **OTA (stage-then-roll):** Refresh polls `ota status` + delayed `ota ls`
-  into sqlite `ota_state`. Detail **Firmware** is identity (version, hw,
+  **OTA (stage-then-roll):** auto poll (24h) and Pull store `ota status` +
+  delayed `ota ls` into sqlite `ota_state`. Detail **Firmware** is identity (version, hw,
   target, full body hash + image K, bootloader). **OTA** is session
   (serving, keys, local, heard `[yours]`). List badges: `staged`,
   `sees update`, `downloading`. **Stage** per heard row (`ota pull <#> flash`);
@@ -222,4 +223,4 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-04 (Heard neighbor miles)
+Last updated: 2026-09-05 (Refresh skips daily OTA/neighbors)

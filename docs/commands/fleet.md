@@ -8,10 +8,10 @@ Localhost fleet manager. Serves the dashboard UI, GETs telemetry into
 ```
 
 Default: UI at `http://127.0.0.1:8787/` (`?unit=me0032` restores the open
-card; `?map=1` reopens the map modal) plus live GET (status/telemetry/neighbors),
+card; `?map=1` reopens the map modal) plus live GET (status/telemetry),
 inventory gaps (fw/bl/ota base hash), and apply when the profile hash misses.
-Refresh stores `ota status` (hw, target, this-fw, serving, keys, bl, seeder)
-plus `ota ls` for the detail OTA panel. Neighbor GET
+OTA session (`ota status` + delayed `ota ls`) and neighbors stay on a 24h
+auto cadence; Pull fetches them now. Neighbor GET
 sends remote `discover.neighbors`, waits 12s, then reads the table. Heard
 rows show approximate miles (book display GPS for fleet peers, companion
 advert GPS for community nodes). Polls every
@@ -37,6 +37,7 @@ First run imports leftover `polls.jsonl` (then deletes it) and YAML
 | Mode | Groups | When |
 |------|--------|------|
 | periodic | `status`, `telemetry` | `--min-interval` (default 1h) |
+| periodic | `ota_status`, `ota_ls` | 24h (`ota status` + delayed `ota ls`) |
 | periodic | `neighbors` | 24h (`discover.neighbors` + wait + GET) |
 | inventory | `firmware`, `bootloader`, `ota` | until sqlite stamp exists |
 | audit | `name`, `lat`, `lon`, `advert`, `flood_advert`, `acl` | **Pull**, `--group`, or `--force` only |
@@ -49,7 +50,7 @@ TTL, so ghosts stay in sqlite history.
 A long-running `fleet` (not `--once`) re-checks due groups about every 60s
 while idle, and after each swim-lane batch so a missing profile can SET
 while other units are still GETting. No extra radio traffic unless
-status/telemetry is ≥1h stale, neighbors ≥24h, or apply is due. UI
+status/telemetry is ≥1h stale, OTA/neighbors ≥24h, or apply is due. UI
 freshness stays 24h.
 
 Default runs never GET sticky identity fields. UI ``due`` follows the
@@ -137,8 +138,8 @@ While the companion worker is live:
 
 | Action | GET | SET |
 |--------|-----|-----|
-| **Refresh** | status, telemetry, neighbors (ignore interval) | only if profile is due |
-| **Pull** | Refresh plus fw, bootloader, name, lat, lon, advert, acl | only if profile is due |
+| **Refresh** | status, telemetry (ignore interval) | only if profile is due |
+| **Pull** | all GET groups (incl. OTA + neighbors) | only if profile is due |
 | **Push** | none | force re-SET profile (incl. guest/admin passwords) |
 
 List cards expose **Refresh** only. Detail adds **Pull** and **Push** (Push
@@ -191,8 +192,9 @@ console. The header icon also toggles.
   tables as `./envybot cmd`; redacted passwords).
 - Tracked poll CLI replies (`ota status`, `ota stats`, `ota self`, `ota ls`,
   `ver`, `get bootloader.ver`, `get name` / `lat` / `lon` / advert intervals,
-  `get acl`) also stamp sqlite last-seen like a poll. Binary GETs (status,
-  telemetry, neighbors) still need Refresh.
+  `get acl`) also stamp sqlite last-seen like a poll. Binary status and
+  telemetry still need Refresh. Neighbors stay on the 24h auto cadence
+  (or Pull).
 
 ## Apply
 

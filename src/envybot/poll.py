@@ -45,6 +45,8 @@ GET_GROUPS: dict[str, PullGroupSpec] = {
 
 GET_GROUP_ORDER = tuple(GET_GROUPS.keys())
 PERIODIC_GROUPS = tuple(g for g in GET_GROUP_ORDER if GET_GROUPS[g].mode == "periodic")
+LIVE_GROUPS = tuple(g for g in PERIODIC_GROUPS if GET_GROUPS[g].interval is None)
+DAILY_GROUPS = tuple(g for g in PERIODIC_GROUPS if GET_GROUPS[g].interval is not None)
 MANUAL_JOBS = frozenset({"refresh", "pull", "push", "stage", "install"})
 IN_FLIGHT_STATES = frozenset(
     {"queued", "refreshing", "pulling", "pushing", "staging", "installing", "polling", "console"}
@@ -96,8 +98,12 @@ _STAGE_LABELS = {
 
 
 def refresh_due_groups() -> list[str]:
-    """Live GET groups for a manual Refresh (interval ignored)."""
-    return list(PERIODIC_GROUPS)
+    """Live GET groups for a manual Refresh (interval ignored).
+
+    Status/telemetry only. OTA and neighbors stay on the 24h auto cadence
+    (Pull still fetches them).
+    """
+    return list(LIVE_GROUPS)
 
 
 def pull_due_groups() -> list[str]:
@@ -366,6 +372,8 @@ __all__ = [
     "GET_GROUP_ORDER",
     "GET_GROUPS",
     "MANUAL_JOBS",
+    "LIVE_GROUPS",
+    "DAILY_GROUPS",
     "PERIODIC_GROUPS",
     "PULL_GROUP_ORDER",
     "PULL_GROUPS",
