@@ -10,13 +10,15 @@ from ruamel.yaml import YAML
 
 from envybot.apply import profile_id
 from envybot.history import import_yaml_last_seen, insert_apply, open_history, record_poll
-from envybot.position import is_placeholder_gps, lookup_site_name
+from envybot.position import approx_miles, haversine_miles, is_placeholder_gps, lookup_site_name
 from envybot.web.snapshot import (
     assert_no_secrets,
+    attach_neighbor_miles,
     build_fleet_snapshot,
     drift_state,
     is_secret_key,
     neighbor_is_fresh,
+    reported_locs_from_contacts,
     resolve_position,
     sanitize_neighbors,
     strip_secrets,
@@ -631,6 +633,97 @@ class NeighborFreshTests(unittest.TestCase):
         ]
         out = sanitize_neighbors(raw, pubkey_index=index, nodes=nodes, sites={})
         self.assertEqual([n["unit_key"] for n in out], ["me0002"])
+
+
+class NeighborMilesTests(unittest.TestCase):
+    def test_approx_rounding(self) -> None:
+        self.assertEqual(approx_miles(3.24), 3.2)
+        self.assertEqual(approx_miles(18.4), 18.0)
+        self.assertAlmostEqual(haversine_miles(39.5, -119.8, 39.6, -119.8), 6.9, places=1)
+
+    def test_book_peer_uses_site_loc(self) -> None:
+        units = {
+            "me0001": {
+                "position": {"lat": 39.5, "lon": -119.8},
+                "neighbors": [{"unit_key": "me0002", "pubkey_prefix": "bbbbbbbb"}],
+            },
+            "me0002": {"position": {"lat": 39.6, "lon": -119.8}},
+        }
+        attach_neighbor_miles(units)
+        self.assertAlmostEqual(units["me0001"]["neighbors"][0]["miles"], 6.9, places=1)
+
+    def test_community_uses_reported_loc(self) -> None:
+        units = {
+            "me0001": {
+                "position": {"lat": 39.5, "lon": -119.8},
+                "neighbors": [{"pubkey_prefix": "abcd1234", "snr": 7}],
+            }
+        }
+        attach_neighbor_miles(units, {"abcd1234": (39.6, -119.8)})
+        self.assertAlmostEqual(units["me0001"]["neighbors"][0]["miles"], 6.9, places=1)
+
+    def test_contacts_skip_placeholder(self) -> None:
+        locs = reported_locs_from_contacts(
+            {
+                "aa" * 32: {"public_key": "aa" * 32, "adv_lat": 0.0, "adv_lon": 0.0},
+                "bb" * 32: {"public_key": "bb" * 32, "adv_lat": 39.6, "adv_lon": -119.8},
+            }
+        )
+        self.assertNotIn("aa" * 32, locs)
+        self.assertEqual(locs["bb" * 8], (39.6, -119.8))
+
+    def test_unmapped_origin_omits_miles(self) -> None:
+        units = {
+            "me0001": {
+                "position": None,
+                "neighbors": [{"unit_key": "me0002"}],
+            },
+            "me0002": {"position": {"lat": 39.6, "lon": -119.8}},
+        }
+        attach_neighbor_miles(units)
+        self.assertNotIn("miles", units["me0001"]["neighbors"][0])
+
+    def test_snapshot_stamps_book_miles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            yaml = YAML()
+            yaml.dump(
+                {
+                    "sites": {
+                        "alpha": {"name": "Alpha", "loc": [39.5, -119.8], "node": "me0001"},
+                        "beta": {"name": "Beta", "loc": [39.6, -119.8], "node": "me0002"},
+                    }
+                },
+                sites_path.open("w", encoding="utf-8"),
+            )
+            yaml.dump(
+                {
+                    "next_unit": 3,
+                    "nodes": {
+                        "me0001": {
+                            "unit_id": "ME0001",
+                            "identity_pubkey": "a" * 64,
+                            "neighbors": [
+                                {"pubkey": ("b" * 8) + "00", "secs_ago": 10, "snr": 5.0},
+                            ],
+                        },
+                        "me0002": {
+                            "unit_id": "ME0002",
+                            "identity_pubkey": "b" * 64,
+                        },
+                    },
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            conn = open_history(book)
+            import_yaml_last_seen(conn, yaml.load(nodes_path.read_text(encoding="utf-8"))["nodes"])
+            conn.close()
+            snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
+            nbs = [n for n in snap["units"]["me0001"]["neighbors"] if n.get("unit_key") == "me0002"]
+            self.assertEqual(len(nbs), 1)
+            self.assertAlmostEqual(nbs[0]["miles"], 6.9, places=1)
 
 
 class DriftStateTests(unittest.TestCase):

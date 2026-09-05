@@ -2,13 +2,32 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
 from ruamel.yaml import YAML
 
+EARTH_MI = 3958.8
+
 ONBOARD_LAT = 14.009295
 ONBOARD_LON = 120.996018
+
+
+def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in statute miles."""
+    rlat1, rlat2 = math.radians(lat1), math.radians(lat2)
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(rlat1) * math.cos(rlat2) * math.sin(dlon / 2) ** 2
+    return 2 * EARTH_MI * math.asin(min(1.0, math.sqrt(a)))
+
+
+def approx_miles(miles: float) -> float:
+    """UI rounding: 0.1 mi under 10, whole miles at 10+."""
+    if miles < 10:
+        return round(miles, 1)
+    return float(round(miles))
 
 
 def is_placeholder_gps(lat: Any, lon: Any) -> bool:

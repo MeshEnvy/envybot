@@ -12,7 +12,9 @@ card; `?map=1` reopens the map modal) plus live GET (status/telemetry/neighbors)
 inventory gaps (fw/bl/ota base hash), and apply when the profile hash misses.
 Refresh stores `ota status` (hw, target, this-fw, serving, keys, bl, seeder)
 plus `ota ls` for the detail OTA panel. Neighbor GET
-sends remote `discover.neighbors`, waits 12s, then reads the table. Polls every
+sends remote `discover.neighbors`, waits 12s, then reads the table. Heard
+rows show approximate miles (book display GPS for fleet peers, companion
+advert GPS for community nodes). Polls every
 pollable MeshCore unit in the book, including bag/bench (no site `node:` bind).
 Contact sync drops an old companion record when a unit's pubkey changes
 (same `unit_id` or site name). Bare `Repeater` contacts stay.

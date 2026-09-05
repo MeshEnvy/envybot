@@ -36,7 +36,12 @@ from envybot.weather import attach_weather
 from envybot.radio import load_targets
 from envybot.web.console import ConsoleManager
 from envybot.web.hub import FleetHub
-from envybot.web.snapshot import assert_no_secrets, build_fleet_snapshot, build_neighbor_edges
+from envybot.web.snapshot import (
+    assert_no_secrets,
+    build_fleet_snapshot,
+    build_neighbor_edges,
+    reported_locs_from_contacts,
+)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -78,6 +83,7 @@ class MonitorWeb:
     _poll_state: dict[str, Any] = field(default_factory=dict, repr=False)
     _companion: str | None = field(default=None, repr=False)
     console: ConsoleManager = field(default_factory=ConsoleManager, repr=False)
+    _reported_locs: dict[str, tuple[float, float]] = field(default_factory=dict, repr=False)
 
     def bind_scheduler(
         self,
@@ -383,6 +389,15 @@ class MonitorWeb:
         )
         return 200, None
 
+    def _live_reported_locs(self) -> dict[str, tuple[float, float]] | None:
+        session = getattr(self, "_fleet_session", None)
+        client = getattr(session, "_recovery_client", None) if session else None
+        live = reported_locs_from_contacts(getattr(client, "contacts", None) if client else None)
+        if live:
+            self._reported_locs = live
+            return live
+        return self._reported_locs or None
+
     async def refresh_snapshot(
         self,
         *,
@@ -403,6 +418,7 @@ class MonitorWeb:
             session_states=self._session_states,
             companion=self._companion,
             poll=self._poll_state or poll or {"phase": "idle"},
+            reported_locs=self._live_reported_locs(),
         )
         snap["edges"] = build_neighbor_edges(snap["units"])
         snap.setdefault("poll", {})["console"] = self.console.poll_console()
@@ -432,6 +448,7 @@ class MonitorWeb:
             session_states=self._session_states,
             companion=self._companion,
             poll=self._poll_state or poll or {"phase": "idle"},
+            reported_locs=self._live_reported_locs(),
         )
         snap["edges"] = build_neighbor_edges(snap["units"])
         snap.setdefault("poll", {})["console"] = self.console.poll_console()

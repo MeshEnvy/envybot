@@ -44,6 +44,7 @@ import {
 import {
   formatAgo,
   formatBattery,
+  formatMiles,
   formatCount,
   formatPollWindow,
   formatSignedDelta,
@@ -1927,6 +1928,7 @@ const App = {
         notesEditing.value = true;
       },
       formatAgo,
+      formatMiles,
       formatRelative,
       formatSite,
       formatBattery,
@@ -2655,6 +2657,7 @@ const App = {
               :class="{ 'neighbor-off-book': !nb.unit_key }"
             >
               {{ neighborLabel(nb) }}
+              <template v-if="nb.miles != null"> · ~{{ formatMiles(nb.miles) }}</template>
               · {{ nb.snr ?? '?' }} dB
               · {{ formatAgo(nb.secs_ago) }}
             </div>

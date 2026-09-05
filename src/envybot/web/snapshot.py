@@ -23,8 +23,10 @@ from envybot.history import (
     latest_neighbors,
     latest_ota,
     latest_status,
+    load_community_locs,
     open_history,
     rolling_traffic,
+    save_community_locs,
     status_series,
 )
 from envybot.ota_parse import ota_badge
@@ -44,7 +46,10 @@ from envybot.routing import (
     routing_explicit,
 )
 from envybot.position import (
+    approx_miles,
     display_name,
+    haversine_miles,
+    is_placeholder_gps,
     load_sites,
     lookup_site_name,
     node_alias,
@@ -210,6 +215,96 @@ def neighbor_is_fresh(secs_ago: Any, *, max_age: float = NEIGHBOR_FRESH_SECS) ->
     if age < 0:
         return True
     return age <= max_age
+
+
+def reported_locs_from_contacts(contacts: Any) -> dict[str, tuple[float, float]]:
+    """Advert GPS from companion contacts, indexed by full key and prefixes."""
+    if not isinstance(contacts, dict):
+        return {}
+    out: dict[str, tuple[float, float]] = {}
+    for key, raw in contacts.items():
+        if not isinstance(raw, dict):
+            continue
+        pk = str(raw.get("public_key") or key or "").strip().lower()
+        if not pk:
+            continue
+        try:
+            lat = float(raw.get("adv_lat"))
+            lon = float(raw.get("adv_lon"))
+        except (TypeError, ValueError):
+            continue
+        if is_placeholder_gps(lat, lon):
+            continue
+        loc = (lat, lon)
+        out[pk] = loc
+        if len(pk) >= 16:
+            out[pk[:16]] = loc
+        if len(pk) >= 8:
+            out[pk[:8]] = loc
+    return out
+
+
+def lookup_reported_loc(
+    pubkey: Any, reported_locs: dict[str, tuple[float, float]]
+) -> tuple[float, float] | None:
+    if not isinstance(pubkey, str) or not pubkey:
+        return None
+    pk = pubkey.strip().lower()
+    if not pk:
+        return None
+    if pk in reported_locs:
+        return reported_locs[pk]
+    if len(pk) >= 16 and pk[:16] in reported_locs:
+        return reported_locs[pk[:16]]
+    if len(pk) >= 8 and pk[:8] in reported_locs:
+        return reported_locs[pk[:8]]
+    return None
+
+
+def _coord_pair(pos: Any) -> tuple[float, float] | None:
+    if not isinstance(pos, dict):
+        return None
+    try:
+        lat = float(pos["lat"])
+        lon = float(pos["lon"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if is_placeholder_gps(lat, lon):
+        return None
+    return lat, lon
+
+
+def neighbor_loc(
+    nb: dict[str, Any],
+    units: dict[str, dict[str, Any]],
+    reported_locs: dict[str, tuple[float, float]],
+) -> tuple[float, float] | None:
+    """Book display loc for fleet peers; companion advert GPS for community."""
+    key = nb.get("unit_key")
+    if isinstance(key, str) and key in units:
+        book = _coord_pair(units[key].get("position"))
+        if book:
+            return book
+    return lookup_reported_loc(nb.get("pubkey_prefix"), reported_locs)
+
+
+def attach_neighbor_miles(
+    units: dict[str, dict[str, Any]],
+    reported_locs: dict[str, tuple[float, float]] | None = None,
+) -> None:
+    locs = reported_locs or {}
+    for unit in units.values():
+        origin = _coord_pair(unit.get("position"))
+        if not origin:
+            continue
+        for nb in unit.get("neighbors") or []:
+            if not isinstance(nb, dict):
+                continue
+            dest = neighbor_loc(nb, units, locs)
+            if not dest:
+                continue
+            miles = haversine_miles(origin[0], origin[1], dest[0], dest[1])
+            nb["miles"] = approx_miles(miles)
 
 
 def sanitize_neighbors(
@@ -538,6 +633,7 @@ def build_fleet_snapshot(
     companion: str | None = None,
     poll: dict[str, Any] | None = None,
     last_seen: dict[str, dict[str, Any]] | None = None,
+    reported_locs: dict[str, tuple[float, float]] | None = None,
 ) -> dict[str, Any]:
     """Full public fleet snapshot: YAML desired + sqlite last_seen."""
     doc = load_nodes_doc(nodes_path)
@@ -589,6 +685,10 @@ def build_fleet_snapshot(
             audit_path = latest_mesh_audit_path(conn, key)
             if audit_path:
                 audit_path_map[key] = audit_path
+        if reported_locs:
+            save_community_locs(conn, reported_locs)
+        else:
+            reported_locs = load_community_locs(conn)
     except OSError:
         seen_map = seen_map or {}
         conn = None
@@ -650,6 +750,7 @@ def build_fleet_snapshot(
                 now=now,
             )
             units[key]["sparks"] = compact_sparks(status_rows, conn=conn, unit=key, now=now)
+        attach_neighbor_miles(units, reported_locs)
     finally:
         if conn is not None:
             conn.close()

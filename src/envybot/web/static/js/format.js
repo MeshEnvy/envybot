@@ -1,4 +1,12 @@
 /** @param {number | null | undefined} secs age in seconds */
+/** Approximate statute miles for Heard rows. */
+export function formatMiles(miles) {
+  if (miles == null || !Number.isFinite(Number(miles))) return ''
+  const n = Number(miles)
+  if (n < 10) return `${n.toFixed(1)} mi`
+  return `${Math.round(n)} mi`
+}
+
 export function formatAgo(secs) {
   if (secs == null || Number.isNaN(Number(secs))) return '—'
   const age = Math.max(0, Math.floor(Number(secs)))

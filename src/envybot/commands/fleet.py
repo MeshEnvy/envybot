@@ -389,6 +389,12 @@ async def run(args: argparse.Namespace) -> int:
         work_targets = [t for t in auto_targets if scheduler.units.get(t.key, None) and scheduler.units[t.key].jobs]
         if work_targets:
             await sync_fleet_contacts(client, work_targets, log=log)
+    if web_ctx:
+        await web_ctx.refresh_snapshot(
+            session_states=session_states,
+            companion=companion_short,
+            poll=web_ctx._poll_state,
+        )
 
     succeeded: dict[str, bool] = {}
     interrupted = False

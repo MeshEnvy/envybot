@@ -195,6 +195,8 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
   live. Detail sparklines prefer merged `polls` from `/api/polls/{unit}`
   (`poll_snapshots`); ACL poll log only (no neighbor count history). **Heard**
   list is live snapshot from latest neighbors GET (book + off-book by pubkey).
+  Rows show approximate miles from the unit: book display loc for fleet
+  peers, companion advert GPS (`adv_lat`/`adv_lon`) for community nodes.
   Each GET persists only that
   group (no replay of earlier status). SSE `unit` events carry
   `{ source, sample }` so the open card updates live via `state.js`.
@@ -220,4 +222,4 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-04 (Open-Meteo weather join)
+Last updated: 2026-09-04 (Heard neighbor miles)

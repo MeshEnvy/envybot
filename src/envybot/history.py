@@ -11,6 +11,7 @@ from typing import Any
 
 HISTORY_REL = Path("data/fleet/history.sqlite")
 LEGACY_JSONL = Path("data/fleet/polls.jsonl")
+COMMUNITY_LOCS_META = "community_locs"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS last_seen (
@@ -203,6 +204,42 @@ def _ensure_sample_loc_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE telemetry ADD COLUMN lat REAL")
     if "lon" not in cols:
         conn.execute("ALTER TABLE telemetry ADD COLUMN lon REAL")
+
+
+def load_community_locs(conn: sqlite3.Connection) -> dict[str, tuple[float, float]]:
+    """Companion-advert GPS for off-book neighbors, keyed by pubkey prefix."""
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = ?", (COMMUNITY_LOCS_META,)
+    ).fetchone()
+    if not row or not row[0]:
+        return {}
+    try:
+        raw = json.loads(row[0])
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, tuple[float, float]] = {}
+    for key, loc in raw.items():
+        if not isinstance(key, str) or not isinstance(loc, (list, tuple)) or len(loc) < 2:
+            continue
+        try:
+            lat, lon = float(loc[0]), float(loc[1])
+        except (TypeError, ValueError):
+            continue
+        out[key.lower()] = (lat, lon)
+    return out
+
+
+def save_community_locs(
+    conn: sqlite3.Connection, locs: dict[str, tuple[float, float]]
+) -> None:
+    payload = {k.lower(): [lat, lon] for k, (lat, lon) in locs.items()}
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+        (COMMUNITY_LOCS_META, json.dumps(payload, default=str)),
+    )
+    conn.commit()
 
 
 SAMPLE_LOC_BACKFILL_META = "sample_loc_backfill"

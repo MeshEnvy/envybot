@@ -8,6 +8,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- Fleet detail **Heard** rows show approximate miles from the unit. Book
+  display GPS for fleet peers; companion advert GPS for community nodes.
 - **`weather backfill`** — Open-Meteo hourly cache for bound site GPS. Poll
   history **When** cells show ambient temp, cloud, precip, and wind on hover;
   telemetry rows show radio temp vs ambient. Run `./envybot weather backfill`
