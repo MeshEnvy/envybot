@@ -68,6 +68,8 @@ SessionState = str  # idle | queued | refreshing | pulling | pushing | polling |
 RADIO_PREF_FIELDS = (
     ("powersaving", "Power saving"),
     ("fem_rxgain", "FEM LNA"),
+    ("fem_vfem", "FEM VFEM"),
+    ("rxgain", "SX1262 boost"),
     ("dutycycle", "Duty cycle"),
     ("path_hash", "Path hash"),
     ("ota_autofetch", "OTA autofetch"),
@@ -471,7 +473,7 @@ def drift_state(
 
 
 def pref_display(field: str, value: Any) -> str:
-    if field in ("powersaving", "fem_rxgain"):
+    if field in ("powersaving", "fem_rxgain", "fem_vfem", "rxgain"):
         if isinstance(value, bool):
             return "on" if value else "off"
         text = str(value).strip().lower()
@@ -614,6 +616,8 @@ def sanitize_unit(
         "dutycycle": node.get("dutycycle"),
         "powersaving": node.get("powersaving"),
         "fem_rxgain": node.get("fem_rxgain"),
+        "fem_vfem": node.get("fem_vfem"),
+        "rxgain": node.get("rxgain"),
         "prefs": prefs or [],
         "node_clock": (seen or {}).get("node_clock"),
         "drift": drift_state(node, profile_ok=profile_ok, seen=seen, apply_at=apply_at),

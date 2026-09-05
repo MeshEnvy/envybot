@@ -15,9 +15,11 @@ from envybot.apply import (
     clear_apply_stamps,
     desired_dutycycle,
     desired_fem_rxgain,
+    desired_fem_vfem,
     desired_ota_autofetch,
     desired_path_hash_mode,
     desired_powersaving,
+    desired_rxgain,
     profile_id,
     radio_apply_due_fields,
 )
@@ -73,9 +75,11 @@ from envybot.radio import (
     FemRxgainUnsupported,
     OtaAutofetchUnsupported,
     set_fem_rxgain_policy,
+    set_fem_vfem_policy,
     set_ota_autofetch_policy,
     set_path_hash_policy,
     set_powersaving_policy,
+    set_rxgain_policy,
     trigger_neighbor_discover_once,
 )
 
@@ -98,6 +102,8 @@ APPLY_FIELD_ORDER = (
     "ota_autofetch",
     "powersaving",
     "fem_rxgain",
+    "fem_vfem",
+    "rxgain",
     "acl",
 )
 
@@ -1299,6 +1305,32 @@ async def _execute_apply(
             )
         except FemRxgainUnsupported:
             ctx.log.step("fem.rxgain: skip (unsupported)")
+            send = "ok"
+        else:
+            send = "ok" if applied is not None else "timeout"
+    elif field == "fem_vfem":
+        try:
+            applied = await set_fem_vfem_policy(
+                ctx.client, target, cmd_timeout=ctx.cmd_timeout, attempts=1,
+                log=ctx.log, session=ctx.session,
+                enabled=desired_fem_vfem(node),
+                attempt_num=attempt_num, attempt_cap=attempt_cap,
+            )
+        except FemRxgainUnsupported:
+            ctx.log.step("fem.vfem: skip (unsupported)")
+            send = "ok"
+        else:
+            send = "ok" if applied is not None else "timeout"
+    elif field == "rxgain":
+        try:
+            applied = await set_rxgain_policy(
+                ctx.client, target, cmd_timeout=ctx.cmd_timeout, attempts=1,
+                log=ctx.log, session=ctx.session,
+                enabled=desired_rxgain(node),
+                attempt_num=attempt_num, attempt_cap=attempt_cap,
+            )
+        except FemRxgainUnsupported:
+            ctx.log.step("radio.rxgain: skip (unsupported)")
             send = "ok"
         else:
             send = "ok" if applied is not None else "timeout"

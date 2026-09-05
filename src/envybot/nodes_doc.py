@@ -63,8 +63,9 @@ NODES_YAML_HEADER = (
     "# Repeater + 0,0 + adverts off unless public: true (then site name + GPS).\n"
     "# path_hash_mode / dutycycle: radio prefs (apply/onboard default 1 / 50).\n"
     "# ota_autofetch: off|any|signed (apply/onboard default off).\n"
-    "# powersaving / fem_rxgain: optional on|off. Apply SETs only when present.\n"
-    "#   fem_rxgain is T096 LNA. Missing CLI (unsupported / unknown config) stamps done.\n"
+    "# powersaving / fem_rxgain / fem_vfem / rxgain: optional on|off. Apply SETs only when present.\n"
+    "#   fem_rxgain is T096 LNA; fem_vfem is VFEM bias during RX; rxgain is SX1262 boosted gain.\n"
+    "#   Missing CLI (unsupported / unknown config) stamps done.\n"
     "# trust.admin / trust.guest: people from keys.yaml (MeshCore ACL).\n"
     "# admin1_pubkey / admin1_secret: Meshtastic remote-admin. Not MC ACL.\n"
     "# firmware_platform: meshcore | meshtastic. Meshtastic rows stay in the\n"
@@ -197,7 +198,7 @@ def sync_paused(nodes_path: Path, nodes: dict[str, Any]) -> None:
                 mem[field] = val.strip() if field == "alias" else val
             else:
                 mem.pop(field, None)
-        for field in ("powersaving", "fem_rxgain"):
+        for field in ("powersaving", "fem_rxgain", "fem_vfem", "rxgain"):
             if field in disk:
                 mem[field] = disk[field]
             else:

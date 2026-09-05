@@ -136,9 +136,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Poll and apply password-login every MeshCore unit. Live RTC from login
   timestamp or ``clock`` CLI.
 - Duty-cycle default is 50% (stock MeshCore). `nodes.yaml` `dutycycle`
-  overrides. Optional `powersaving` / `fem_rxgain` (on|off) apply only
-  when the book sets them. FEM missing CLI (`unsupported` /
-  `unknown config`) stamps done. Seeder launch is 10%. `set dutycycle` needs MeshCore 1.15+;
+  overrides. Optional `powersaving` / `fem_rxgain` / `fem_vfem` /
+  `rxgain` (on|off) apply only when the book sets them. Missing CLI
+  (`unsupported` / `unknown config`) stamps done. Seeder launch is 10%. `set dutycycle` needs MeshCore 1.15+;
   older 1.x uses `set af` (50% = af 1.0).
   Onboard also SETs `path.hash.mode` 1 (2-byte), same as fleet apply,
   and always SETs admin (write-only; yaml is the value, not a skip),

@@ -11,8 +11,10 @@ from envybot.apply import (
     apply_is_due,
     applicable_field_desireds,
     desired_fem_rxgain,
+    desired_fem_vfem,
     desired_ota_autofetch,
     desired_powersaving,
+    desired_rxgain,
     format_apply_plan,
     profile_id,
     profile_parts,
@@ -132,9 +134,19 @@ class ProfileTests(unittest.TestCase):
         parts = profile_parts(_STRONG, None)
         self.assertNotIn("powersaving", parts)
         self.assertNotIn("fem_rxgain", parts)
+        self.assertNotIn("fem_vfem", parts)
+        self.assertNotIn("rxgain", parts)
         self.assertEqual(_id(_STRONG), _id({**_STRONG}))
         self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "powersaving": True}))
         self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "fem_rxgain": False}))
+        self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "fem_vfem": False}))
+        self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "rxgain": False}))
+
+    def test_desired_rxgain_alias(self) -> None:
+        self.assertIsNone(desired_rxgain({}))
+        self.assertFalse(desired_rxgain({**_STRONG, "rxgain": False}))
+        self.assertFalse(desired_rxgain({**_STRONG, "radio.rxgain": "off"}))
+        self.assertTrue(desired_rxgain({**_STRONG, "rxgain": "on"}))
 
     def test_desired_powersaving_optional(self) -> None:
         self.assertIsNone(desired_powersaving({}))
@@ -148,6 +160,12 @@ class ProfileTests(unittest.TestCase):
         self.assertFalse(desired_fem_rxgain({**_STRONG, "fem_rxgain": False}))
         self.assertFalse(desired_fem_rxgain({**_STRONG, "radio.fem.rxgain": "off"}))
         self.assertTrue(desired_fem_rxgain({**_STRONG, "fem_rxgain": "on"}))
+
+    def test_desired_fem_vfem_alias(self) -> None:
+        self.assertIsNone(desired_fem_vfem({}))
+        self.assertFalse(desired_fem_vfem({**_STRONG, "fem_vfem": False}))
+        self.assertFalse(desired_fem_vfem({**_STRONG, "radio.fem.vfem": "off"}))
+        self.assertTrue(desired_fem_vfem({**_STRONG, "fem_vfem": "on"}))
 
 
 class DueTests(unittest.TestCase):

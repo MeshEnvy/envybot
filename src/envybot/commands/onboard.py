@@ -34,8 +34,10 @@ except ImportError as exc:  # pragma: no cover
 
 from envybot.apply import (
     desired_fem_rxgain,
+    desired_fem_vfem,
     desired_ota_autofetch,
     desired_powersaving,
+    desired_rxgain,
     stamp_profile_after_onboard,
 )
 from envybot.history import open_history, record_onboard_heard
@@ -787,6 +789,62 @@ def apply_fem_rxgain_policy(
     )
 
 
+def apply_fem_vfem_policy(
+    cli: RepeaterSerial,
+    node: dict[str, Any] | None,
+    *,
+    force: bool,
+) -> bool:
+    """``set radio.fem.vfem`` when the book sets it. Skip if unsupported."""
+    want = desired_fem_vfem(node or {})
+    if want is None:
+        return False
+    word = "on" if want else "off"
+    raw = cli.cmd("get radio.fem.vfem")
+    if fem_rxgain_cli_missing(raw):
+        print("   skipped (unsupported)")
+        return False
+    got = (raw or "").strip().lower()
+    already = word in got
+    return apply_if_needed(
+        cli,
+        step="set radio.fem.vfem",
+        already=already,
+        setter=f"set radio.fem.vfem {word}",
+        verify=lambda: word in (cli.cmd("get radio.fem.vfem") or "").lower(),
+        ok_label=word,
+        force=force,
+    )
+
+
+def apply_rxgain_policy(
+    cli: RepeaterSerial,
+    node: dict[str, Any] | None,
+    *,
+    force: bool,
+) -> bool:
+    """``set radio.rxgain`` when the book sets it. Skip if unsupported."""
+    want = desired_rxgain(node or {})
+    if want is None:
+        return False
+    word = "on" if want else "off"
+    raw = cli.cmd("get radio.rxgain")
+    if fem_rxgain_cli_missing(raw):
+        print("   skipped (unsupported)")
+        return False
+    got = (raw or "").strip().lower()
+    already = word in got
+    return apply_if_needed(
+        cli,
+        step="set radio.rxgain",
+        already=already,
+        setter=f"set radio.rxgain {word}",
+        verify=lambda: word in (cli.cmd("get radio.rxgain") or "").lower(),
+        ok_label=word,
+        force=force,
+    )
+
+
 def onboard(
     cli: RepeaterSerial,
     *,
@@ -852,6 +910,12 @@ def onboard(
 
     print("4c. fem.rxgain …")
     apply_fem_rxgain_policy(cli, node, force=force)
+
+    print("4d. fem.vfem …")
+    apply_fem_vfem_policy(cli, node, force=force)
+
+    print("4e. radio.rxgain …")
+    apply_rxgain_policy(cli, node, force=force)
 
     print("5. adverts 0/0 …")
     adv = parse_int_get_value(cli.cmd("get advert.interval"))

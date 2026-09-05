@@ -55,9 +55,11 @@ from envybot.radio import (
     set_book_coord,
     set_dutycycle_policy,
     set_fem_rxgain_policy,
+    set_fem_vfem_policy,
     set_ota_autofetch_policy,
     set_path_hash_policy,
     set_powersaving_policy,
+    set_rxgain_policy,
     FemRxgainUnsupported,
 )
 
@@ -81,6 +83,8 @@ APPLY_FIELDS = (
     "ota_autofetch",
     "powersaving",
     "fem_rxgain",
+    "fem_vfem",
+    "rxgain",
     "acl",
     "identity",
 )
@@ -140,6 +144,24 @@ def desired_fem_rxgain(node: dict[str, Any]) -> bool | None:
     return None
 
 
+def desired_fem_vfem(node: dict[str, Any]) -> bool | None:
+    """None unless the book sets ``fem_vfem`` (alias ``radio.fem.vfem``)."""
+    if "fem_vfem" in node:
+        return _parse_optional_bool(node.get("fem_vfem"))
+    if "radio.fem.vfem" in node:
+        return _parse_optional_bool(node.get("radio.fem.vfem"))
+    return None
+
+
+def desired_rxgain(node: dict[str, Any]) -> bool | None:
+    """None unless the book sets ``rxgain`` (alias ``radio.rxgain``)."""
+    if "rxgain" in node:
+        return _parse_optional_bool(node.get("rxgain"))
+    if "radio.rxgain" in node:
+        return _parse_optional_bool(node.get("radio.rxgain"))
+    return None
+
+
 def _opt_int(value: Any) -> int | None:
     if value is None or value == "":
         return None
@@ -196,6 +218,12 @@ def profile_parts(
     fem_rxgain = desired_fem_rxgain(node)
     if fem_rxgain is not None:
         parts["fem_rxgain"] = fem_rxgain
+    fem_vfem = desired_fem_vfem(node)
+    if fem_vfem is not None:
+        parts["fem_vfem"] = fem_vfem
+    rxgain = desired_rxgain(node)
+    if rxgain is not None:
+        parts["rxgain"] = rxgain
     return parts
 
 
@@ -768,6 +796,48 @@ async def apply_one(
             return abort("fem_rxgain")
     elif "fem_rxgain" in applicable:
         log.step("fem.rxgain: skip (synced)")
+
+    if "fem_vfem" in due:
+        unsupported = False
+        try:
+            applied = await set_fem_vfem_policy(
+                client, target, cmd_timeout=cmd_timeout,
+                attempts=attempts,
+                log=log, session=session,
+                enabled=desired_fem_vfem(node),
+            )
+        except FemRxgainUnsupported:
+            unsupported = True
+            applied = None
+        if applied is not None or unsupported:
+            stamp("fem_vfem")
+            if unsupported:
+                log.step("fem.vfem: skip (unsupported)")
+        else:
+            return abort("fem_vfem")
+    elif "fem_vfem" in applicable:
+        log.step("fem.vfem: skip (synced)")
+
+    if "rxgain" in due:
+        unsupported = False
+        try:
+            applied = await set_rxgain_policy(
+                client, target, cmd_timeout=cmd_timeout,
+                attempts=attempts,
+                log=log, session=session,
+                enabled=desired_rxgain(node),
+            )
+        except FemRxgainUnsupported:
+            unsupported = True
+            applied = None
+        if applied is not None or unsupported:
+            stamp("rxgain")
+            if unsupported:
+                log.step("radio.rxgain: skip (unsupported)")
+        else:
+            return abort("rxgain")
+    elif "rxgain" in applicable:
+        log.step("radio.rxgain: skip (synced)")
 
     stored_clock = None
     seen = get_last_seen(conn, target.key)

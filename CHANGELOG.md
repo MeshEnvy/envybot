@@ -25,11 +25,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   `bench_loc`. Apply still uses bound site GPS only (`public: true`) or
   `0,0`. Fleet UI watches browser geolocation and POSTs `/api/bench`
   (debounced yaml write; no radio SET).
-- Apply optional `powersaving` and `fem_rxgain` from `nodes.yaml` (CLI
-  prefs, persist on the radio). Absent keys are left alone. Missing
-  `fem_rxgain` CLI (`unsupported` or `unknown config`) stamps done.
-- Fleet cards show book apply prefs (power saving, FEM LNA, duty cycle,
-  path hash, OTA autofetch) plus applied/due from sqlite stamps.
+- Apply optional `powersaving`, `fem_rxgain`, `fem_vfem`, and `rxgain`
+  from `nodes.yaml` (CLI prefs, persist on the radio). Absent keys are
+  left alone. Missing FEM / `radio.rxgain` CLI (`unsupported` or
+  `unknown config`) stamps done. Onboard applies the same keys.
+- Fleet cards show book apply prefs (power saving, FEM LNA, FEM VFEM,
+  SX1262 boost, duty cycle, path hash, OTA autofetch) plus applied/due
+  from sqlite stamps.
 
 ### Removed
 
