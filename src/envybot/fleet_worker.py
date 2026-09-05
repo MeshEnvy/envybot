@@ -29,16 +29,35 @@ from envybot.apply import (
     _ensure_guest_password,
     _set_cli,
 )
-from envybot.history import get_last_seen, insert_command, record_poll, stamp_apply
-from envybot.jobs import INVENTORY_GROUPS, JobOutcome, RadioJob, UnitQueue
+from envybot.history import (
+    get_last_seen,
+    insert_command,
+    mark_ota_unsupported,
+    record_poll,
+    stamp_apply,
+)
+from envybot.jobs import (
+    INVENTORY_GROUPS,
+    JobOutcome,
+    RadioJob,
+    UnitQueue,
+    drop_ota_poll_jobs,
+)
 from envybot.keys_doc import UnknownPerson, parse_serial_acl, resolve_node_acl
 from envybot.nodes_doc import MASK_NAME, is_public
 from envybot.passwords import normalize_password, password_is_strong
-from envybot.poll import GET_GROUP_ORDER, PollPolicy, pull_due_groups, refresh_due_groups
+from envybot.poll import (
+    GET_GROUP_ORDER,
+    PollPolicy,
+    omit_unsupported_ota,
+    pull_due_groups,
+    refresh_due_groups,
+)
 from envybot.position import public_radio_name, resolve_book_position, site_loc_for_unit
 from envybot.sun import stamp_sun
 from envybot.ota_parse import (
     merge_ota_snapshot,
+    ota_cli_missing,
     ota_ls_heard_empty,
     ota_status_heard_empty,
     parse_ota_ls,
@@ -201,6 +220,25 @@ class PollAccumulator:
                 doc=getattr(ctx, "doc", None),
             ),
         )
+
+
+def _pin_ota_unsupported(
+    raw: str,
+    acc: PollAccumulator,
+    ctx: WorkerContext,
+    target: RouterTarget,
+    uq: UnitQueue | None = None,
+) -> bool:
+    """If this firmware has no OTA CLI, stamp all OTA groups and drop siblings."""
+    if not ota_cli_missing(raw):
+        return False
+    seen = get_last_seen(ctx.conn, target.key)
+    fw = acc.fw or (seen or {}).get("firmware_version") or ""
+    mark_ota_unsupported(ctx.conn, target.key, firmware_version=fw)
+    dropped = drop_ota_poll_jobs(uq) if uq is not None else []
+    extra = f", dropped {', '.join(dropped)}" if dropped else ""
+    ctx.log.step(f"ota: no CLI on this firmware{extra}")
+    return True
 
 
 def _attempt_cap(ctx: WorkerContext) -> int | None:
@@ -379,6 +417,7 @@ def build_manual_jobs(
     skip_discover: bool,
     discover_wait: float = NEIGHBOR_DISCOVER_WAIT_S,
     stage_mid: str | None = None,
+    seen: dict[str, Any] | None = None,
 ) -> list[RadioJob]:
     if manual_job == "stage":
         if not stage_mid:
@@ -399,7 +438,7 @@ def build_manual_jobs(
     due: list[str] = []
     if do_poll:
         if manual_job == "pull":
-            due = pull_due_groups()
+            due = omit_unsupported_ota(pull_due_groups(), seen)
         elif manual_job == "refresh":
             due = refresh_due_groups()
     return build_poll_jobs(
@@ -540,6 +579,9 @@ def _apply_cli_poll_reply(
 ) -> bool:
     """Parse a CLI GET reply and record_poll. True if stamped."""
     if group == "ota_status":
+        if ota_cli_missing(raw):
+            acc.record_group(ctx, target.key, "ota_status")
+            return True
         if not ota_status_heard_empty(raw) and cli_error_reply(raw):
             return False
         parsed = parse_ota_stats(raw) or parse_ota_status(raw)
@@ -552,6 +594,9 @@ def _apply_cli_poll_reply(
         acc.record_group(ctx, target.key, "ota_status")
         return True
     if group == "ota_ls":
+        if ota_cli_missing(raw):
+            acc.record_group(ctx, target.key, "ota_ls")
+            return True
         if not ota_ls_heard_empty(raw) and cli_error_reply(raw):
             return False
         heard = parse_ota_ls(raw)
@@ -564,6 +609,10 @@ def _apply_cli_poll_reply(
         acc.record_group(ctx, target.key, "ota_ls")
         return True
     if group == "ota":
+        if ota_cli_missing(raw):
+            acc.base_hash = acc.base_hash if acc.base_hash is not None else ""
+            acc.record_group(ctx, target.key, "ota")
+            return True
         if not ota_self_heard_empty(raw) and cli_error_reply(raw):
             return False
         parsed_ota = parse_ota_self(raw)
@@ -635,6 +684,8 @@ def _console_capture_tracked(
         return None
     acc = _poll_acc(uq)
     if _apply_cli_poll_reply(group, raw, acc=acc, ctx=ctx, target=target):
+        if group in ("ota", "ota_status", "ota_ls"):
+            _pin_ota_unsupported(raw, acc, ctx, target)
         ctx.log.step(f"console captured {group}")
         return group
     return None
@@ -1030,6 +1081,7 @@ async def _execute_ota_status(
         if not ota_status_heard_empty(raw) and cli_error_reply(raw):
             return JobOutcome.HARD_FAIL, raw
         return JobOutcome.TIMEOUT, None
+    _pin_ota_unsupported(raw, acc, ctx, target, uq)
     return JobOutcome.HEARD, acc.ota
 
 
@@ -1060,12 +1112,15 @@ async def _execute_ota_ls(
         ctx.session.clear_auth(target.key)
         return JobOutcome.HARD_FAIL, raw
     if job.kind == "get:ota_ls_probe":
+        if _pin_ota_unsupported(raw, acc, ctx, target, uq):
+            return JobOutcome.HEARD, raw
         ctx.log.step("ota ls probe (catalog query started)")
         return JobOutcome.HEARD, raw
     if not _apply_cli_poll_reply("ota_ls", raw, acc=acc, ctx=ctx, target=target):
         if not ota_ls_heard_empty(raw) and cli_error_reply(raw):
             return JobOutcome.HARD_FAIL, raw
         return JobOutcome.TIMEOUT, None
+    _pin_ota_unsupported(raw, acc, ctx, target, uq)
     return JobOutcome.HEARD, (acc.ota or {}).get("heard")
 
 
@@ -1114,6 +1169,8 @@ async def _execute_get_cli(
             if not ota_self_heard_empty(raw) and cli_error_reply(raw):
                 return JobOutcome.HARD_FAIL, raw
             return JobOutcome.TIMEOUT, None
+        if _pin_ota_unsupported(raw, acc, ctx, target, uq):
+            return JobOutcome.HEARD, acc.base_hash
         if acc.base_hash:
             ctx.log.step(f"ota base_hash={acc.base_hash}")
         else:

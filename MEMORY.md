@@ -99,7 +99,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   A last-seen interval older than the apply stamp is ignored. Poll default: status/telemetry every 1h
   (`--min-interval`); neighbors and OTA (`ota status` + delayed `ota ls`)
   stay 24h (`discover.neighbors` + wait + GET; UI drops neighbor rows older
-  than 7d). Long-running fleet re-checks due groups about every 60s
+  than 7d). `Unknown command` on any OTA CLI pins `ota` / `ota_status` /
+  `ota_ls` to that `firmware_version` (no refresh until `ver` changes).
+  Long-running fleet re-checks due groups about every 60s
   while idle, and after each swim-lane batch (so apply-due units
   do not wait for the whole fleet to go quiet). fw/bl/ota once; name/gps/advert/acl audit-only (Pull /
   `--group` / `--force`). Status/telemetry samples log bound-site GPS.
@@ -223,4 +225,4 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-05 (Refresh skips daily OTA/neighbors)
+Last updated: 2026-09-05 (OTA skip when firmware has no CLI)

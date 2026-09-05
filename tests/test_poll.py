@@ -127,6 +127,39 @@ class PollCadenceTests(unittest.TestCase):
         self.assertTrue(group_is_due(seen, "ota_status", policy=policy, now=now + 86400))
         self.assertTrue(group_is_due(seen, "ota_ls", policy=policy, now=now + 86400))
 
+    def test_ota_skipped_when_firmware_has_no_cli(self) -> None:
+        from envybot.history import mark_ota_unsupported
+        from envybot.poll import due_groups, format_get_plan, ota_cli_absent
+
+        policy = PollPolicy(min_interval=3600.0)
+        now = 1_700_000_000
+        seen = {
+            "firmware_version": "1.14.0",
+            "ota_unsupported": 1,
+            "ota_unsupported_fw": "1.14.0",
+        }
+        self.assertTrue(ota_cli_absent(seen))
+        for group in ("ota", "ota_status", "ota_ls"):
+            self.assertFalse(group_is_due(seen, group, policy=policy, now=now + 86400))
+        seen_new_fw = {**seen, "firmware_version": "1.17.1"}
+        self.assertFalse(ota_cli_absent(seen_new_fw))
+        self.assertTrue(group_is_due(seen_new_fw, "ota_status", policy=policy, now=now + 86400))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            record_poll(
+                conn,
+                unit="me0001",
+                res=_Res(firmware_version="1.14.0", polled_groups=frozenset({"firmware"})),
+            )
+            mark_ota_unsupported(conn, "me0001", firmware_version="1.14.0")
+            due = due_groups(conn, "me0001", policy=policy, now=now)
+            self.assertNotIn("ota", due)
+            self.assertNotIn("ota_status", due)
+            self.assertNotIn("ota_ls", due)
+            _need, skip = format_get_plan(conn, "me0001", due, policy=policy, now=now)
+            self.assertIn("no CLI", skip)
+
     def test_inventory_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))

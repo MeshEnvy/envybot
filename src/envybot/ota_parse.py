@@ -34,15 +34,22 @@ OTA_STATS_FETCH_RE = re.compile(
 )
 
 
+def ota_cli_missing(text: str | None) -> bool:
+    """True when this firmware has no OTA CLI (not EndF-empty)."""
+    if not text:
+        return False
+    lower = text.strip().lower()
+    if "unknown config" in lower:
+        return False
+    return "unknown ota command" in lower or "unknown command" in lower
+
+
 def ota_ls_heard_empty(text: str) -> bool:
     """True when the radio answered but the catalog is not populated yet."""
     if not text:
         return False
     stripped = text.strip()
-    lower = stripped.lower()
-    if lower == "unknown command":
-        return True
-    if "unknown ota command" in lower:
+    if ota_cli_missing(stripped):
         return True
     if stripped.startswith("ERR"):
         return True
@@ -55,10 +62,7 @@ def ota_status_heard_empty(text: str) -> bool:
     if not text:
         return False
     stripped = text.strip()
-    lower = stripped.lower()
-    if lower == "unknown command":
-        return True
-    if "unknown ota command" in lower:
+    if ota_cli_missing(stripped):
         return True
     if stripped.upper().startswith("ERR"):
         return True

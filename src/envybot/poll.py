@@ -47,6 +47,7 @@ GET_GROUP_ORDER = tuple(GET_GROUPS.keys())
 PERIODIC_GROUPS = tuple(g for g in GET_GROUP_ORDER if GET_GROUPS[g].mode == "periodic")
 LIVE_GROUPS = tuple(g for g in PERIODIC_GROUPS if GET_GROUPS[g].interval is None)
 DAILY_GROUPS = tuple(g for g in PERIODIC_GROUPS if GET_GROUPS[g].interval is not None)
+OTA_CLI_GROUPS = frozenset({"ota", "ota_status", "ota_ls"})
 MANUAL_JOBS = frozenset({"refresh", "pull", "push", "stage", "install"})
 IN_FLIGHT_STATES = frozenset(
     {"queued", "refreshing", "pulling", "pushing", "staging", "installing", "polling", "console"}
@@ -198,6 +199,27 @@ def group_complete(seen: dict[str, Any] | None, group: str) -> bool:
     return _stamp(seen, spec.pulled_at_key) is not None
 
 
+def ota_cli_absent(seen: dict[str, Any] | None) -> bool:
+    """True when this firmware already answered with no OTA CLI."""
+    if not seen:
+        return False
+    try:
+        flagged = int(seen.get("ota_unsupported") or 0)
+    except (TypeError, ValueError):
+        return False
+    if not flagged:
+        return False
+    marked = seen.get("ota_unsupported_fw") or ""
+    current = seen.get("firmware_version") or ""
+    return marked == current
+
+
+def omit_unsupported_ota(groups: list[str], seen: dict[str, Any] | None) -> list[str]:
+    if not ota_cli_absent(seen):
+        return list(groups)
+    return [group for group in groups if group not in OTA_CLI_GROUPS]
+
+
 def group_is_due(
     seen: dict[str, Any] | None,
     group: str,
@@ -206,6 +228,8 @@ def group_is_due(
     now: int,
 ) -> bool:
     spec = GET_GROUPS[group]
+    if group in OTA_CLI_GROUPS and ota_cli_absent(seen):
+        return False
     if policy.force or group in policy.force_groups:
         return True
     if spec.mode == "audit":
@@ -241,11 +265,14 @@ def due_groups(
 ) -> list[str]:
     now = now or int(time.time())
     seen = get_last_seen(conn, unit)
-    return [
-        group
-        for group in GET_GROUP_ORDER
-        if group_is_due(seen, group, policy=policy, now=now)
-    ]
+    return omit_unsupported_ota(
+        [
+            group
+            for group in GET_GROUP_ORDER
+            if group_is_due(seen, group, policy=policy, now=now)
+        ],
+        seen,
+    )
 
 
 def partition_due(
@@ -309,8 +336,12 @@ def format_get_plan(
     skip_inv: list[str] = []
     skip_audit: list[str] = []
     skip_fresh: list[str] = []
+    skip_nocli: list[str] = []
     for group in GET_GROUP_ORDER:
         if group in due_groups:
+            continue
+        if group in OTA_CLI_GROUPS and ota_cli_absent(seen):
+            skip_nocli.append(group)
             continue
         spec = GET_GROUPS[group]
         if spec.mode == "inventory":
@@ -324,6 +355,8 @@ def format_get_plan(
         skip_bits.append(f"{', '.join(skip_inv)} (have)")
     if skip_audit:
         skip_bits.append(f"{', '.join(skip_audit)} (audit)")
+    if skip_nocli:
+        skip_bits.append(f"{', '.join(skip_nocli)} (no CLI)")
     if skip_fresh:
         by_iv: dict[float, list[str]] = {}
         for group in skip_fresh:
@@ -374,7 +407,10 @@ __all__ = [
     "MANUAL_JOBS",
     "LIVE_GROUPS",
     "DAILY_GROUPS",
+    "OTA_CLI_GROUPS",
     "PERIODIC_GROUPS",
+    "ota_cli_absent",
+    "omit_unsupported_ota",
     "PULL_GROUP_ORDER",
     "PULL_GROUPS",
     "PollPolicy",

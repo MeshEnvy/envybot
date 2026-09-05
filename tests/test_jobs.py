@@ -13,6 +13,7 @@ from envybot.jobs import (
     JobOutcome,
     RadioJob,
     UnitQueue,
+    drop_ota_poll_jobs,
     job_still_queued,
 )
 from envybot.radio import RouterTarget
@@ -602,6 +603,22 @@ class LaneHeadingTests(unittest.TestCase):
             lane = _print_lane_heading(t, job, uq, "me0001")
             self.assertEqual(lane, "me0001")
             self.assertEqual(buf.getvalue(), "")
+
+
+class DropOtaPollJobsTests(unittest.TestCase):
+    def test_keeps_head_and_non_ota(self) -> None:
+        uq = UnitQueue(target=_target())
+        uq.jobs.extend(
+            [
+                RadioJob(kind="get:ota", unit_key="me0001"),
+                RadioJob(kind="get:ota_status", unit_key="me0001"),
+                RadioJob(kind="get:ota_ls_wait", unit_key="me0001"),
+                RadioJob(kind="get:status", unit_key="me0001"),
+            ]
+        )
+        dropped = drop_ota_poll_jobs(uq)
+        self.assertEqual(dropped, ["get:ota_status", "get:ota_ls_wait"])
+        self.assertEqual([j.kind for j in uq.jobs], ["get:ota", "get:status"])
 
 
 if __name__ == "__main__":

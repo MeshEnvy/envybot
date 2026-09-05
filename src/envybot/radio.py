@@ -932,11 +932,11 @@ def parse_bootloader(text: str) -> str | None:
 
 def ota_self_heard_empty(text: str) -> bool:
     """True when the radio answered but has no OTA identity to report."""
+    from envybot.ota_parse import ota_cli_missing
+
+    if ota_cli_missing(text):
+        return True
     lower = text.strip().lower()
-    if lower == "unknown command":
-        return True
-    if "unknown ota command" in lower:
-        return True
     if lower.startswith("err no endf"):
         return True
     return False

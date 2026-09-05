@@ -98,6 +98,16 @@ class ParseOtaStatusTests(unittest.TestCase):
         assert parsed is not None
         self.assertEqual(parsed["local"]["state"], "none")
 
+    def test_unknown_command_help_is_missing_cli(self) -> None:
+        from envybot.ota_parse import ota_cli_missing
+
+        self.assertTrue(ota_cli_missing("Unknown command"))
+        self.assertTrue(ota_cli_missing("Unknown command. Type `ota help`."))
+        self.assertTrue(ota_cli_missing("Unknown OTA command. Type `ota help`."))
+        self.assertFalse(ota_cli_missing("unknown config: radio.fem.rxgain off"))
+        self.assertFalse(ota_cli_missing("ERR no EndF (firmware lacks the trailer?)"))
+        self.assertTrue(ota_status_heard_empty("Unknown command. Type `help`."))
+
 
 class ParseOtaLsTests(unittest.TestCase):
     def test_catalog_rows(self) -> None:

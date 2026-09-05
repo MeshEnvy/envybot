@@ -66,6 +66,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   `ota ls`) and neighbors stay on the 24h auto cadence. **Pull** still
   fetches them on demand.
 
+- OTA GET groups pin to firmware after `Unknown command`. No 24h refresh
+  until `ver` changes. Sibling `ota` / `ota status` / `ota ls` jobs drop
+  in the same pass.
+
 - `trust` does not apply `public` or `MeshEnvy` channel rows (Public was
   already skipped; MeshEnvy is the same). Remaining grants (SLPT, 911, …)
   still SET.

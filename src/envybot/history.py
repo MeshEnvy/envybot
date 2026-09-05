@@ -379,6 +379,10 @@ def _ensure_last_seen_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE last_seen ADD COLUMN ota_ls_at INTEGER")
     if "ota_state" not in cols:
         conn.execute("ALTER TABLE last_seen ADD COLUMN ota_state TEXT")
+    if "ota_unsupported" not in cols:
+        conn.execute("ALTER TABLE last_seen ADD COLUMN ota_unsupported INTEGER")
+    if "ota_unsupported_fw" not in cols:
+        conn.execute("ALTER TABLE last_seen ADD COLUMN ota_unsupported_fw TEXT")
     _backfill_last_seen_promoted_fields(conn)
 
 
@@ -1557,6 +1561,8 @@ def _upsert_last_seen(conn: sqlite3.Connection, unit: str, fields: dict[str, Any
         "ota_status_at",
         "ota_ls_at",
         "ota_state",
+        "ota_unsupported",
+        "ota_unsupported_fw",
     ]
     placeholders = ", ".join("?" for _ in cols)
     col_sql = ", ".join(cols)
@@ -1699,6 +1705,31 @@ def record_poll(
             status_at="ota_status" in ota_groups,
             ls_at="ota_ls" in ota_groups,
         )
+    _upsert_last_seen(conn, unit, fields)
+    conn.commit()
+
+
+def mark_ota_unsupported(
+    conn: sqlite3.Connection,
+    unit: str,
+    *,
+    firmware_version: str | None = None,
+    now: int | None = None,
+) -> None:
+    """Stamp all OTA GET groups done and pin the skip to this firmware."""
+    stamp = now or int(time.time())
+    seen = get_last_seen(conn, unit)
+    fw = firmware_version if firmware_version is not None else (seen or {}).get("firmware_version")
+    fields: dict[str, Any] = {
+        "updated_at": stamp,
+        "ota_at": stamp,
+        "ota_status_at": stamp,
+        "ota_ls_at": stamp,
+        "ota_unsupported": 1,
+        "ota_unsupported_fw": fw or "",
+    }
+    if seen is None or seen.get("base_hash") is None:
+        fields["base_hash"] = ""
     _upsert_last_seen(conn, unit, fields)
     conn.commit()
 

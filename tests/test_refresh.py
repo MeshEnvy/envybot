@@ -335,6 +335,23 @@ class FleetManualJobBuildTests(unittest.TestCase):
             )
             pull_kinds = [j.kind for j in pull if j.kind.startswith("get:")]
             self.assertIn("get:neighbors_discover", pull_kinds)
+            pull_skip = build_manual_jobs(
+                target,
+                "pull",
+                do_poll=True,
+                do_apply=True,
+                apply_due=False,
+                skip_discover=False,
+                seen={
+                    "firmware_version": "1.14.0",
+                    "ota_unsupported": 1,
+                    "ota_unsupported_fw": "1.14.0",
+                },
+            )
+            skip_kinds = {j.kind for j in pull_skip if j.kind.startswith("get:")}
+            self.assertNotIn("get:ota", skip_kinds)
+            self.assertNotIn("get:ota_status", skip_kinds)
+            self.assertNotIn("get:ota_ls", skip_kinds)
             push = build_manual_jobs(
                 target, "push", do_poll=True, do_apply=True, apply_due=True, skip_discover=False
             )

@@ -14,7 +14,7 @@ from aiohttp import web
 
 from envybot.apply import apply_is_due
 from envybot.fleet_worker import build_manual_jobs
-from envybot.history import history_series, open_history, source_histories
+from envybot.history import get_last_seen, history_series, open_history, source_histories
 from envybot.jobs import FleetScheduler
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
@@ -187,6 +187,7 @@ class MonitorWeb:
             skip_discover=binding.skip_discover,
             discover_wait=binding.discover_wait,
             stage_mid=stage_selector,
+            seen=get_last_seen(binding.conn, key) if binding.conn else None,
         )
         if job == "stage" and not jobs:
             return 400, "missing catalog index or mid for stage"

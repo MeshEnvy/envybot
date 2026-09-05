@@ -37,7 +37,7 @@ First run imports leftover `polls.jsonl` (then deletes it) and YAML
 | Mode | Groups | When |
 |------|--------|------|
 | periodic | `status`, `telemetry` | `--min-interval` (default 1h) |
-| periodic | `ota_status`, `ota_ls` | 24h (`ota status` + delayed `ota ls`) |
+| periodic | `ota_status`, `ota_ls` | 24h (`ota status` + delayed `ota ls`). Skip after `Unknown command` until firmware changes |
 | periodic | `neighbors` | 24h (`discover.neighbors` + wait + GET) |
 | inventory | `firmware`, `bootloader`, `ota` | until sqlite stamp exists |
 | audit | `name`, `lat`, `lon`, `advert`, `flood_advert`, `acl` | **Pull**, `--group`, or `--force` only |

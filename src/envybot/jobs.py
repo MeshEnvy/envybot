@@ -125,6 +125,28 @@ def drop_console_jobs(uq: UnitQueue, tab_id: str | None = None) -> list[RadioJob
     return dropped
 
 
+def is_ota_poll_job(kind: str) -> bool:
+    return kind == "get:ota" or kind.startswith("get:ota_")
+
+
+def drop_ota_poll_jobs(uq: UnitQueue, *, keep_head: bool = True) -> list[str]:
+    """Drop remaining OTA GET jobs after this firmware reports no CLI."""
+    dropped: list[str] = []
+    kept: list[RadioJob] = []
+    head = uq.jobs[0] if uq.jobs else None
+    for job in uq.jobs:
+        if keep_head and job is head:
+            kept.append(job)
+            continue
+        if is_ota_poll_job(job.kind):
+            dropped.append(job.kind)
+        else:
+            kept.append(job)
+    uq.jobs.clear()
+    uq.jobs.extend(kept)
+    return dropped
+
+
 def drop_remaining_apply(uq: UnitQueue) -> list[str]:
     """Drop queued SET jobs after a hard apply fail or exhausted retries."""
     dropped: list[str] = []
