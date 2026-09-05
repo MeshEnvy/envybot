@@ -20,7 +20,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/book.py` | Resolve book dir; never write secrets here |
 | `src/envybot/keys_doc.py` | `keys.yaml` people + `trust` role resolve |
 | `src/envybot/channels_doc.py` | `channels.yaml` catalog + companion slot planner |
-| `src/envybot/nodes_doc.py` | Desired `nodes.yaml` load/write/migrate |
+| `src/envybot/nodes_doc.py` | Desired `nodes.yaml` load/write |
 | `src/envybot/history.py` | `data/fleet/history.sqlite` (+ `mesh_audit` per send) |
 | `src/envybot/health.py` | Per-node health checks (snapshot + UI grade) |
 | `src/envybot/position.py` | Display GPS: site → node `loc` → `bench_loc`; apply uses site only |
@@ -44,7 +44,10 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 
 ## Contract
 
-- Greenfield: no `monitor` alias, no `polls.jsonl`, no last-seen in YAML.
+- Greenfield (unshipped): `.cursor/rules/greenfield.mdc`. No builtin
+  yaml/sqlite migrators, dual-read, or leftover book keys. One-shot
+  book cleanup is throwaway Python, not product code. No `monitor`
+  alias. No last-seen in YAML.
 - `nodes.yaml` is SoT for **desired** identity. Cite sqlite `last_seen` for
   reachability / fw / battery / uptime / temperature.
 - GPS for **apply** lives on `sites.yaml` (`loc` + `node:` bind). Apply
@@ -62,9 +65,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   omitted). Path uses cached route (including learned zero-hop direct),
   flood-logins when cache is empty, and discards stale cache after 3 timeouts.
   `direct` forces zero-hop every send. `flood` always floods (danger).
-  First fleet `migrate_desired` rewrites leftover `flood: true` → `routing: flood`
-  (one-shot; no dual-path read). Detail **Routing policy** control; list/detail
-  show **live route** from companion cache.
+  Detail **Routing policy** control; list/detail show **live route** from
+  companion cache.
 - `decommissioned:` (epoch) rows stay in `nodes.yaml` for the number
   but envybot ignores them: no UI, poll, apply, trust, cmd, or onboard.
 - `fleet` and `trust` poll every pollable MeshCore unit, including
@@ -138,8 +140,12 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Poll and apply password-login every MeshCore unit. Live RTC from login
   timestamp or ``clock`` CLI.
 - Duty-cycle default is 50% (stock MeshCore). `nodes.yaml` `dutycycle`
-  overrides. Optional `powersaving` / `fem_rxgain` / `fem_vfem` /
-  `rxgain` (on|off) apply only when the book sets them. Missing CLI
+  overrides. Optional `powersaving` / `fem_rxgain` /
+  `rxgain` (on|off) apply only when the book sets them. `fem_vfem` is
+  gone (`radio.fem.vfem` CLI reverted 09-05).
+  `rxgain` also
+  needs `board: heltec-t096` (or `t096`). Temporary off is firmware
+  `try`, not apply. Missing CLI
   (`unsupported` / `unknown config`) stamps done. Seeder launch is 10%. `set dutycycle` needs MeshCore 1.15+;
   older 1.x uses `set af` (50% = af 1.0).
   Onboard also SETs `path.hash.mode` 1 (2-byte), same as fleet apply,
@@ -225,4 +231,4 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-05 (OTA skip when firmware has no CLI)
+Last updated: 2026-09-05 (greenfield: no builtin migrate)

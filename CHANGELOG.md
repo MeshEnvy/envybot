@@ -18,26 +18,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   for all units (site-bound and benched). Path flood-discovers when cache is
   empty, rides cached direct or multi-hop routes, and discards stale cache after
   3 timeouts. Fleet UI: routing policy segmented control, live route badge on
-  list/detail, danger badge when policy is flood. First `./envybot fleet` run
-  migrates any leftover `flood: true` rows to `routing: flood`.
+  list/detail, danger badge when policy is flood.
 - Book `bench_loc` (HQ GPS for unbound bag/bench) and optional per-node
   `loc`. Precedence for map, sun, and poll stamps: site → node `loc` →
   `bench_loc`. Apply still uses bound site GPS only (`public: true`) or
   `0,0`. Fleet UI watches browser geolocation and POSTs `/api/bench`
   (debounced yaml write; no radio SET).
-- Apply optional `powersaving`, `fem_rxgain`, `fem_vfem`, and `rxgain`
+- Apply optional `powersaving`, `fem_rxgain`, and `rxgain`
   from `nodes.yaml` (CLI prefs, persist on the radio). Absent keys are
-  left alone. Missing FEM / `radio.rxgain` CLI (`unsupported` or
-  `unknown config`) stamps done. Onboard applies the same keys.
-- Fleet cards show book apply prefs (power saving, FEM LNA, FEM VFEM,
+  left alone. `rxgain` is ignored unless `board` is `heltec-t096` (or
+  `t096`). Temporary off is firmware `try`, not apply. Missing FEM /
+  `radio.rxgain` CLI (`unsupported` or `unknown config`) stamps done.
+  Onboard applies the same keys.
+- Fleet cards show book apply prefs (power saving, FEM LNA,
   SX1262 boost, duty cycle, path hash, OTA autofetch) plus applied/due
   from sqlite stamps.
 
 ### Removed
 
-- **`flood: true`** book key and detail Flood toggle. First fleet
-  `migrate_desired` rewrites leftover stamps to `routing: flood`. Use
-  `routing: flood` or the UI Flood policy option afterward.
+- `fem_vfem` / `radio.fem.vfem` apply, onboard, and book keys. Firmware
+  CLI was reverted 09-05.
+
+- **`flood: true`** book key and detail Flood toggle. Use
+  `routing: flood` or the UI Flood policy option.
+
+- Fleet start no longer rewrites `nodes.yaml` to drop old keys.
 
 ### Fixed
 

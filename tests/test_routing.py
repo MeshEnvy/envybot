@@ -13,7 +13,6 @@ from envybot.routing import (
     resolve_routing,
     routing_explicit,
 )
-from envybot.nodes_doc import migrate_routing
 
 
 class ResolveRoutingTests(unittest.TestCase):
@@ -31,13 +30,6 @@ class ResolveRoutingTests(unittest.TestCase):
         node = {"routing": "flood"}
         self.assertEqual(resolve_routing(node), RoutingMode.FLOOD)
         self.assertEqual(routing_explicit(node), "flood")
-
-    def test_migrate_flood_true_to_routing(self) -> None:
-        node = {"flood": True}
-        self.assertTrue(migrate_routing(node))
-        self.assertEqual(node["routing"], "flood")
-        self.assertNotIn("flood", node)
-        self.assertEqual(resolve_routing(node), RoutingMode.FLOOD)
 
     def test_resolve_does_not_read_flood_key(self) -> None:
         self.assertEqual(resolve_routing({"flood": True}), RoutingMode.PATH)

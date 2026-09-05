@@ -2277,7 +2277,7 @@ const App = {
               :key="pref.id"
               class="pref-badge"
               :class="'pref-' + pref.state"
-              :title="pref.state === 'due' ? 'Book apply due' : 'Apply stamped'"
+              :title="pref.note || (pref.state === 'due' ? 'Book apply due' : pref.state === 'blocked' ? 'Not applied' : 'Apply stamped')"
             >{{ pref.label }} {{ pref.value }}</span>
           </p>
           <p class="live-route-line">
@@ -2494,7 +2494,7 @@ const App = {
                 <dt>{{ pref.label }}</dt>
                 <dd>
                   {{ pref.value }}
-                  <span class="dim">{{ pref.state === 'due' ? 'due' : 'applied' }}</span>
+                  <span class="dim">{{ pref.note || (pref.state === 'due' ? 'due' : pref.state === 'blocked' ? 'blocked' : 'applied') }}</span>
                 </dd>
               </template>
             </dl>

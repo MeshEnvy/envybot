@@ -89,7 +89,6 @@ _STAGE_LABELS = {
     "apply:ota_autofetch": "Setting OTA autofetch",
     "apply:powersaving": "Setting powersaving",
     "apply:fem_rxgain": "Setting FEM RX gain",
-    "apply:fem_vfem": "Setting FEM VFEM",
     "apply:rxgain": "Setting radio RX gain",
     "apply:acl": "Setting ACL",
     "apply:clock": "Syncing clock",

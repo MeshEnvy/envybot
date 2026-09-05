@@ -11,7 +11,6 @@ from envybot.apply import (
     apply_is_due,
     applicable_field_desireds,
     desired_fem_rxgain,
-    desired_fem_vfem,
     desired_ota_autofetch,
     desired_powersaving,
     desired_rxgain,
@@ -19,6 +18,7 @@ from envybot.apply import (
     profile_id,
     profile_parts,
     radio_apply_due_fields,
+    rxgain_apply_enabled,
     stamp_profile_after_onboard,
 )
 from envybot.history import insert_apply, last_ok_apply, open_history, record_poll
@@ -134,13 +134,15 @@ class ProfileTests(unittest.TestCase):
         parts = profile_parts(_STRONG, None)
         self.assertNotIn("powersaving", parts)
         self.assertNotIn("fem_rxgain", parts)
-        self.assertNotIn("fem_vfem", parts)
         self.assertNotIn("rxgain", parts)
         self.assertEqual(_id(_STRONG), _id({**_STRONG}))
         self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "powersaving": True}))
         self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "fem_rxgain": False}))
-        self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "fem_vfem": False}))
-        self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "rxgain": False}))
+        self.assertEqual(_id(_STRONG), _id({**_STRONG, "rxgain": False}))
+        self.assertNotEqual(
+            _id(_STRONG),
+            _id({**_STRONG, "board": "heltec-t096", "rxgain": False}),
+        )
 
     def test_desired_rxgain_alias(self) -> None:
         self.assertIsNone(desired_rxgain({}))
@@ -161,11 +163,17 @@ class ProfileTests(unittest.TestCase):
         self.assertFalse(desired_fem_rxgain({**_STRONG, "radio.fem.rxgain": "off"}))
         self.assertTrue(desired_fem_rxgain({**_STRONG, "fem_rxgain": "on"}))
 
-    def test_desired_fem_vfem_alias(self) -> None:
-        self.assertIsNone(desired_fem_vfem({}))
-        self.assertFalse(desired_fem_vfem({**_STRONG, "fem_vfem": False}))
-        self.assertFalse(desired_fem_vfem({**_STRONG, "radio.fem.vfem": "off"}))
-        self.assertTrue(desired_fem_vfem({**_STRONG, "fem_vfem": "on"}))
+
+class RxgainGuardTests(unittest.TestCase):
+    def test_rxgain_ignored_without_t096_board(self) -> None:
+        node = {**_STRONG, "rxgain": False}
+        self.assertIsNone(rxgain_apply_enabled(node))
+        self.assertNotIn("rxgain", applicable_field_desireds(node, None))
+
+    def test_rxgain_off_needs_board(self) -> None:
+        node = {**_STRONG, "board": "heltec-t096", "rxgain": False}
+        self.assertFalse(rxgain_apply_enabled(node))
+        self.assertEqual(applicable_field_desireds(node, None)["rxgain"], "False")
 
 
 class DueTests(unittest.TestCase):

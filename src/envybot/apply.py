@@ -55,7 +55,6 @@ from envybot.radio import (
     set_book_coord,
     set_dutycycle_policy,
     set_fem_rxgain_policy,
-    set_fem_vfem_policy,
     set_ota_autofetch_policy,
     set_path_hash_policy,
     set_powersaving_policy,
@@ -70,6 +69,10 @@ except ImportError:  # pragma: no cover
 
 PROFILE_ID_VERSION = 1
 
+# ``radio.rxgain`` is stock MeshCore SX1262 boost. Off is a range footgun
+# unless the book names a T096. Temporary off is firmware ``try``, not apply.
+RXGAIN_BOARD_TOKENS = frozenset({"heltec-t096", "t096"})
+
 APPLY_FIELDS = (
     "name",
     "lat",
@@ -83,7 +86,6 @@ APPLY_FIELDS = (
     "ota_autofetch",
     "powersaving",
     "fem_rxgain",
-    "fem_vfem",
     "rxgain",
     "acl",
     "identity",
@@ -144,15 +146,6 @@ def desired_fem_rxgain(node: dict[str, Any]) -> bool | None:
     return None
 
 
-def desired_fem_vfem(node: dict[str, Any]) -> bool | None:
-    """None unless the book sets ``fem_vfem`` (alias ``radio.fem.vfem``)."""
-    if "fem_vfem" in node:
-        return _parse_optional_bool(node.get("fem_vfem"))
-    if "radio.fem.vfem" in node:
-        return _parse_optional_bool(node.get("radio.fem.vfem"))
-    return None
-
-
 def desired_rxgain(node: dict[str, Any]) -> bool | None:
     """None unless the book sets ``rxgain`` (alias ``radio.rxgain``)."""
     if "rxgain" in node:
@@ -160,6 +153,30 @@ def desired_rxgain(node: dict[str, Any]) -> bool | None:
     if "radio.rxgain" in node:
         return _parse_optional_bool(node.get("radio.rxgain"))
     return None
+
+
+def node_board_token(node: dict[str, Any]) -> str:
+    raw = node.get("board")
+    if raw is None or raw == "":
+        raw = node.get("hardware")
+    if raw is None or raw == "":
+        return ""
+    return str(raw).strip().lower().replace("_", "-").replace(" ", "-")
+
+
+def board_allows_rxgain(node: dict[str, Any]) -> bool:
+    token = node_board_token(node)
+    if token in RXGAIN_BOARD_TOKENS:
+        return True
+    return token.endswith("-t096") or "-t096-" in token
+
+
+def rxgain_apply_enabled(node: dict[str, Any]) -> bool | None:
+    """Value to SET, or None when apply must not touch ``radio.rxgain``."""
+    want = desired_rxgain(node)
+    if want is None or not board_allows_rxgain(node):
+        return None
+    return want
 
 
 def _opt_int(value: Any) -> int | None:
@@ -218,10 +235,7 @@ def profile_parts(
     fem_rxgain = desired_fem_rxgain(node)
     if fem_rxgain is not None:
         parts["fem_rxgain"] = fem_rxgain
-    fem_vfem = desired_fem_vfem(node)
-    if fem_vfem is not None:
-        parts["fem_vfem"] = fem_vfem
-    rxgain = desired_rxgain(node)
+    rxgain = rxgain_apply_enabled(node)
     if rxgain is not None:
         parts["rxgain"] = rxgain
     return parts
@@ -797,27 +811,6 @@ async def apply_one(
     elif "fem_rxgain" in applicable:
         log.step("fem.rxgain: skip (synced)")
 
-    if "fem_vfem" in due:
-        unsupported = False
-        try:
-            applied = await set_fem_vfem_policy(
-                client, target, cmd_timeout=cmd_timeout,
-                attempts=attempts,
-                log=log, session=session,
-                enabled=desired_fem_vfem(node),
-            )
-        except FemRxgainUnsupported:
-            unsupported = True
-            applied = None
-        if applied is not None or unsupported:
-            stamp("fem_vfem")
-            if unsupported:
-                log.step("fem.vfem: skip (unsupported)")
-        else:
-            return abort("fem_vfem")
-    elif "fem_vfem" in applicable:
-        log.step("fem.vfem: skip (synced)")
-
     if "rxgain" in due:
         unsupported = False
         try:
@@ -825,7 +818,7 @@ async def apply_one(
                 client, target, cmd_timeout=cmd_timeout,
                 attempts=attempts,
                 log=log, session=session,
-                enabled=desired_rxgain(node),
+                enabled=rxgain_apply_enabled(node),
             )
         except FemRxgainUnsupported:
             unsupported = True

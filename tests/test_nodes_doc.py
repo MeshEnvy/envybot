@@ -1,4 +1,4 @@
-"""Desired YAML migrate: strip observed, drop leftover node GPS/site."""
+"""Desired-state nodes.yaml write and book flags."""
 
 from __future__ import annotations
 
@@ -7,11 +7,8 @@ import unittest
 from pathlib import Path
 
 from envybot.nodes_doc import (
-    MASK_NAME,
     is_decommissioned,
     is_paused,
-    is_public,
-    migrate_desired,
     sync_paused,
     write_nodes_doc,
 )
@@ -19,54 +16,7 @@ from envybot.routing import resolve_routing, routing_explicit
 from ruamel.yaml import YAML
 
 
-class MigrateTests(unittest.TestCase):
-    def test_strip_observed_and_node_location(self) -> None:
-        doc = {
-            "next_unit": 2,
-            "nodes": {
-                "me0001": {
-                    "unit_id": "ME0001",
-                    "name": MASK_NAME,
-                    "site": "ophir",
-                    "loc": [39.5, -119.8],
-                    "status": {"battery_mv": 1},
-                    "firmware_version": "v0.1",
-                    "firmware_pulled_at": 9,
-                    "name_pulled_at": 9,
-                }
-            },
-        }
-        sites = {"ophir": {"name": "Ophir", "loc": [39.5, -119.8], "node": "me0001"}}
-        self.assertTrue(migrate_desired(doc, sites))
-        node = doc["nodes"]["me0001"]
-        self.assertNotIn("status", node)
-        self.assertNotIn("firmware_version", node)
-        self.assertNotIn("firmware_pulled_at", node)
-        self.assertAlmostEqual(node["loc"][0], 39.5)
-        self.assertNotIn("site", node)
-        self.assertNotIn("name", node)
-        self.assertNotIn("public", node)
-        self.assertFalse(is_public(node))
-
-    def test_strips_legacy_site_field(self) -> None:
-        doc = {
-            "next_unit": 2,
-            "nodes": {
-                "me0001": {
-                    "unit_id": "ME0001",
-                    "site": "ophir",
-                    "loc": [39.51, -119.81],
-                    "name": "Spanish Benchmark East",
-                }
-            },
-        }
-        sites = {"ophir": {"loc": [39.5, -119.8], "node": "me0001"}}
-        migrate_desired(doc, sites)
-        node = doc["nodes"]["me0001"]
-        self.assertAlmostEqual(node["loc"][0], 39.51)
-        self.assertNotIn("site", node)
-        self.assertNotIn("name", node)
-
+class WriteTests(unittest.TestCase):
     def test_write_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "nodes.yaml"
@@ -180,31 +130,8 @@ class PausedTests(unittest.TestCase):
             self.assertEqual(disk["nodes"]["me0001"]["guest_password"], "rolled")
 
 
-class RoutingMigrateTests(unittest.TestCase):
-    def test_migrate_desired_converts_flood_true(self) -> None:
-        doc = {
-            "next_unit": 3,
-            "nodes": {
-                "me0001": {"unit_id": "ME0001", "routing": "direct"},
-                "me0002": {"unit_id": "ME0002", "flood": True},
-            },
-        }
-        self.assertTrue(migrate_desired(doc, {}))
-        self.assertEqual(doc["nodes"]["me0002"]["routing"], "flood")
-        self.assertNotIn("flood", doc["nodes"]["me0002"])
-        self.assertEqual(doc["nodes"]["me0001"]["routing"], "direct")
-
-    def test_migrate_keeps_explicit_routing_over_flood(self) -> None:
-        doc = {
-            "next_unit": 2,
-            "nodes": {"me0001": {"unit_id": "ME0001", "routing": "direct", "flood": True}},
-        }
-        self.assertTrue(migrate_desired(doc, {}))
-        self.assertEqual(doc["nodes"]["me0001"]["routing"], "direct")
-        self.assertNotIn("flood", doc["nodes"]["me0001"])
-
-    def test_resolve_ignores_unmigrated_flood(self) -> None:
-        # Runtime resolve never dual-reads flood; migrate first.
+class RoutingBookTests(unittest.TestCase):
+    def test_resolve_ignores_flood_key(self) -> None:
         self.assertEqual(resolve_routing({"flood": True}), resolve_routing({}))
         self.assertIsNone(routing_explicit({"flood": True}))
 

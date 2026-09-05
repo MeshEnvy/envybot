@@ -63,9 +63,11 @@ NODES_YAML_HEADER = (
     "# Repeater + 0,0 + adverts off unless public: true (then site name + GPS).\n"
     "# path_hash_mode / dutycycle: radio prefs (apply/onboard default 1 / 50).\n"
     "# ota_autofetch: off|any|signed (apply/onboard default off).\n"
-    "# powersaving / fem_rxgain / fem_vfem / rxgain: optional on|off. Apply SETs only when present.\n"
-    "#   fem_rxgain is T096 LNA; fem_vfem is VFEM bias during RX; rxgain is SX1262 boosted gain.\n"
-    "#   Missing CLI (unsupported / unknown config) stamps done.\n"
+    "# powersaving / fem_rxgain / rxgain: optional on|off. Apply SETs only when present.\n"
+    "#   fem_rxgain is T096 LNA (stock radio.fem.rxgain).\n"
+    "#   rxgain is SX1262 boosted gain. Apply ignores it unless board is\n"
+    "#   heltec-t096 (or t096). Temporary off is firmware try, not apply.\n"
+    "#   Missing CLI stamps done.\n"
     "# trust.admin / trust.guest: people from keys.yaml (MeshCore ACL).\n"
     "# admin1_pubkey / admin1_secret: Meshtastic remote-admin. Not MC ACL.\n"
     "# firmware_platform: meshcore | meshtastic. Meshtastic rows stay in the\n"
@@ -198,7 +200,12 @@ def sync_paused(nodes_path: Path, nodes: dict[str, Any]) -> None:
                 mem[field] = val.strip() if field == "alias" else val
             else:
                 mem.pop(field, None)
-        for field in ("powersaving", "fem_rxgain", "fem_vfem", "rxgain"):
+        for field in (
+            "powersaving",
+            "fem_rxgain",
+            "rxgain",
+            "board",
+        ):
             if field in disk:
                 mem[field] = disk[field]
             else:
@@ -212,28 +219,9 @@ def is_decommissioned(node: dict[str, Any] | None) -> bool:
     return node.get("decommissioned") not in (None, "", False)
 
 
-def migrate_routing(node: dict[str, Any]) -> bool:
-    """One-shot: ``flood: true`` → ``routing: flood``; drop obsolete key.
-
-    Not a runtime dual-path. Call from migrate_desired / normalize so the
-    book is rewritten once, then only ``routing`` remains.
-    """
-    changed = False
-    if node.get("flood") is True:
-        if not isinstance(node.get("routing"), str) or not str(node.get("routing")).strip():
-            node["routing"] = "flood"
-        node.pop("flood", None)
-        changed = True
-    elif "flood" in node:
-        node.pop("flood", None)
-        changed = True
-    return changed
-
-
 def normalize_fleet_node(node: dict[str, Any]) -> None:
-    """Drop obsolete keys (greenfield — no field aliasing)."""
+    """Drop observed telemetry keys. Those are sqlite, not desired-state."""
     strip_observed(node)
-    migrate_routing(node)
 
 
 def strip_observed(node: dict[str, Any]) -> bool:
@@ -241,37 +229,6 @@ def strip_observed(node: dict[str, Any]) -> bool:
     for key in OBSERVED_KEYS:
         if key in node:
             node.pop(key, None)
-            changed = True
-    return changed
-
-
-def drop_node_location(node: dict[str, Any]) -> bool:
-    """Strip legacy site bind on the node row. Per-node loc is kept."""
-    changed = False
-    if "site" in node:
-        node.pop("site", None)
-        changed = True
-    return changed
-
-
-def migrate_desired(doc: dict[str, Any], sites: dict[str, dict[str, Any]]) -> bool:
-    """Strip observed YAML keys and leftover node GPS/site. Do not stamp public."""
-    del sites
-    changed = False
-    nodes = doc.get("nodes") or {}
-    if not isinstance(nodes, dict):
-        return False
-    for node in nodes.values():
-        if not isinstance(node, dict):
-            continue
-        if strip_observed(node):
-            changed = True
-        if migrate_routing(node):
-            changed = True
-        if drop_node_location(node):
-            changed = True
-        if "name" in node:
-            node.pop("name", None)
             changed = True
     return changed
 

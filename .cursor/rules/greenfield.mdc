@@ -1,0 +1,46 @@
+---
+description: EnvyBot is unshipped greenfield — no migrations, dual-read, or leftover keys
+alwaysApply: true
+---
+
+# Greenfield
+
+EnvyBot has **not shipped**. The operator book and a bench/fleet of radios
+are the only real environment. There is no field fleet to upgrade.
+
+Do not design for legacy books, old yaml keys, or rolling schema.
+
+## Do
+
+- Change the canonical shape (`nodes.yaml` keys, sqlite columns, APIs, UI).
+  Update in-repo callers and tests in the same change set.
+- Delete dead keys, aliases, and ignore-paths. One name per concept.
+- If a live book still has junk: one-shot inline Python in the session,
+  confirm clean, **do not commit the script**.
+- Treat a leftover `flood:` (or similar) as junk. Runtime reads the
+  canonical key only.
+
+## Don't
+
+- Ship `migrate_*`, start-of-fleet yaml rewrites, or dual-read
+  (old key + new key) "just in case."
+- Keep deprecated apply/onboard/UI paths, leftover book keys, or
+  ignore-lists for removed prefs (`fem_vfem`, `rxgain_keep`, …).
+- Add compatibility shims because a prior commit used another name.
+- Leave a migrator in the repo after a one-shot cleanup.
+
+## Book vs product
+
+| In product code | Out of product code |
+|-----------------|---------------------|
+| Load/write the current book shape | Rewriting books on `./envybot fleet` start |
+| `strip_observed` in memory (telemetry is sqlite) | Deleting/renaming keys on every launch |
+| Explicit operator edits (UI, onboard, apply persist) | Built-in "first run migrate" |
+
+`migrate_legacy` (`polls.jsonl` → sqlite) is leftover ingest, not a
+pattern. Do not copy it. Do not add a yaml twin.
+
+## Related
+
+- Search / book path: `.cursor/rules/search-scope.mdc`
+- Desired yaml: `src/envybot/nodes_doc.py`

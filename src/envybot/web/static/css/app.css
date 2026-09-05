@@ -918,6 +918,11 @@ body {
   color: #ffd166;
 }
 
+.pref-badge.pref-blocked {
+  background: #3d1a1a;
+  color: #f5a3a3;
+}
+
 .pref-line {
   display: flex;
   flex-wrap: wrap;

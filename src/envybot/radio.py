@@ -1468,45 +1468,6 @@ async def set_rxgain_policy(
     return enabled
 
 
-async def set_fem_vfem_policy(
-    client: MeshCore,
-    target: RouterTarget,
-    *,
-    cmd_timeout: float,
-    attempts: int,
-    log: PollLog,
-    session: FleetSession | None = None,
-    enabled: bool | None,
-    attempt_num: int | None = None,
-    attempt_cap: int | None = None,
-) -> bool | None:
-    """``set radio.fem.vfem on|off``. Raises FemRxgainUnsupported if missing."""
-    if enabled is None:
-        return None
-    word = "on" if enabled else "off"
-    raw = await send_cmd_sync(
-        client,
-        target,
-        f"set radio.fem.vfem {word}",
-        timeout=cmd_timeout,
-        attempts=attempts,
-        log=log,
-        session=session,
-        attempt_num=attempt_num,
-        attempt_cap=attempt_cap,
-    )
-    if raw is None:
-        log.step("fem.vfem: no response")
-        return None
-    if fem_rxgain_cli_missing(raw):
-        raise FemRxgainUnsupported()
-    if cli_error_reply(raw) or not cli_set_ok(raw):
-        log.step(f"fem.vfem: set failed ({raw.strip()[:40]})")
-        return None
-    log.step(f"fem.vfem set OK ({word})")
-    return enabled
-
-
 async def set_ota_autofetch_policy(
     client: MeshCore,
     target: RouterTarget,

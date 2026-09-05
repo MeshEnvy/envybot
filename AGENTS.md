@@ -1,6 +1,8 @@
 # AGENTS.md — EnvyBot
 
 Fleet CLI for MeshEnvy radios. Read [`MEMORY.md`](MEMORY.md) first.
+Greenfield (unshipped): [`.cursor/rules/greenfield.mdc`](.cursor/rules/greenfield.mdc).
+No builtin migrations, dual-read, or leftover book keys.
 
 ```bash
 uv sync

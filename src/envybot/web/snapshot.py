@@ -10,6 +10,8 @@ from typing import Any
 from envybot.apply import (
     apply_is_due,
     applicable_field_desireds,
+    board_allows_rxgain,
+    desired_rxgain,
     profile_parts,
 )
 from envybot.health import compute_health
@@ -68,7 +70,6 @@ SessionState = str  # idle | queued | refreshing | pulling | pushing | polling |
 RADIO_PREF_FIELDS = (
     ("powersaving", "Power saving"),
     ("fem_rxgain", "FEM LNA"),
-    ("fem_vfem", "FEM VFEM"),
     ("rxgain", "SX1262 boost"),
     ("dutycycle", "Duty cycle"),
     ("path_hash", "Path hash"),
@@ -473,7 +474,7 @@ def drift_state(
 
 
 def pref_display(field: str, value: Any) -> str:
-    if field in ("powersaving", "fem_rxgain", "fem_vfem", "rxgain"):
+    if field in ("powersaving", "fem_rxgain", "rxgain"):
         if isinstance(value, bool):
             return "on" if value else "off"
         text = str(value).strip().lower()
@@ -514,12 +515,21 @@ def build_radio_prefs(
         if field not in applicable or field not in parts:
             continue
         desired = applicable[field]
+        row = {
+            "id": field,
+            "label": label,
+            "value": pref_display(field, parts[field]),
+            "state": "synced" if stamped.get(field) == desired else "due",
+        }
+        prefs.append(row)
+    if desired_rxgain(node) is not None and not board_allows_rxgain(node):
         prefs.append(
             {
-                "id": field,
-                "label": label,
-                "value": pref_display(field, parts[field]),
-                "state": "synced" if stamped.get(field) == desired else "due",
+                "id": "rxgain",
+                "label": "SX1262 boost",
+                "value": pref_display("rxgain", desired_rxgain(node)),
+                "state": "blocked",
+                "note": "need board: heltec-t096",
             }
         )
     return prefs
@@ -616,7 +626,6 @@ def sanitize_unit(
         "dutycycle": node.get("dutycycle"),
         "powersaving": node.get("powersaving"),
         "fem_rxgain": node.get("fem_rxgain"),
-        "fem_vfem": node.get("fem_vfem"),
         "rxgain": node.get("rxgain"),
         "prefs": prefs or [],
         "node_clock": (seen or {}).get("node_clock"),

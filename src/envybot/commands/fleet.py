@@ -39,9 +39,7 @@ from envybot.nodes_doc import (
     is_paused,
     load_nodes_doc,
     load_sites_for_book,
-    migrate_desired,
     sync_paused,
-    write_nodes_doc,
 )
 from envybot.routing import resolve_routing, routing_explicit
 from envybot.poll import (
@@ -106,17 +104,13 @@ async def _serve_web_until_stop(web_ctx: Any, poll_exit: int) -> int:
     return poll_exit
 
 
-def _migrate_book(nodes_path: Path) -> tuple[dict[str, Any], Any]:
+def _load_book(nodes_path: Path) -> tuple[dict[str, Any], Any]:
     doc = load_nodes_doc(nodes_path)
     nodes = doc.get("nodes") or {}
     if not isinstance(nodes, dict):
         nodes = {}
         doc["nodes"] = nodes
-    sites = load_sites_for_book(nodes_path)
     conn = migrate_legacy(nodes_path.parent, nodes)
-    if migrate_desired(doc, sites):
-        write_nodes_doc(nodes_path, doc)
-        print("Migrated nodes.yaml (stripped observed keys / routing / leftover node GPS).")
     return doc, conn
 
 
@@ -197,7 +191,7 @@ def _seed_auto_work(
 
 async def run(args: argparse.Namespace) -> int:
     nodes_path: Path = args.nodes
-    doc, conn = _migrate_book(nodes_path)
+    doc, conn = _load_book(nodes_path)
     from envybot.weather import weather_backfill_pending
 
     if weather_backfill_pending(conn) and not args.quiet:
