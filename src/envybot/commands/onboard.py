@@ -904,6 +904,17 @@ def onboard(
             raise CliError(f"advert verify failed: local={adv} flood={flood}")
         print("   local 0m / flood 0h")
 
+    print("5b. repeat off …")
+    apply_if_needed(
+        cli,
+        step="set repeat off",
+        already=(parse_get_value(cli.cmd("get repeat")) or "").strip().lower() in ("off", "0", "false"),
+        setter="set repeat off",
+        verify=lambda: (parse_get_value(cli.cmd("get repeat")) or "").strip().lower() in ("off", "0", "false"),
+        ok_label="off",
+        force=force,
+    )
+
     print("6. admin password …")
     apply_admin_password(cli, admin_pw)
     admin_changed = admin_src != "yaml"
@@ -1052,7 +1063,7 @@ def register(nodes_path: Path, result: dict[str, Any], *, unit: str | None) -> t
 
 
 def stamp_fleet_ready(nodes_path: Path, unit: str) -> str | None:
-    """Mark the USB-applied private profile synced. None if public: true."""
+    """After USB onboard applied the bench mask, stamp every SET field."""
     doc, nodes = load_registry(nodes_path)
     node = nodes.get(unit)
     if not isinstance(node, dict):
@@ -1150,8 +1161,6 @@ def main(argv: list[str] | None = None) -> int:
             pid = stamp_fleet_ready(args.nodes, unit_key)
             if pid:
                 print(f"profile stamped ({pid})")
-            else:
-                print("profile not stamped (public: true)")
 
         do_discover = not args.no_discover and args.discover_rounds > 0
 

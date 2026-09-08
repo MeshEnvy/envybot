@@ -106,19 +106,34 @@ class ProfileTests(unittest.TestCase):
         b = _id(_STRONG, doc={"trust": {"admin": ["ben"]}}, keys={"ben": ["aa" * 32]})
         self.assertEqual(a, b)
 
-    def test_public_gps_in_parts(self) -> None:
-        node = {**_STRONG, "public": True, "unit_id": "ME0003"}
-        sites = {"ophir": {"node": "me0003", "loc": [39.5, -119.8], "name": "Ophir"}}
-        parts = profile_parts(node, sites, key="me0003")
-        self.assertTrue(parts["public"])
-        self.assertEqual(parts["name"], "Ophir")
+    def test_site_bound_gps_in_parts(self) -> None:
+        node = {**_STRONG, "unit_id": "ME0003"}
+        sites = {"ophir": {"node": "me0003", "loc": [39.5, -119.8], "name": "Ophir", "advert_name": "Ophir"}}
+        doc = {
+            "public_advert": {
+                "name_suffix": " {meshenvy.org}",
+                "location_accuracy_mi": 1.5,
+                "location_salt": "test-book-salt-not-for-production",
+                "owner_info": "MeshEnvy NCC",
+            }
+        }
+        parts = profile_parts(node, sites, doc=doc, key="me0003")
+        self.assertEqual(parts["name"], "Ophir {meshenvy.org}")
+        self.assertNotEqual(parts["lat"], 39.5)
+        self.assertEqual(parts["owner"], "MeshEnvy NCC")
+        self.assertTrue(parts["repeat"])
+        self.assertNotEqual(_id(node, sites, doc=doc), _id(_STRONG))
+
+    def test_exact_coords_when_accuracy_zero(self) -> None:
+        node = {**_STRONG, "unit_id": "ME0003"}
+        sites = {"ophir": {"node": "me0003", "loc": [39.5, -119.8], "name": "Ophir", "advert_name": "Ophir"}}
+        doc = {"public_advert": {"location_accuracy_mi": 0}}
+        parts = profile_parts(node, sites, doc=doc, key="me0003")
         self.assertEqual(parts["lat"], 39.5)
         self.assertEqual(parts["lon"], -119.8)
-        self.assertNotEqual(_id(node, sites), _id(_STRONG))
 
-    def test_private_mask_in_parts(self) -> None:
+    def test_unbound_bench_in_parts(self) -> None:
         parts = profile_parts(_STRONG, None)
-        self.assertFalse(parts["public"])
         self.assertEqual(parts["name"], "Repeater")
         self.assertEqual(parts["lat"], 0.0)
         self.assertEqual(parts["advert"], 0)
@@ -275,12 +290,14 @@ class DueTests(unittest.TestCase):
             self.assertEqual(due, ["powersaving", "fem_rxgain"])
             self.assertNotIn("powersaving", applicable_field_desireds(_STRONG, None))
 
-    def test_onboard_stamp_skips_public(self) -> None:
+    def test_onboard_stamp_after_site_bound(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            node = {**_STRONG, "public": True, "unit_id": "ME0001"}
-            self.assertIsNone(stamp_profile_after_onboard(conn, "me0001", node, None))
-            self.assertTrue(apply_is_due(conn, "me0001", node, None))
+            node = {**_STRONG, "unit_id": "ME0001"}
+            sites = {"ophir": {"node": "me0001", "loc": [39.5, -119.8], "advert_name": "Ophir"}}
+            pid = stamp_profile_after_onboard(conn, "me0001", node, sites)
+            self.assertTrue(pid and pid.startswith("v1:"))
+            self.assertFalse(apply_is_due(conn, "me0001", node, sites))
 
     def test_force(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

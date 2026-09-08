@@ -11,6 +11,7 @@ from envybot.apply import (
     apply_is_due,
     applicable_field_desireds,
     board_allows_rxgain,
+    desired_repeat,
     desired_rxgain,
     profile_parts,
 )
@@ -37,7 +38,6 @@ from envybot.nodes_doc import (
     is_decommissioned,
     is_meshcore_platform,
     is_paused,
-    is_public,
     load_nodes_doc,
     normalize_fleet_node,
 )
@@ -414,27 +414,46 @@ def identity_leak_parts(
     node: dict[str, Any],
     seen: dict[str, Any] | None,
     apply_at: dict[str, int] | None = None,
+    *,
+    sites: dict[str, dict[str, Any]] | None = None,
+    doc: dict[str, Any] | None = None,
+    key: str | None = None,
 ) -> list[str]:
-    """Last-pull advert intervals that are still current vs apply stamps."""
-    if is_public(node) or not seen:
+    """Last-pull advert intervals that differ from book desired."""
+    if not seen:
         return []
+    desired = profile_parts(node, sites, doc=doc, key=key)
     parts: list[str] = []
-    if _heard_after_apply(
-        seen,
-        value_key="advert_interval_min",
-        at_key="advert_at",
-        apply_field="advert",
-        apply_at=apply_at,
+    heard_advert = seen.get("advert_interval_min")
+    desired_advert = desired.get("advert")
+    if (
+        heard_advert is not None
+        and desired_advert is not None
+        and int(float(heard_advert)) != int(desired_advert)
+        and _heard_after_apply(
+            seen,
+            value_key="advert_interval_min",
+            at_key="advert_at",
+            apply_field="advert",
+            apply_at=apply_at,
+        )
     ):
-        parts.append(f"advert {int(float(seen['advert_interval_min']))} min")
-    if _heard_after_apply(
-        seen,
-        value_key="flood_advert_interval_h",
-        at_key="flood_advert_at",
-        apply_field="flood",
-        apply_at=apply_at,
+        parts.append(f"advert {int(float(heard_advert))} min")
+    heard_flood = seen.get("flood_advert_interval_h")
+    desired_flood = desired.get("flood")
+    if (
+        heard_flood is not None
+        and desired_flood is not None
+        and int(float(heard_flood)) != int(desired_flood)
+        and _heard_after_apply(
+            seen,
+            value_key="flood_advert_interval_h",
+            at_key="flood_advert_at",
+            apply_field="flood",
+            apply_at=apply_at,
+        )
     ):
-        parts.append(f"flood advert {int(float(seen['flood_advert_interval_h']))} h")
+        parts.append(f"flood advert {int(float(heard_flood))} h")
     return parts
 
 
@@ -442,8 +461,12 @@ def identity_leak_reason(
     node: dict[str, Any],
     seen: dict[str, Any] | None,
     apply_at: dict[str, int] | None = None,
+    *,
+    sites: dict[str, dict[str, Any]] | None = None,
+    doc: dict[str, Any] | None = None,
+    key: str | None = None,
 ) -> str | None:
-    parts = identity_leak_parts(node, seen, apply_at)
+    parts = identity_leak_parts(node, seen, apply_at, sites=sites, doc=doc, key=key)
     if not parts:
         return None
     return "Last pull: " + ", ".join(parts)
@@ -453,9 +476,13 @@ def heard_identity_leak(
     node: dict[str, Any],
     seen: dict[str, Any] | None,
     apply_at: dict[str, int] | None = None,
+    *,
+    sites: dict[str, dict[str, Any]] | None = None,
+    doc: dict[str, Any] | None = None,
+    key: str | None = None,
 ) -> bool:
-    """True when a later pull still shows a nonzero advert interval."""
-    return bool(identity_leak_parts(node, seen, apply_at))
+    """True when a later pull shows advert intervals that drift from the book."""
+    return bool(identity_leak_parts(node, seen, apply_at, sites=sites, doc=doc, key=key))
 
 
 def drift_state(
@@ -464,9 +491,12 @@ def drift_state(
     profile_ok: bool,
     seen: dict[str, Any] | None = None,
     apply_at: dict[str, int] | None = None,
+    sites: dict[str, dict[str, Any]] | None = None,
+    doc: dict[str, Any] | None = None,
+    key: str | None = None,
 ) -> str | None:
-    """``leak`` = last pull still has advert on. ``due`` = stamp stale."""
-    if heard_identity_leak(node, seen, apply_at):
+    """``leak`` = last pull advert drift. ``due`` = stamp stale."""
+    if heard_identity_leak(node, seen, apply_at, sites=sites, doc=doc, key=key):
         return "leak"
     if not profile_ok:
         return "due"
@@ -589,7 +619,8 @@ def sanitize_unit(
         "site": site_slug,
         "site_name": site_name,
         "alias": node_alias(node),
-        "public": is_public(node),
+        "repeat": desired_repeat(node, sites, key=key),
+        "repeat_explicit": "repeat" in node,
         "paused": is_paused(node),
         "routing": policy.value,
         "routing_explicit": explicit,
@@ -629,8 +660,18 @@ def sanitize_unit(
         "rxgain": node.get("rxgain"),
         "prefs": prefs or [],
         "node_clock": (seen or {}).get("node_clock"),
-        "drift": drift_state(node, profile_ok=profile_ok, seen=seen, apply_at=apply_at),
-        "drift_detail": identity_leak_reason(node, seen, apply_at),
+        "drift": drift_state(
+            node,
+            profile_ok=profile_ok,
+            seen=seen,
+            apply_at=apply_at,
+            sites=sites,
+            doc=doc,
+            key=key,
+        ),
+        "drift_detail": identity_leak_reason(
+            node, seen, apply_at, sites=sites, doc=doc, key=key
+        ),
     }
     if session:
         unit["session"] = session

@@ -51,16 +51,21 @@ OBSERVED_KEYS = (
 )
 
 NODES_YAML_HEADER = (
-    "# MeshEnvy fleet nodes — desired identity (private).\n"
-    "# One entry per physical unit (ME####): identity, credentials,\n"
-    "# optional public: true. Apply GPS from sites.yaml when bound + public.\n"
+    "# MeshEnvy fleet nodes — desired identity.\n"
+    "# One entry per physical unit (ME####): identity, credentials.\n"
+    "# Apply GPS from sites.yaml when site-bound.\n"
+    "# public_advert: book-level suffix, owner_info, location_accuracy_mi,\n"
+    "#   location_salt (required when location_accuracy_mi > 0; offsets are\n"
+    "#   stable per node). 0 = exact stake coords on the air.\n"
+    "#   Per-site advert_name (≤16 chars + suffix) in sites.yaml.\n"
+    "# repeat: optional on|off. Default on when site-bound, off when bench.\n"
     "# bench_loc: book HQ for unbound units (map/sun/history). Fleet UI may update it.\n"
     "# Per-node loc: [lat, lon] overrides bench_loc when unbound. Not pushed to radio.\n"
     "# Site loc wins when the unit is linked in sites.yaml.\n"
     "# Observed last-seen / telemetry live in data/fleet/history.sqlite.\n"
     "# Display name: sites.yaml name when bound, else alias, else unit_id.\n"
-    "# alias is UI/selector only (not pushed to the radio). Default apply SETs\n"
-    "# Repeater + 0,0 + adverts off unless public: true (then site name + GPS).\n"
+    "# alias is UI/selector only (not pushed to the radio). Unbound bench apply\n"
+    "# SETs Repeater + 0,0 + adverts off unless the row sets intervals.\n"
     "# path_hash_mode / dutycycle: radio prefs (apply/onboard default 1 / 50).\n"
     "# ota_autofetch: off|any|signed (apply/onboard default off).\n"
     "# powersaving / fem_rxgain / rxgain: optional on|off. Apply SETs only when present.\n"
@@ -160,10 +165,6 @@ def write_nodes_doc(nodes_path: Path, doc: dict[str, Any]) -> None:
     tmp_path.replace(nodes_path)
 
 
-def is_public(node: dict[str, Any] | None) -> bool:
-    return bool(node and node.get("public") is True)
-
-
 def is_paused(node: dict[str, Any] | None) -> bool:
     """True when the book stamps paused: true (auto fleet poll/apply off)."""
     return bool(node and node.get("paused") is True)
@@ -188,6 +189,10 @@ def sync_paused(nodes_path: Path, nodes: dict[str, Any]) -> None:
             mem["paused"] = True
         else:
             mem.pop("paused", None)
+        if "repeat" in disk:
+            mem["repeat"] = disk["repeat"]
+        else:
+            mem.pop("repeat", None)
         for field in ("routing", "alias", "notes"):
             val = disk.get(field)
             if field == "routing":

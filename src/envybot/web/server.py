@@ -738,11 +738,14 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
     node = nodes.get(key)
     if not isinstance(node, dict) or is_decommissioned(node) or not is_meshcore_platform(node):
         return web.json_response({"error": "unknown unit"}, status=404)
-    if "public" in body:
-        if body["public"] is True:
-            node["public"] = True
+    if "repeat" in body:
+        repeat = body["repeat"]
+        if repeat is True:
+            node["repeat"] = True
+        elif repeat is False:
+            node["repeat"] = False
         else:
-            node.pop("public", None)
+            node.pop("repeat", None)
     if "paused" in body:
         if body["paused"] is True:
             node["paused"] = True

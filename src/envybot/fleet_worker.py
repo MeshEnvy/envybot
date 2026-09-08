@@ -18,6 +18,9 @@ from envybot.apply import (
     desired_ota_autofetch,
     desired_path_hash_mode,
     desired_powersaving,
+    desired_repeat,
+    owner_info_cli_payload,
+    owner_info_for_apply,
     profile_id,
     radio_apply_due_fields,
     rxgain_apply_enabled,
@@ -43,7 +46,7 @@ from envybot.jobs import (
     drop_ota_poll_jobs,
 )
 from envybot.keys_doc import UnknownPerson, parse_serial_acl, resolve_node_acl
-from envybot.nodes_doc import MASK_NAME, is_public
+from envybot.nodes_doc import MASK_NAME
 from envybot.passwords import normalize_password, password_is_strong
 from envybot.poll import (
     GET_GROUP_ORDER,
@@ -52,7 +55,14 @@ from envybot.poll import (
     pull_due_groups,
     refresh_due_groups,
 )
-from envybot.position import public_radio_name, resolve_book_position, site_loc_for_unit
+from envybot.position import public_radio_name, site_binding, site_loc_for_unit
+from envybot.public_advert import (
+    audit_apply_position,
+    format_apply_name_log,
+    format_apply_position_log,
+    owner_info_for_apply,
+    resolve_public_apply_position,
+)
 from envybot.sun import stamp_sun
 from envybot.ota_parse import (
     merge_ota_snapshot,
@@ -113,6 +123,8 @@ APPLY_FIELD_ORDER = (
     "advert",
     "flood",
     "guest",
+    "owner",
+    "repeat",
     "admin",
     "path_hash",
     "dutycycle",
@@ -1250,46 +1262,62 @@ async def _execute_apply(
         )
         return JobOutcome.HEARD, clock
 
-    public = is_public(node)
+    bind = site_binding(target.key, node, ctx.sites)
     attempt_cap = _attempt_cap(ctx)
     send: SetSend = "timeout"
 
     if field == "name":
-        name = public_radio_name(target.key, node, ctx.sites) if public else MASK_NAME
+        name = public_radio_name(target.key, node, ctx.sites, doc=ctx.doc) if bind else MASK_NAME
+        if bind:
+            name_log = format_apply_name_log(target.key, node, ctx.sites, doc=ctx.doc)
+            if name_log:
+                ctx.log.step(name_log)
         send = await _set_cli(
             ctx.client, target, f"set name {name}",
             cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
             field="name", attempt_num=attempt_num, attempt_cap=attempt_cap,
         )
     elif field == "lat":
-        val = float(resolve_book_position(node, ctx.sites, key=target.key)["lat"]) if public and resolve_book_position(node, ctx.sites, key=target.key) else 0.0
+        if bind:
+            audit = audit_apply_position(
+                node, ctx.sites, key=target.key, doc=ctx.doc
+            )
+            if audit:
+                ctx.log.step(format_apply_position_log(audit))
+        pos = resolve_public_apply_position(node, ctx.sites, key=target.key, doc=ctx.doc) if bind else None
+        val = float(pos["lat"]) if pos else 0.0
         send = "ok" if await set_book_coord(
             ctx.client, target, "lat", val,
             cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
             attempt_num=attempt_num, attempt_cap=attempt_cap,
         ) is not None else "timeout"
     elif field == "lon":
-        val = float(resolve_book_position(node, ctx.sites, key=target.key)["lon"]) if public and resolve_book_position(node, ctx.sites, key=target.key) else 0.0
+        pos = resolve_public_apply_position(node, ctx.sites, key=target.key, doc=ctx.doc) if bind else None
+        val = float(pos["lon"]) if pos else 0.0
         send = "ok" if await set_book_coord(
             ctx.client, target, "lon", val,
             cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
             attempt_num=attempt_num, attempt_cap=attempt_cap,
         ) is not None else "timeout"
     elif field == "advert":
-        if public and node.get("advert_interval_min") is not None:
+        if bind and node.get("advert_interval_min") is not None:
             cmd = f"set advert.interval {int(node['advert_interval_min'])}"
         else:
-            cmd = "set advert.interval 0"
+            advert = node.get("advert_interval_min")
+            interval = 0 if advert is None else int(advert)
+            cmd = f"set advert.interval {interval}"
         send = await _set_cli(
             ctx.client, target, cmd,
             cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
             field="advert", attempt_num=attempt_num, attempt_cap=attempt_cap,
         )
     elif field == "flood":
-        if public and node.get("flood_advert_interval_h") is not None:
+        if bind and node.get("flood_advert_interval_h") is not None:
             cmd = f"set flood.advert.interval {int(node['flood_advert_interval_h'])}"
         else:
-            cmd = "set flood.advert.interval 0"
+            flood = node.get("flood_advert_interval_h")
+            interval = 0 if flood is None else int(flood)
+            cmd = f"set flood.advert.interval {interval}"
         send = await _set_cli(
             ctx.client, target, cmd,
             cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
@@ -1301,6 +1329,21 @@ async def _execute_apply(
             ctx.client, target, f"set guest.password {guest}",
             cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
             field="guest", attempt_num=attempt_num, attempt_cap=attempt_cap,
+        )
+    elif field == "owner":
+        owner_text = owner_info_for_apply(node, ctx.doc, key=target.key, sites=ctx.sites)
+        owner_cmd = owner_info_cli_payload(owner_text)
+        send = await _set_cli(
+            ctx.client, target, f"set owner.info {owner_cmd}",
+            cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
+            field="owner", attempt_num=attempt_num, attempt_cap=attempt_cap,
+        )
+    elif field == "repeat":
+        repeat_on = desired_repeat(node, ctx.sites, key=target.key)
+        send = await _set_cli(
+            ctx.client, target, f"set repeat {'on' if repeat_on else 'off'}",
+            cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
+            field="repeat", attempt_num=attempt_num, attempt_cap=attempt_cap,
         )
     elif field == "admin":
         admin = node.get("admin_password")

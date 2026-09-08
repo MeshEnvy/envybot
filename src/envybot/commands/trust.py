@@ -38,7 +38,8 @@ from envybot.keys_doc import (
 from envybot.apply import profile_id, stamp_profile_after_trust
 from envybot.history import migrate_legacy
 from envybot.nodes_doc import UNIT_NUM_RE, load_nodes_doc, load_sites_for_book, write_nodes_doc
-from envybot.position import resolve_book_position, site_binding
+from envybot.position import lookup_site_name, public_radio_name, resolve_book_position, site_binding
+from envybot.public_advert import resolve_public_apply_position
 from envybot.radio import (
     CONTACT_FLAG_FAVORITE,
     CONTACT_TYPE_REPEATER,
@@ -57,7 +58,6 @@ from envybot.radio import (
     load_targets,
 )
 from envybot.selector import format_candidates, normalize_adv_name, resolve_selector
-from envybot.position import lookup_site_name, public_radio_name, resolve_book_position, site_binding
 
 try:
     from meshcore import EventType, MeshCore
@@ -75,9 +75,14 @@ def contact_adv_name(
     sites: dict[str, dict[str, Any]] | None = None,
     *,
     key: str | None = None,
+    doc: dict[str, Any] | None = None,
 ) -> str:
-    """Site name when bound; otherwise unit_id (bench / no site)."""
-    derived = public_radio_name(key, node, sites)
+    """Site advert name when bound; otherwise unit_id (bench / no site)."""
+    bind = site_binding(key, node, sites)
+    if bind and doc is not None:
+        derived = public_radio_name(key, node, sites, doc=doc)
+    else:
+        derived = public_radio_name(key, node, sites)
     if derived:
         return derived
     return unit_id[:32]
@@ -87,9 +92,15 @@ def contact_payload(
     target: RouterTarget,
     node: dict[str, Any],
     sites: dict[str, dict[str, Any]],
+    *,
+    doc: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    pos = resolve_book_position(node, sites, key=target.key)
-    name = contact_adv_name(node, target.unit_id, sites, key=target.key)
+    bind = site_binding(target.key, node, sites)
+    if bind and doc is not None:
+        pos = resolve_public_apply_position(node, sites, key=target.key, doc=doc)
+    else:
+        pos = resolve_book_position(node, sites, key=target.key)
+    name = contact_adv_name(node, target.unit_id, sites, key=target.key, doc=doc)
     lat = float(pos["lat"]) if pos else 0.0
     lon = float(pos["lon"]) if pos else 0.0
     return {
@@ -118,7 +129,7 @@ def build_trust_rows(
     targets = load_targets(
         nodes_path, deployed_only=False, include=include, skip=None
     )
-    return [contact_payload(t, nodes.get(t.key) or {}, sites) for t in targets]
+    return [contact_payload(t, nodes.get(t.key) or {}, sites, doc=doc) for t in targets]
 
 
 def write_export(path: Path, rows: list[dict[str, Any]]) -> None:

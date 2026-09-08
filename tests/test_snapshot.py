@@ -367,10 +367,9 @@ class SnapshotTests(unittest.TestCase):
                 "admin_password": "AdminOneStrong1",
                 "identity_pubkey": "aa" * 32,
             }
-            public = {
+            site_bound = {
                 "unit_id": "ME0002",
                 "name": "Ophir",
-                "public": True,
                 "guest_password": "GuestTwoStrong2",
                 "admin_password": "AdminTwoStrong2",
                 "identity_pubkey": "bb" * 32,
@@ -378,7 +377,7 @@ class SnapshotTests(unittest.TestCase):
             yaml.dump(
                 {
                     "next_unit": 3,
-                    "nodes": {"me0001": private, "me0002": public},
+                    "nodes": {"me0001": private, "me0002": site_bound},
                 },
                 nodes_path.open("w", encoding="utf-8"),
             )
@@ -729,16 +728,16 @@ class NeighborMilesTests(unittest.TestCase):
 class DriftStateTests(unittest.TestCase):
     def test_profile_ok_clears_drift(self) -> None:
         self.assertIsNone(drift_state({"name": "Patrick"}, profile_ok=True))
-        self.assertIsNone(drift_state({"name": "Ophir", "public": True}, profile_ok=True))
+        self.assertIsNone(drift_state({"name": "Ophir"}, profile_ok=True))
 
-    def test_due_private_is_due(self) -> None:
-        self.assertEqual(drift_state({"name": "Patrick"}, profile_ok=False), "due")
-
-    def test_due_public_is_due(self) -> None:
+    def test_due_site_bound_is_due(self) -> None:
         self.assertEqual(
-            drift_state({"name": "Ophir", "public": True}, profile_ok=False),
+            drift_state({"name": "Ophir"}, profile_ok=False),
             "due",
         )
+
+    def test_due_unbound_is_due(self) -> None:
+        self.assertEqual(drift_state({"name": "Patrick"}, profile_ok=False), "due")
 
     def test_heard_name_on_private_is_not_leak(self) -> None:
         self.assertIsNone(
@@ -768,10 +767,10 @@ class DriftStateTests(unittest.TestCase):
             "leak",
         )
 
-    def test_heard_name_on_public_is_not_leak(self) -> None:
+    def test_heard_name_drift_is_not_advert_leak(self) -> None:
         self.assertIsNone(
             drift_state(
-                {"name": "Ophir", "public": True},
+                {"name": "Ophir"},
                 profile_ok=True,
                 seen={"name_heard": "Ophir"},
             )

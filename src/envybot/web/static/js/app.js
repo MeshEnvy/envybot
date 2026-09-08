@@ -1642,13 +1642,12 @@ const App = {
       }
     }
 
-    async function togglePublic(unit, ev) {
+    async function toggleRepeat(unit, ev) {
       try {
         const updated = await patchUnit(unit.key, {
-          public: ev.target.checked,
+          repeat: ev.target.checked,
         });
         applyUnit(updated);
-        pushMap();
       } catch (err) {
         console.error(err);
       }
@@ -1974,6 +1973,7 @@ const App = {
       unitLabel,
       unitTitle,
       togglePublic,
+      toggleRepeat,
       togglePaused,
       ackStability,
       setRoutingPolicy,
@@ -2267,7 +2267,6 @@ const App = {
           </div>
           <p class="sub">
             {{ selectedUnit.unit_id }}
-            · {{ selectedUnit.public ? 'public' : 'private' }}
             · {{ formatRelative(selectedUnit.last_heard, fleet.now) }}
             <span v-if="selectedUnit.drift"> · {{ selectedUnit.drift }}</span>
           </p>
@@ -2293,11 +2292,11 @@ const App = {
           <div class="detail-toolbar">
             <label
               class="book-toggle"
-              title="Push site name and GPS when public"
+              title="Packet relay (repeat). Default on when site-bound."
             >
-              <input type="checkbox" :checked="!!selectedUnit.public" @change="togglePublic(selectedUnit, $event)" />
+              <input type="checkbox" :checked="!!selectedUnit.repeat" @change="toggleRepeat(selectedUnit, $event)" />
               <span class="switch" aria-hidden="true"></span>
-              Public
+              Repeat
             </label>
             <label
               class="book-toggle book-toggle-pause"

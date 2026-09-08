@@ -294,9 +294,14 @@ def public_radio_name(
     node: dict[str, Any] | None,
     sites: dict[str, dict[str, Any]] | None,
     *,
+    doc: dict[str, Any] | None = None,
     max_len: int = 32,
 ) -> str:
-    """On-air name for public apply / trust (site name or unit id; no alias)."""
+    """On-air name for public apply / trust. Uses book public_advert when doc is set."""
+    from envybot.public_advert import public_radio_name as _book_public_name
+
+    if doc is not None:
+        return _book_public_name(key, node, sites, doc=doc, max_len=max_len)
     unit_id = str((node or {}).get("unit_id") or (key or "").upper())
     bind = site_binding(key, node, sites)
     if bind:

@@ -1,4 +1,4 @@
-"""SET desired radio profile. Private mask unless public: true."""
+"""SET desired radio profile from book (site name, GPS, adverts)."""
 
 from __future__ import annotations
 
@@ -23,7 +23,6 @@ from envybot.keys_doc import (
 )
 from envybot.nodes_doc import (
     MASK_NAME,
-    is_public,
     sync_paused,
     write_nodes_doc,
 )
@@ -34,7 +33,15 @@ from envybot.passwords import (
     password_is_strong,
     password_token,
 )
-from envybot.position import public_radio_name, resolve_book_position
+from envybot.position import public_radio_name, site_binding
+from envybot.public_advert import (
+    audit_apply_position,
+    format_apply_name_log,
+    format_apply_position_log,
+    owner_info_cli_payload,
+    owner_info_for_apply,
+    resolve_public_apply_position,
+)
 from envybot.radio import (
     FLEET_DUTYCYCLE_PCT,
     FLEET_OTA_AUTOFETCH,
@@ -81,6 +88,8 @@ APPLY_FIELDS = (
     "flood",
     "guest",
     "admin",
+    "owner",
+    "repeat",
     "path_hash",
     "dutycycle",
     "ota_autofetch",
@@ -188,6 +197,36 @@ def _opt_int(value: Any) -> int | None:
         return None
 
 
+def desired_repeat(
+    node: dict[str, Any],
+    sites: dict[str, dict[str, Any]] | None,
+    *,
+    key: str | None = None,
+) -> bool:
+    """Repeat/relay on when site-bound unless book overrides."""
+    if "repeat" in node:
+        parsed = _parse_optional_bool(node.get("repeat"))
+        if parsed is not None:
+            return parsed
+    return site_binding(key, node, sites) is not None
+
+
+def _profile_advert_intervals(
+    node: dict[str, Any],
+    *,
+    site_bound: bool,
+) -> tuple[int | None, int | None]:
+    advert = _opt_int(node.get("advert_interval_min"))
+    flood = _opt_int(node.get("flood_advert_interval_h"))
+    if site_bound:
+        return advert, flood
+    if advert is None:
+        advert = 0
+    if flood is None:
+        flood = 0
+    return advert, flood
+
+
 def profile_parts(
     node: dict[str, Any],
     sites: dict[str, dict[str, Any]] | None,
@@ -197,18 +236,16 @@ def profile_parts(
     key: str | None = None,
 ) -> dict[str, Any]:
     """Canonical desired SET payload. Secrets are tokens, not plaintext."""
-    public = is_public(node)
-    if public:
-        name = public_radio_name(key, node, sites) or MASK_NAME
-        pos = resolve_book_position(node, sites, key=key)
+    bind = site_binding(key, node, sites)
+    advert, flood = _profile_advert_intervals(node, site_bound=bind is not None)
+    if bind:
+        name = public_radio_name(key, node, sites, doc=doc) or MASK_NAME
+        pos = resolve_public_apply_position(node, sites, key=key, doc=doc)
         lat = round(float(pos["lat"]), 6) if pos else None
         lon = round(float(pos["lon"]), 6) if pos else None
-        advert = _opt_int(node.get("advert_interval_min"))
-        flood = _opt_int(node.get("flood_advert_interval_h"))
     else:
         name = MASK_NAME
         lat, lon = 0.0, 0.0
-        advert, flood = 0, 0
     pk = str(node.get("identity_pubkey") or "").strip().lower()
     try:
         grants = resolve_node_acl(doc or {}, node, keys or {})
@@ -226,8 +263,9 @@ def profile_parts(
         "lon": lon,
         "name": name,
         "ota_autofetch": desired_ota_autofetch(node),
+        "owner": owner_info_for_apply(node, doc, key=key, sites=sites),
         "path_hash": desired_path_hash_mode(node),
-        "public": public,
+        "repeat": desired_repeat(node, sites, key=key),
     }
     powersaving = desired_powersaving(node)
     if powersaving is not None:
@@ -277,18 +315,18 @@ def applicable_field_desireds(
     """Desired stamp value per SET field (identity is book metadata only)."""
     parts = profile_parts(node, sites, doc=doc, keys=keys, key=key)
     out: dict[str, str] = {}
-    public = is_public(node)
+    bind = site_binding(key, node, sites)
     for field in APPLY_FIELDS:
         if field not in parts:
             continue
         if field == "admin" and not password_is_strong(node.get("admin_password")):
             continue
-        if field in ("lat", "lon") and public and not resolve_book_position(node, sites, key=key):
+        if field in ("lat", "lon") and bind and not resolve_public_apply_position(
+            node, sites, key=key, doc=doc
+        ):
             continue
-        if field == "guest" and public:
-            guest = node.get("guest_password")
-            if not (isinstance(guest, str) and guest.strip()):
-                continue
+        if field == "owner" and not parts["owner"]:
+            continue
         out[field] = field_desired_str(parts[field])
     return out
 
@@ -307,7 +345,7 @@ def profile_legacy_synced(
     if stamped == desired:
         return True
     # USB onboard used to stamp profile="private" before v1 hashes existed.
-    if stamped != "private" or is_public(node):
+    if stamped != "private":
         return False
     applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=unit)
     return all(last_ok_apply(conn, unit, field) == des for field, des in applicable.items())
@@ -384,7 +422,7 @@ def apply_is_due(
         return True
     if apply_due_fields(conn, unit, node, sites, doc=doc, keys=keys):
         return True
-    if not is_public(node) and guest_needs_assign(node, doc or {}, unit):
+    if guest_needs_assign(node, doc or {}, unit):
         return True
     return False
 
@@ -398,13 +436,7 @@ def stamp_profile_after_onboard(
     doc: dict[str, Any] | None = None,
     keys: dict[str, list[str]] | None = None,
 ) -> str | None:
-    """After USB onboard applied the private mask, stamp every SET field.
-
-    Fleet-ready: apply is not due and the UI must not show due. USB always
-    writes the private mask, so a ``public: true`` row is left unstamped.
-    """
-    if is_public(node):
-        return None
+    """After USB onboard applied the bench mask, stamp every SET field."""
     applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=unit)
     for field, des in applicable.items():
         stamp_apply(conn, unit=unit, field=field, desired=des, ok=True)
@@ -561,10 +593,14 @@ async def apply_one(
             log.step(f"profile partial ({len(remaining)} due: {', '.join(remaining)})")
         return False
 
-    public = is_public(node)
+    bind = site_binding(target.key, node, sites)
 
     if "name" in due:
-        name = public_radio_name(target.key, node, sites) if public else MASK_NAME
+        name = public_radio_name(target.key, node, sites, doc=doc) if bind else MASK_NAME
+        if bind:
+            name_log = format_apply_name_log(target.key, node, sites, doc=doc)
+            if name_log:
+                log.step(name_log)
         if await _set_cli(
             client,
             target,
@@ -581,8 +617,12 @@ async def apply_one(
     else:
         log.step("name: skip (synced)")
 
-    if public:
-        pos = resolve_book_position(node, sites, key=target.key)
+    if bind:
+        pos = resolve_public_apply_position(node, sites, key=target.key, doc=doc)
+        if pos and ("lat" in due or "lon" in due):
+            audit = audit_apply_position(node, sites, key=target.key, doc=doc)
+            if audit:
+                log.step(format_apply_position_log(audit))
         if pos:
             if "lat" in due:
                 if await set_book_coord(
@@ -634,21 +674,6 @@ async def apply_one(
                     return abort("flood")
             else:
                 log.step("flood_advert: skip (synced)")
-        guest = node.get("guest_password")
-        if isinstance(guest, str) and guest.strip():
-            if "guest" in due:
-                guest = _ensure_guest_password(node, doc, target.key)
-                if await _set_cli(
-                    client, target, f"set guest.password {guest}",
-                    cmd_timeout=cmd_timeout,
-                    attempts=attempts,
-                    log=log, session=session, field="guest",
-                ) == "ok":
-                    stamp("guest")
-                else:
-                    return abort("guest")
-            else:
-                log.step("guest: skip (synced)")
     else:
         if "lat" in due:
             if await set_book_coord(
@@ -675,8 +700,10 @@ async def apply_one(
         else:
             log.step("lon: skip (synced)")
         if "advert" in due:
+            advert = _opt_int(node.get("advert_interval_min"))
+            interval = 0 if advert is None else advert
             if await _set_cli(
-                client, target, "set advert.interval 0",
+                client, target, f"set advert.interval {interval}",
                 cmd_timeout=cmd_timeout,
                 attempts=attempts,
                 log=log, session=session, field="advert",
@@ -687,8 +714,10 @@ async def apply_one(
         else:
             log.step("advert: skip (synced)")
         if "flood" in due:
+            flood = _opt_int(node.get("flood_advert_interval_h"))
+            interval = 0 if flood is None else flood
             if await _set_cli(
-                client, target, "set flood.advert.interval 0",
+                client, target, f"set flood.advert.interval {interval}",
                 cmd_timeout=cmd_timeout,
                 attempts=attempts,
                 log=log, session=session, field="flood_advert",
@@ -698,19 +727,57 @@ async def apply_one(
                 return abort("flood")
         else:
             log.step("flood_advert: skip (synced)")
-        if "guest" in due:
-            guest = _ensure_guest_password(node, doc, target.key)
-            if await _set_cli(
-                client, target, f"set guest.password {guest}",
-                cmd_timeout=cmd_timeout,
-                attempts=attempts,
-                log=log, session=session, field="guest",
-            ) == "ok":
-                stamp("guest")
-            else:
-                return abort("guest")
+
+    if "guest" in due:
+        guest = _ensure_guest_password(node, doc, target.key)
+        if await _set_cli(
+            client, target, f"set guest.password {guest}",
+            cmd_timeout=cmd_timeout,
+            attempts=attempts,
+            log=log, session=session, field="guest",
+        ) == "ok":
+            stamp("guest")
         else:
-            log.step("guest: skip (synced)")
+            return abort("guest")
+    else:
+        log.step("guest: skip (synced)")
+
+    if "owner" in due:
+        owner_text = owner_info_for_apply(node, doc, key=target.key, sites=sites)
+        owner_cmd = owner_info_cli_payload(owner_text)
+        if await _set_cli(
+            client,
+            target,
+            f"set owner.info {owner_cmd}",
+            cmd_timeout=cmd_timeout,
+            attempts=attempts,
+            log=log,
+            session=session,
+            field="owner",
+        ) == "ok":
+            stamp("owner")
+        else:
+            return abort("owner")
+    else:
+        log.step("owner: skip (synced)")
+
+    if "repeat" in due:
+        repeat_on = desired_repeat(node, sites, key=target.key)
+        if await _set_cli(
+            client,
+            target,
+            f"set repeat {'on' if repeat_on else 'off'}",
+            cmd_timeout=cmd_timeout,
+            attempts=attempts,
+            log=log,
+            session=session,
+            field="repeat",
+        ) == "ok":
+            stamp("repeat")
+        else:
+            return abort("repeat")
+    else:
+        log.step("repeat: skip (synced)")
 
     admin = node.get("admin_password")
     if password_is_strong(admin):
