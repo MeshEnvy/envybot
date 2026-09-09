@@ -111,14 +111,14 @@ class ProfileTests(unittest.TestCase):
         sites = {"ophir": {"node": "me0003", "loc": [39.5, -119.8], "name": "Ophir", "advert_name": "Ophir"}}
         doc = {
             "public_advert": {
-                "name_suffix": " {meshenvy.org}",
+                "name_suffix": " {lora.sh}",
                 "location_accuracy_mi": 1.5,
                 "location_salt": "test-book-salt-not-for-production",
                 "owner_info": "MeshEnvy NCC",
             }
         }
         parts = profile_parts(node, sites, doc=doc, key="me0003")
-        self.assertEqual(parts["name"], "Ophir {meshenvy.org}")
+        self.assertEqual(parts["name"], "Ophir {lora.sh}")
         self.assertNotEqual(parts["lat"], 39.5)
         self.assertEqual(parts["owner"], "MeshEnvy NCC")
         self.assertTrue(parts["repeat"])

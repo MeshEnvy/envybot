@@ -6,6 +6,7 @@ import unittest
 
 from envybot.apply import desired_repeat, profile_parts
 from envybot.public_advert import (
+    DEFAULT_PUBLIC_NAME_SUFFIX,
     audit_apply_position,
     format_apply_name_log,
     format_apply_position_log,
@@ -22,7 +23,7 @@ from envybot.public_advert import (
 
 DOC = {
     "public_advert": {
-        "name_suffix": " {meshenvy.org}",
+        "name_suffix": " {lora.sh}",
         "location_accuracy_mi": 1.5,
         "location_salt": "test-book-salt-not-for-production",
         "owner_info": "MeshEnvy NCC\nhello@meshenvy.org\nLocations are accurate to 1.5 miles",
@@ -36,23 +37,28 @@ class PublicAdvertConfigTests(unittest.TestCase):
     def test_load_config(self) -> None:
         cfg = load_public_advert_config(DOC)
         assert cfg is not None
-        self.assertEqual(cfg.name_suffix, " {meshenvy.org}")
+        self.assertEqual(cfg.name_suffix, " {lora.sh}")
         self.assertEqual(cfg.location_accuracy_mi, 1.5)
         self.assertIn("MeshEnvy NCC", cfg.owner_info)
+
+    def test_default_suffix_when_omitted(self) -> None:
+        cfg = load_public_advert_config({"public_advert": {"location_accuracy_mi": 1.5}})
+        assert cfg is not None
+        self.assertEqual(cfg.name_suffix, DEFAULT_PUBLIC_NAME_SUFFIX)
 
     def test_strip_suffix_decorations(self) -> None:
         self.assertEqual(strip_name_suffix_decorations("Ophir {meshenvy.org}"), "Ophir")
         self.assertEqual(strip_name_suffix_decorations("Foo | bar"), "Foo")
 
     def test_format_name_truncates_base(self) -> None:
-        name = format_public_radio_name("Very Long Site Name Here", " {meshenvy.org}")
+        name = format_public_radio_name("Very Long Site Name Here", " {lora.sh}")
         self.assertLessEqual(len(name), 32)
-        self.assertTrue(name.endswith("{meshenvy.org}"))
+        self.assertTrue(name.endswith("{lora.sh}"))
 
     def test_public_radio_name_uses_advert_name(self) -> None:
         node = {"unit_id": "ME0003", "identity_pubkey": PUBKEY}
         sites = {"ophir": {"node": "me0003", "advert_name": "Ophir", "loc": [39.5, -119.8]}}
-        self.assertEqual(public_radio_name("me0003", node, sites, doc=DOC), "Ophir {meshenvy.org}")
+        self.assertEqual(public_radio_name("me0003", node, sites, doc=DOC), "Ophir {lora.sh}")
 
     def test_offset_is_deterministic_and_in_range(self) -> None:
         lat, lon = 39.5, -119.8
@@ -132,7 +138,7 @@ class PublicAdvertConfigTests(unittest.TestCase):
         }
         sites = {"ophir": {"node": "me0003", "advert_name": "Ophir", "loc": [39.5, -119.8]}}
         parts = profile_parts(node, sites, doc=DOC, key="me0003")
-        self.assertEqual(parts["name"], "Ophir {meshenvy.org}")
+        self.assertEqual(parts["name"], "Ophir {lora.sh}")
         self.assertIn("MeshEnvy NCC", parts["owner"])
         self.assertTrue(parts["repeat"])
         self.assertNotEqual(parts["lat"], 39.5)
@@ -166,7 +172,7 @@ class PublicAdvertConfigTests(unittest.TestCase):
         node = {"unit_id": "ME0003"}
         sites = {"ophir": {"node": "me0003", "advert_name": "Ophir", "loc": [39.5, -119.8]}}
         text = format_apply_name_log("me0003", node, sites, doc=DOC)
-        self.assertEqual(text, 'name: radio "Ophir {meshenvy.org}" (site ophir)')
+        self.assertEqual(text, 'name: radio "Ophir {lora.sh}" (site ophir)')
 
 
 if __name__ == "__main__":

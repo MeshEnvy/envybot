@@ -12,6 +12,7 @@ from envybot.position import EARTH_MI, haversine_miles, site_binding
 
 MAX_RADIO_NAME = 32
 MAX_OWNER_INFO = 120
+DEFAULT_PUBLIC_NAME_SUFFIX = " {lora.sh}"
 
 ADV_NAME_BRACE_RE = re.compile(r"\{[^}]*\}")
 ADV_NAME_PIPE_RE = re.compile(r"\s*\|.*$")
@@ -34,9 +35,9 @@ def load_public_advert_config(doc: dict[str, Any] | None) -> PublicAdvertConfig 
         return None
     suffix_raw = raw.get("name_suffix")
     if suffix_raw is None:
-        suffix = ""
+        suffix = DEFAULT_PUBLIC_NAME_SUFFIX
     elif isinstance(suffix_raw, str):
-        suffix = suffix_raw
+        suffix = suffix_raw if suffix_raw.strip() else DEFAULT_PUBLIC_NAME_SUFFIX
     else:
         suffix = str(suffix_raw)
     accuracy: float | None = None
