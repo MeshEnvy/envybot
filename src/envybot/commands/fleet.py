@@ -63,6 +63,7 @@ from envybot.radio import (
     connect,
     load_targets,
     probe_only,
+    refresh_fleet_paths,
     sync_fleet_contacts,
     target_label,
 )
@@ -379,7 +380,11 @@ async def run(args: argparse.Namespace) -> int:
 
     if web_ctx:
         web_ctx._fleet_session = session
-    if initial_units:
+    if args.refresh_paths:
+        await sync_fleet_contacts(client, all_targets, log=log)
+        await refresh_fleet_paths(client, all_targets, log=log)
+        session.authed_units.clear()
+    elif initial_units:
         work_targets = [t for t in auto_targets if scheduler.units.get(t.key, None) and scheduler.units[t.key].jobs]
         if work_targets:
             await sync_fleet_contacts(client, work_targets, log=log)
@@ -906,6 +911,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Live GET interval for status/telemetry (default 3600). Neighbors stay 24h.",
     )
     parser.add_argument("--force", action="store_true", help="Pull every GET group and Push profile")
+    parser.add_argument(
+        "--refresh-paths",
+        action="store_true",
+        help="Clear stale companion hop cache before poll/apply (use after moving)",
+    )
     parser.add_argument("--live", action="store_true", help="Periodic GET groups only")
     parser.add_argument(
         "--no-discover",

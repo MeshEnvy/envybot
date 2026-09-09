@@ -250,6 +250,7 @@ Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
 | `--no-web` | Headless poll/apply |
 | `--unit KEY` | One unit (repeatable) |
 | `--force` | Pull every GET group and Push profile |
+| `--refresh-paths` | Clear companion cached hop paths for all poll targets before work (operator moved; next login floods to rediscover) |
 | `--live` | Periodic GET only (status/telemetry/neighbors) |
 | `--no-discover` | GET neighbor table without remote `discover.neighbors` |
 | `--discover-wait SEC` | Listen after discover (default 12; timer job, radio idle) |

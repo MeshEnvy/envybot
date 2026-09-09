@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import unittest
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from meshcore import EventType
@@ -15,6 +17,7 @@ from envybot.radio import (
     PollLog,
     prepare_login_route,
     prepare_send_route,
+    refresh_fleet_paths,
     reset_to_flood,
 )
 from envybot.routing import RoutingMode
@@ -152,6 +155,48 @@ class PrepareRouteTests(unittest.IsolatedAsyncioTestCase):
         target = _target(routing=RoutingMode.FLOOD)
         await reset_to_flood(client, target, log=PollLog())
         self.assertEqual(contact["out_path_len"], -1)
+
+    async def test_refresh_fleet_paths_clears_all(self) -> None:
+        client = MagicMock()
+        client.commands._mesh_request_lock = asyncio.Lock()
+        client.ensure_contacts = AsyncMock()
+        client.commands.reset_path = AsyncMock(
+            return_value=MagicMock(type=EventType.OK, payload={})
+        )
+        contacts: dict[str, dict[str, Any]] = {}
+
+        def get_contact(prefix: str) -> dict[str, Any]:
+            for c in contacts.values():
+                if c["public_key"].startswith(prefix):
+                    return c
+            return {}
+
+        client.get_contact_by_key_prefix.side_effect = get_contact
+        client.contacts = contacts
+
+        targets = [_target(), _target()]
+        targets[1] = RouterTarget(
+            key="me0010",
+            unit_id="ME0010",
+            name="night",
+            site="nightengale",
+            pubkey_hex="c1a2b3d4e5f6" + "0" * 52,
+            admin_password="pw",
+            routing=RoutingMode.PATH,
+        )
+        for t in targets:
+            contacts[t.pubkey_hex.lower()] = {
+                "public_key": t.pubkey_hex.lower(),
+                "out_path_len": 2,
+                "out_path_hash_mode": 1,
+                "out_path": "aabbccdd",
+            }
+
+        cleared = await refresh_fleet_paths(client, targets, log=PollLog())
+        self.assertEqual(cleared, 2)
+        self.assertEqual(client.commands.reset_path.await_count, 2)
+        for c in contacts.values():
+            self.assertEqual(c["out_path_len"], -1)
 
 
 if __name__ == "__main__":

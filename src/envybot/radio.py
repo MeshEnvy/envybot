@@ -1992,6 +1992,29 @@ async def sync_fleet_contacts(
     )
 
 
+async def refresh_fleet_paths(
+    client: MeshCore,
+    targets: list[RouterTarget],
+    *,
+    log: PollLog | None = None,
+) -> int:
+    """Clear companion out_path for every fleet target (operator moved; stale hops)."""
+    log = log or PollLog()
+    if not targets:
+        return 0
+    cleared = 0
+    async with client.commands._mesh_request_lock:
+        await client.ensure_contacts(follow=True)
+        for target in targets:
+            await reset_to_flood(client, target, log=log)
+            cleared += 1
+    print(
+        f"Companion paths refreshed for {cleared} unit(s) "
+        "(cached hops cleared; next login floods to rediscover)"
+    )
+    return cleared
+
+
 async def recover_companion(
     client: MeshCore,
     *,

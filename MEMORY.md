@@ -65,7 +65,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   omitted). Path uses cached route (including learned zero-hop direct),
   flood-logins when cache is empty, and discards stale cache after 3 timeouts.
   `direct` forces zero-hop every send. `flood` always floods (danger).
-  Detail **Routing policy** control; list/detail show **live route** from
+  **`--refresh-paths`:** startup clears companion hop cache for all poll
+  targets (operator moved; next login floods to rediscover). Detail
+  **Routing policy** control; list/detail show **live route** from
   companion cache.
 - `decommissioned:` (epoch) rows stay in `nodes.yaml` for the number
   but envybot ignores them: no UI, poll, apply, trust, cmd, or onboard.
@@ -231,4 +233,4 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-05 (greenfield: no builtin migrate)
+Last updated: 2026-09-09 (--refresh-paths fleet flag)
