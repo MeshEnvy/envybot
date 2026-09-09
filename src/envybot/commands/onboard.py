@@ -87,7 +87,6 @@ RADIO_SF = 7
 RADIO_CR = 5
 RADIO_CMD = f"set radio {RADIO_FREQ},{RADIO_BW},{RADIO_SF},{RADIO_CR}"
 
-ONBOARD_NAME = "Repeater"
 ONBOARD_LAT = 0.0
 ONBOARD_LON = 0.0
 ADVERT_MIN = 0
@@ -552,6 +551,26 @@ def load_registry(nodes_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     return doc, nodes
 
 
+def ensure_onboard_unit(
+    doc: dict[str, Any],
+    nodes: dict[str, Any],
+    pubkey: str,
+    *,
+    unit: str | None,
+) -> tuple[str, dict[str, Any], bool]:
+    """Resolve or reserve ME#### before USB SETs. Always returns a unit key."""
+    key, node = resolve_unit(nodes, pubkey, unit=unit)
+    if key is not None:
+        if node is None:
+            unit_id = key.upper()
+            node = new_node(unit_id)
+            return key, node, key not in nodes
+        return key, node, False
+    unit_id = allocate_unit_id(doc)
+    key = unit_id.lower()
+    return key, new_node(unit_id), True
+
+
 def resolve_unit(
     nodes: dict[str, Any],
     pubkey: str,
@@ -820,6 +839,11 @@ def apply_rxgain_policy(
     )
 
 
+def bench_radio_name(key: str | None, node: dict[str, Any] | None) -> str:
+    """On-air name for bag/bench units: book unit_id, else nodes.yaml key."""
+    return str((node or {}).get("unit_id") or (key or "").upper())
+
+
 def onboard(
     cli: RepeaterSerial,
     *,
@@ -830,6 +854,7 @@ def onboard(
     force: bool,
     pubkey: str | None = None,
     node: dict[str, Any] | None = None,
+    key: str | None = None,
 ) -> dict[str, Any]:
     ver_raw = cli.cmd("ver")
     if reply_failed(ver_raw):
@@ -950,15 +975,18 @@ def onboard(
             raise CliError(f"position verify failed: {lat}, {lon}")
         print("   set")
 
-    print(f"9. name {ONBOARD_NAME} …")
+    radio_name = bench_radio_name(key, node)
+    if not radio_name:
+        raise CliError("unit key required to set radio name")
+    print(f"9. name {radio_name} …")
     name = parse_get_value(cli.cmd("get name")) or ""
     apply_if_needed(
         cli,
         step="set name",
-        already=name == ONBOARD_NAME,
-        setter=f"set name {ONBOARD_NAME}",
-        verify=lambda: (parse_get_value(cli.cmd("get name")) or "") == ONBOARD_NAME,
-        ok_label=ONBOARD_NAME,
+        already=name == radio_name,
+        setter=f"set name {radio_name}",
+        verify=lambda: (parse_get_value(cli.cmd("get name")) or "") == radio_name,
+        ok_label=radio_name,
         force=force,
     )
 
@@ -1111,18 +1139,17 @@ def main(argv: list[str] | None = None) -> int:
         cli = open_repeater(port, baud=args.baud, timeout=args.timeout, verbose=args.verbose)
         pub = normalize_hex(parse_get_value(cli.cmd("get public.key")) or "", PUB_HEX_LEN, "public.key")
         _doc, nodes = load_registry(args.nodes)
-        unit_key, existing = resolve_unit(nodes, pub, unit=args.unit)
-        if unit_key:
-            print(f"unit {unit_key.upper()} (existing)")
-        else:
-            print("unit (new)")
+        unit_key, existing, created = ensure_onboard_unit(
+            _doc, nodes, pub, unit=args.unit
+        )
+        print(f"unit {unit_key.upper()} ({'new' if created else 'existing'})")
         admin_pw, guest_pw, admin_src, guest_src = resolve_passwords(
             cli,
             existing,
             admin_pw=args.admin_pw,
             guest_pw=args.guest_pw,
             doc=_doc,
-            key=unit_key or "",
+            key=unit_key,
         )
         print(f"admin {admin_pw}  ({admin_src})")
         print(f"guest {guest_pw or '(blank)'}  ({guest_src})")
@@ -1136,9 +1163,10 @@ def main(argv: list[str] | None = None) -> int:
             force=args.force,
             pubkey=pub,
             node=existing,
+            key=unit_key,
         )
         if not args.no_write:
-            unit_key, created = register(args.nodes, result, unit=unit_key or args.unit)
+            unit_key, created = register(args.nodes, result, unit=unit_key)
             result["admin_changed"] = False
             result["guest_changed"] = False
             print(f"nodes.yaml {'created' if created else 'updated'} {unit_key.upper()}")

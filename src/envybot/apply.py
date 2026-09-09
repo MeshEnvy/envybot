@@ -22,7 +22,6 @@ from envybot.keys_doc import (
     resolve_node_acl,
 )
 from envybot.nodes_doc import (
-    MASK_NAME,
     sync_paused,
     write_nodes_doc,
 )
@@ -197,6 +196,10 @@ def _opt_int(value: Any) -> int | None:
         return None
 
 
+FLEET_SITE_ADVERT_MIN = 0
+FLEET_SITE_FLOOD_ADVERT_H = 12
+
+
 def desired_repeat(
     node: dict[str, Any],
     sites: dict[str, dict[str, Any]] | None,
@@ -219,6 +222,10 @@ def _profile_advert_intervals(
     advert = _opt_int(node.get("advert_interval_min"))
     flood = _opt_int(node.get("flood_advert_interval_h"))
     if site_bound:
+        if advert is None:
+            advert = FLEET_SITE_ADVERT_MIN
+        if flood is None:
+            flood = FLEET_SITE_FLOOD_ADVERT_H
         return advert, flood
     if advert is None:
         advert = 0
@@ -238,13 +245,12 @@ def profile_parts(
     """Canonical desired SET payload. Secrets are tokens, not plaintext."""
     bind = site_binding(key, node, sites)
     advert, flood = _profile_advert_intervals(node, site_bound=bind is not None)
+    name = public_radio_name(key, node, sites, doc=doc)
     if bind:
-        name = public_radio_name(key, node, sites, doc=doc) or MASK_NAME
         pos = resolve_public_apply_position(node, sites, key=key, doc=doc)
         lat = round(float(pos["lat"]), 6) if pos else None
         lon = round(float(pos["lon"]), 6) if pos else None
     else:
-        name = MASK_NAME
         lat, lon = 0.0, 0.0
     pk = str(node.get("identity_pubkey") or "").strip().lower()
     try:
@@ -596,7 +602,7 @@ async def apply_one(
     bind = site_binding(target.key, node, sites)
 
     if "name" in due:
-        name = public_radio_name(target.key, node, sites, doc=doc) if bind else MASK_NAME
+        name = public_radio_name(target.key, node, sites, doc=doc)
         if bind:
             name_log = format_apply_name_log(target.key, node, sites, doc=doc)
             if name_log:
@@ -648,32 +654,31 @@ async def apply_one(
                     return abort("lon")
             else:
                 log.step("lon: skip (synced)")
-        if node.get("advert_interval_min") is not None:
-            if "advert" in due:
-                if await _set_cli(
-                    client, target, f"set advert.interval {int(node['advert_interval_min'])}",
-                    cmd_timeout=cmd_timeout,
-                    attempts=attempts,
-                    log=log, session=session, field="advert",
-                ) == "ok":
-                    stamp("advert")
-                else:
-                    return abort("advert")
+        advert_interval, flood_interval = _profile_advert_intervals(node, site_bound=True)
+        if "advert" in due:
+            if await _set_cli(
+                client, target, f"set advert.interval {advert_interval}",
+                cmd_timeout=cmd_timeout,
+                attempts=attempts,
+                log=log, session=session, field="advert",
+            ) == "ok":
+                stamp("advert")
             else:
-                log.step("advert: skip (synced)")
-        if node.get("flood_advert_interval_h") is not None:
-            if "flood" in due:
-                if await _set_cli(
-                    client, target, f"set flood.advert.interval {int(node['flood_advert_interval_h'])}",
-                    cmd_timeout=cmd_timeout,
-                    attempts=attempts,
-                    log=log, session=session, field="flood_advert",
-                ) == "ok":
-                    stamp("flood")
-                else:
-                    return abort("flood")
+                return abort("advert")
+        else:
+            log.step("advert: skip (synced)")
+        if "flood" in due:
+            if await _set_cli(
+                client, target, f"set flood.advert.interval {flood_interval}",
+                cmd_timeout=cmd_timeout,
+                attempts=attempts,
+                log=log, session=session, field="flood_advert",
+            ) == "ok":
+                stamp("flood")
             else:
-                log.step("flood_advert: skip (synced)")
+                return abort("flood")
+        else:
+            log.step("flood_advert: skip (synced)")
     else:
         if "lat" in due:
             if await set_book_coord(

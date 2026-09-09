@@ -122,6 +122,8 @@ class ProfileTests(unittest.TestCase):
         self.assertNotEqual(parts["lat"], 39.5)
         self.assertEqual(parts["owner"], "MeshEnvy NCC")
         self.assertTrue(parts["repeat"])
+        self.assertEqual(parts["advert"], 0)
+        self.assertEqual(parts["flood"], 12)
         self.assertNotEqual(_id(node, sites, doc=doc), _id(_STRONG))
 
     def test_exact_coords_when_accuracy_zero(self) -> None:
@@ -133,8 +135,8 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(parts["lon"], -119.8)
 
     def test_unbound_bench_in_parts(self) -> None:
-        parts = profile_parts(_STRONG, None)
-        self.assertEqual(parts["name"], "Repeater")
+        parts = profile_parts(_STRONG, None, key="me0001")
+        self.assertEqual(parts["name"], "ME0001")
         self.assertEqual(parts["lat"], 0.0)
         self.assertEqual(parts["advert"], 0)
         self.assertEqual(parts["path_hash"], 1)

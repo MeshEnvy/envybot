@@ -8,6 +8,7 @@ from pathlib import Path
 
 from envybot.apply import apply_is_due
 from envybot.commands.onboard import (
+    ensure_onboard_unit,
     CliError,
     RepeaterSerial,
     antenna_ready,
@@ -143,6 +144,29 @@ class AntennaPromptTests(unittest.TestCase):
         self.assertFalse(antenna_ready("s"))
         self.assertFalse(antenna_ready("skip"))
         self.assertFalse(antenna_ready("n"))
+
+
+class EnsureOnboardUnitTests(unittest.TestCase):
+    def test_new_pubkey_reserves_next_unit(self) -> None:
+        doc: dict = {"next_unit": 51, "nodes": {}}
+        nodes = doc["nodes"]
+        key, node, created = ensure_onboard_unit(doc, nodes, "b" * 64, unit=None)
+        self.assertTrue(created)
+        self.assertEqual(key, "me0051")
+        self.assertEqual(node["unit_id"], "ME0051")
+        self.assertEqual(doc["next_unit"], 52)
+
+    def test_existing_pubkey_reuses_row(self) -> None:
+        doc = {
+            "next_unit": 52,
+            "nodes": {
+                "me0003": {"unit_id": "ME0003", "identity_pubkey": "a" * 64},
+            },
+        }
+        key, node, created = ensure_onboard_unit(doc, doc["nodes"], "a" * 64, unit=None)
+        self.assertFalse(created)
+        self.assertEqual(key, "me0003")
+        self.assertIs(node, doc["nodes"]["me0003"])
 
 
 class ResolveUnitTests(unittest.TestCase):

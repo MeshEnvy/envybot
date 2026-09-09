@@ -56,7 +56,7 @@ class ApplyFailFastTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertFalse(ok)
-        self.assertEqual(calls, ["set name Repeater"])
+        self.assertEqual(calls, ["set name ME0003"])
         self.assertTrue(any("apply aborted: name unreachable" in s for s in steps))
         self.assertFalse(any(cmd.startswith("set lat") for cmd in calls))
 

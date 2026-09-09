@@ -86,9 +86,12 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   gets it (`everyone` or person slugs). `trust` add/updates granted
   channels on the companion; extras on the tag are left alone. `public`
   and `MeshEnvy` are never applied. Missing file skips channel work.
-- Mask name is `Repeater`. Display name is site `name` when bound, else book
-  `alias`, else `unit_id`. Alias is UI/selector only (not pushed to radio).
-- `public: true` SETs site name (or `unit_id` when bag/bench) + site GPS.
+- On-air name: site public advert when bound, else `unit_id` (bench/bag).
+  Display name is site `name` when bound, else book `alias`, else `unit_id`.
+  Alias is UI/selector only (not pushed to radio).
+- Site-bound apply SETs public advert profile (fuzzed GPS, owner info, site
+  advert name) and defaults `advert.interval 0` + `flood.advert.interval 12`
+  unless the row overrides. Bench/unbound SETs adverts off.
 - Passwords are unique and strong per unit. Apply/onboard roll blank, weak
   (`m35h3nvy`, placeholders, short), or colliding guests. Admin is never
   invented by apply. Apply SETs book admin (`password`) after ACL/login.

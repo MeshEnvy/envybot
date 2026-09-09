@@ -24,8 +24,8 @@ Idempotent on identity, creds, radio, name, and GPS:
 4. Set USA/Canada radio (`910.525`, BW 62.5, SF7, CR 4/5), dutycycle 50%
    (`set af 1` on MeshCore before 1.15), `path.hash.mode` 1 (2-byte),
    `ota config autofetch off`, advert 0 / flood advert 0.
-5. Device mask: name `Repeater` and GPS `0,0`. Book `name` is not set to
-   `Repeater`. No `public` key (private default).
+5. Bench mask: name `ME####` (reserved before USB SETs) and GPS `0,0`.
+   Book `name` is not set. No `public` key (private default).
 6. Write the book row (identity, creds). Then stamp fleet ACL from
    `keys.yaml` + book/node `trust` (`get acl` + `setperm`). Skip ACL if
    there are no named people yet. MeshCore prints `ACL:` on serial and

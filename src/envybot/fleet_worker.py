@@ -29,6 +29,7 @@ from envybot.apply import (
     SetSend,
     _apply_acl,
     _ensure_guest_password,
+    _profile_advert_intervals,
     _set_cli,
 )
 from envybot.history import (
@@ -46,7 +47,6 @@ from envybot.jobs import (
     drop_ota_poll_jobs,
 )
 from envybot.keys_doc import UnknownPerson, parse_serial_acl, resolve_node_acl
-from envybot.nodes_doc import MASK_NAME
 from envybot.passwords import normalize_password, password_is_strong
 from envybot.poll import (
     GET_GROUP_ORDER,
@@ -1267,7 +1267,7 @@ async def _execute_apply(
     send: SetSend = "timeout"
 
     if field == "name":
-        name = public_radio_name(target.key, node, ctx.sites, doc=ctx.doc) if bind else MASK_NAME
+        name = public_radio_name(target.key, node, ctx.sites, doc=ctx.doc)
         if bind:
             name_log = format_apply_name_log(target.key, node, ctx.sites, doc=ctx.doc)
             if name_log:
@@ -1300,24 +1300,16 @@ async def _execute_apply(
             attempt_num=attempt_num, attempt_cap=attempt_cap,
         ) is not None else "timeout"
     elif field == "advert":
-        if bind and node.get("advert_interval_min") is not None:
-            cmd = f"set advert.interval {int(node['advert_interval_min'])}"
-        else:
-            advert = node.get("advert_interval_min")
-            interval = 0 if advert is None else int(advert)
-            cmd = f"set advert.interval {interval}"
+        advert_interval, _ = _profile_advert_intervals(node, site_bound=bind)
+        cmd = f"set advert.interval {advert_interval}"
         send = await _set_cli(
             ctx.client, target, cmd,
             cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
             field="advert", attempt_num=attempt_num, attempt_cap=attempt_cap,
         )
     elif field == "flood":
-        if bind and node.get("flood_advert_interval_h") is not None:
-            cmd = f"set flood.advert.interval {int(node['flood_advert_interval_h'])}"
-        else:
-            flood = node.get("flood_advert_interval_h")
-            interval = 0 if flood is None else int(flood)
-            cmd = f"set flood.advert.interval {interval}"
+        _, flood_interval = _profile_advert_intervals(node, site_bound=bind)
+        cmd = f"set flood.advert.interval {flood_interval}"
         send = await _set_cli(
             ctx.client, target, cmd,
             cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
