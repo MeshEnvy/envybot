@@ -22,7 +22,7 @@ from envybot.keys_doc import (
     resolve_node_acl,
 )
 from envybot.nodes_doc import (
-    sync_paused,
+    load_nodes_doc,
     write_nodes_doc,
 )
 from envybot.passwords import (
@@ -337,26 +337,6 @@ def applicable_field_desireds(
     return out
 
 
-def profile_legacy_synced(
-    conn: sqlite3.Connection,
-    unit: str,
-    node: dict[str, Any],
-    sites: dict[str, dict[str, Any]] | None,
-    *,
-    doc: dict[str, Any] | None = None,
-    keys: dict[str, list[str]] | None = None,
-) -> bool:
-    desired = profile_id(node, sites, doc=doc, keys=keys, key=unit)
-    stamped = last_ok_apply(conn, unit, "profile")
-    if stamped == desired:
-        return True
-    # USB onboard used to stamp profile="private" before v1 hashes existed.
-    if stamped != "private":
-        return False
-    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=unit)
-    return all(last_ok_apply(conn, unit, field) == des for field, des in applicable.items())
-
-
 def apply_due_fields(
     conn: sqlite3.Connection,
     unit: str,
@@ -370,8 +350,6 @@ def apply_due_fields(
     applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=unit)
     if force:
         return list(applicable.keys())
-    if profile_legacy_synced(conn, unit, node, sites, doc=doc, keys=keys):
-        return []
     identity = applicable.get("identity")
     stamped_identity = last_ok_apply(conn, unit, "identity")
     if (
@@ -552,425 +530,97 @@ async def _apply_acl(
     return "ok"
 
 
-async def apply_one(
-    client: MeshCore,
-    target: RouterTarget,
+
+
+def persist_guest_password(nodes_path: Path, unit: str, node: dict[str, Any]) -> None:
+    """Write rolled guest password to disk immediately after assign."""
+    pw = node.get("guest_password")
+    if not pw:
+        return
+    disk_doc = load_nodes_doc(nodes_path)
+    disk_nodes = disk_doc.get("nodes") or {}
+    if not isinstance(disk_nodes, dict):
+        return
+    disk_node = disk_nodes.get(unit)
+    if not isinstance(disk_node, dict):
+        return
+    if (
+        disk_node.get("guest_password") == pw
+        and disk_node.get("last_guest_roll") == node.get("last_guest_roll")
+    ):
+        return
+    disk_node["guest_password"] = pw
+    if "last_guest_roll" in node:
+        disk_node["last_guest_roll"] = node["last_guest_roll"]
+    write_nodes_doc(nodes_path, disk_doc)
+
+
+def _heard_matches_desired(
+    field: str,
+    desired: str,
+    heard: Any,
     *,
     node: dict[str, Any],
-    doc: dict[str, Any],
+    doc: dict[str, Any] | None,
+    keys: dict[str, list[str]] | None,
     sites: dict[str, dict[str, Any]] | None,
-    cmd_timeout: float,
-    attempts: int,
-    session: FleetSession | None,
-    log: PollLog,
-    conn: sqlite3.Connection,
-    heard_acl: list[dict[str, Any]] | None = None,
-    firmware_version: str | None = None,
-    login_clock: int | None = None,
-    keys: dict[str, list[str]] | None = None,
-    force: bool = False,
+    unit: str,
 ) -> bool:
-    """SET mask or book identity plus shared radio policy. Returns True when fully synced."""
-    if force:
-        clear_apply_stamps(conn, target.key)
+    if field == "name":
+        return str(heard or "") == desired
+    if field in ("lat", "lon"):
+        try:
+            return abs(float(heard) - float(desired)) <= 1e-5
+        except (TypeError, ValueError):
+            return False
+    if field in ("advert", "flood"):
+        try:
+            return int(float(heard)) == int(desired)
+        except (TypeError, ValueError):
+            return False
+    if field == "acl":
+        if not isinstance(heard, list):
+            return False
+        try:
+            want = resolve_node_acl(doc or {}, node, keys or {})
+        except UnknownPerson:
+            want = []
+        return not plan_acl_ops(want, heard)
+    return field_desired_str(heard) == desired
 
-    due = frozenset(
-        apply_due_fields(
-            conn, target.key, node, sites, force=force, doc=doc, keys=keys
-        )
-    )
-    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=target.key)
 
-    def stamp(field: str) -> None:
-        des = applicable.get(field)
-        if des is not None:
-            stamp_apply(conn, unit=target.key, field=field, desired=des, ok=True)
-
-    if not due:
-        log.step(f"profile OK ({profile_id(node, sites, doc=doc, keys=keys, key=target.key)})")
-        return True
-
-    def abort(field: str) -> bool:
-        log.step(f"apply aborted: {field} unreachable")
-        remaining = apply_due_fields(
-            conn, target.key, node, sites, doc=doc, keys=keys
-        )
-        if remaining:
-            log.step(f"profile partial ({len(remaining)} due: {', '.join(remaining)})")
+def reconcile_heard(
+    conn: sqlite3.Connection,
+    unit: str,
+    node: dict[str, Any],
+    sites: dict[str, dict[str, Any]] | None,
+    *,
+    doc: dict[str, Any] | None,
+    keys: dict[str, list[str]] | None,
+    field: str,
+    heard: Any,
+    log: PollLog | None = None,
+) -> bool:
+    """Clear apply stamp when audit GET shows device drift from book."""
+    if last_ok_apply(conn, unit, field) is None:
         return False
+    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=unit)
+    desired = applicable.get(field)
+    if desired is None:
+        return False
+    if _heard_matches_desired(
+        field,
+        desired,
+        heard,
+        node=node,
+        doc=doc,
+        keys=keys,
+        sites=sites,
+        unit=unit,
+    ):
+        return False
+    clear_apply_stamps(conn, unit, fields=[field])
+    if log is not None:
+        log.step(f"{field}: device != book, re-apply queued")
+    return True
 
-    bind = site_binding(target.key, node, sites)
-
-    if "name" in due:
-        name = public_radio_name(target.key, node, sites, doc=doc)
-        if bind:
-            name_log = format_apply_name_log(target.key, node, sites, doc=doc)
-            if name_log:
-                log.step(name_log)
-        if await _set_cli(
-            client,
-            target,
-            f"set name {name}",
-            cmd_timeout=cmd_timeout,
-            attempts=attempts,
-            log=log,
-            session=session,
-            field="name",
-        ) == "ok":
-            stamp("name")
-        else:
-            return abort("name")
-    else:
-        log.step("name: skip (synced)")
-
-    if bind:
-        pos = resolve_public_apply_position(node, sites, key=target.key, doc=doc)
-        if pos and ("lat" in due or "lon" in due):
-            audit = audit_apply_position(node, sites, key=target.key, doc=doc)
-            if audit:
-                log.step(format_apply_position_log(audit))
-        if pos:
-            if "lat" in due:
-                if await set_book_coord(
-                    client, target, "lat", float(pos["lat"]),
-                    cmd_timeout=cmd_timeout,
-                    attempts=attempts,
-                    log=log, session=session,
-                ) is not None:
-                    stamp("lat")
-                else:
-                    return abort("lat")
-            else:
-                log.step("lat: skip (synced)")
-            if "lon" in due:
-                if await set_book_coord(
-                    client, target, "lon", float(pos["lon"]),
-                    cmd_timeout=cmd_timeout,
-                    attempts=attempts,
-                    log=log, session=session,
-                ) is not None:
-                    stamp("lon")
-                else:
-                    return abort("lon")
-            else:
-                log.step("lon: skip (synced)")
-        advert_interval, flood_interval = _profile_advert_intervals(node, site_bound=True)
-        if "advert" in due:
-            if await _set_cli(
-                client, target, f"set advert.interval {advert_interval}",
-                cmd_timeout=cmd_timeout,
-                attempts=attempts,
-                log=log, session=session, field="advert",
-            ) == "ok":
-                stamp("advert")
-            else:
-                return abort("advert")
-        else:
-            log.step("advert: skip (synced)")
-        if "flood" in due:
-            if await _set_cli(
-                client, target, f"set flood.advert.interval {flood_interval}",
-                cmd_timeout=cmd_timeout,
-                attempts=attempts,
-                log=log, session=session, field="flood_advert",
-            ) == "ok":
-                stamp("flood")
-            else:
-                return abort("flood")
-        else:
-            log.step("flood_advert: skip (synced)")
-    else:
-        if "lat" in due:
-            if await set_book_coord(
-                client, target, "lat", 0.0,
-                cmd_timeout=cmd_timeout,
-                attempts=attempts,
-                log=log, session=session,
-            ) is not None:
-                stamp("lat")
-            else:
-                return abort("lat")
-        else:
-            log.step("lat: skip (synced)")
-        if "lon" in due:
-            if await set_book_coord(
-                client, target, "lon", 0.0,
-                cmd_timeout=cmd_timeout,
-                attempts=attempts,
-                log=log, session=session,
-            ) is not None:
-                stamp("lon")
-            else:
-                return abort("lon")
-        else:
-            log.step("lon: skip (synced)")
-        if "advert" in due:
-            advert = _opt_int(node.get("advert_interval_min"))
-            interval = 0 if advert is None else advert
-            if await _set_cli(
-                client, target, f"set advert.interval {interval}",
-                cmd_timeout=cmd_timeout,
-                attempts=attempts,
-                log=log, session=session, field="advert",
-            ) == "ok":
-                stamp("advert")
-            else:
-                return abort("advert")
-        else:
-            log.step("advert: skip (synced)")
-        if "flood" in due:
-            flood = _opt_int(node.get("flood_advert_interval_h"))
-            interval = 0 if flood is None else flood
-            if await _set_cli(
-                client, target, f"set flood.advert.interval {interval}",
-                cmd_timeout=cmd_timeout,
-                attempts=attempts,
-                log=log, session=session, field="flood_advert",
-            ) == "ok":
-                stamp("flood")
-            else:
-                return abort("flood")
-        else:
-            log.step("flood_advert: skip (synced)")
-
-    if "guest" in due:
-        guest = _ensure_guest_password(node, doc, target.key)
-        if await _set_cli(
-            client, target, f"set guest.password {guest}",
-            cmd_timeout=cmd_timeout,
-            attempts=attempts,
-            log=log, session=session, field="guest",
-        ) == "ok":
-            stamp("guest")
-        else:
-            return abort("guest")
-    else:
-        log.step("guest: skip (synced)")
-
-    if "owner" in due:
-        owner_text = owner_info_for_apply(node, doc, key=target.key, sites=sites)
-        owner_cmd = owner_info_cli_payload(owner_text)
-        if await _set_cli(
-            client,
-            target,
-            f"set owner.info {owner_cmd}",
-            cmd_timeout=cmd_timeout,
-            attempts=attempts,
-            log=log,
-            session=session,
-            field="owner",
-        ) == "ok":
-            stamp("owner")
-        else:
-            return abort("owner")
-    else:
-        log.step("owner: skip (synced)")
-
-    if "repeat" in due:
-        repeat_on = desired_repeat(node, sites, key=target.key)
-        if await _set_cli(
-            client,
-            target,
-            f"set repeat {'on' if repeat_on else 'off'}",
-            cmd_timeout=cmd_timeout,
-            attempts=attempts,
-            log=log,
-            session=session,
-            field="repeat",
-        ) == "ok":
-            stamp("repeat")
-        else:
-            return abort("repeat")
-    else:
-        log.step("repeat: skip (synced)")
-
-    admin = node.get("admin_password")
-    if password_is_strong(admin):
-        if "admin" in due:
-            admin_pw = normalize_password(admin)
-            if await _set_cli(
-                client, target, f"password {admin_pw}",
-                cmd_timeout=cmd_timeout,
-                attempts=attempts,
-                log=log, session=session, field="admin",
-                expected=admin_pw,
-            ) == "ok":
-                stamp("admin")
-            else:
-                return abort("admin")
-        else:
-            log.step("admin: skip (synced)")
-
-    if "path_hash" in due:
-        if await set_path_hash_policy(
-            client, target, cmd_timeout=cmd_timeout,
-            attempts=attempts,
-            log=log, session=session,
-            mode=desired_path_hash_mode(node),
-        ) is not None:
-            stamp("path_hash")
-        else:
-            return abort("path_hash")
-    else:
-        log.step("path.hash: skip (synced)")
-
-    if "dutycycle" in due:
-        if await set_dutycycle_policy(
-            client, target, cmd_timeout=cmd_timeout,
-            attempts=attempts,
-            log=log, session=session,
-            firmware_version=firmware_version or node.get("firmware_version"),
-            pct=float(desired_dutycycle(node)),
-        ) is not None:
-            stamp("dutycycle")
-        else:
-            return abort("dutycycle")
-    else:
-        log.step("dutycycle: skip (synced)")
-
-    if "ota_autofetch" in due:
-        unsupported = False
-        try:
-            applied = await set_ota_autofetch_policy(
-                client, target, cmd_timeout=cmd_timeout,
-                attempts=attempts,
-                log=log, session=session,
-                mode=desired_ota_autofetch(node),
-            )
-        except OtaAutofetchUnsupported:
-            unsupported = True
-            applied = None
-        if applied is not None or unsupported:
-            stamp("ota_autofetch")
-            if unsupported:
-                log.step("ota autofetch: skip (unsupported)")
-        else:
-            return abort("ota_autofetch")
-    else:
-        log.step("ota autofetch: skip (synced)")
-
-    if "powersaving" in due:
-        if await set_powersaving_policy(
-            client, target, cmd_timeout=cmd_timeout,
-            attempts=attempts,
-            log=log, session=session,
-            enabled=desired_powersaving(node),
-        ) is not None:
-            stamp("powersaving")
-        else:
-            return abort("powersaving")
-    elif "powersaving" in applicable:
-        log.step("powersaving: skip (synced)")
-
-    if "fem_rxgain" in due:
-        unsupported = False
-        try:
-            applied = await set_fem_rxgain_policy(
-                client, target, cmd_timeout=cmd_timeout,
-                attempts=attempts,
-                log=log, session=session,
-                enabled=desired_fem_rxgain(node),
-            )
-        except FemRxgainUnsupported:
-            unsupported = True
-            applied = None
-        if applied is not None or unsupported:
-            stamp("fem_rxgain")
-            if unsupported:
-                log.step("fem.rxgain: skip (unsupported)")
-        else:
-            return abort("fem_rxgain")
-    elif "fem_rxgain" in applicable:
-        log.step("fem.rxgain: skip (synced)")
-
-    if "rxgain" in due:
-        unsupported = False
-        try:
-            applied = await set_rxgain_policy(
-                client, target, cmd_timeout=cmd_timeout,
-                attempts=attempts,
-                log=log, session=session,
-                enabled=rxgain_apply_enabled(node),
-            )
-        except FemRxgainUnsupported:
-            unsupported = True
-            applied = None
-        if applied is not None or unsupported:
-            stamp("rxgain")
-            if unsupported:
-                log.step("radio.rxgain: skip (unsupported)")
-        else:
-            return abort("rxgain")
-    elif "rxgain" in applicable:
-        log.step("radio.rxgain: skip (synced)")
-
-    stored_clock = None
-    seen = get_last_seen(conn, target.key)
-    if seen and seen.get("node_clock") is not None:
-        stored_clock = int(seen["node_clock"])
-    await maybe_sync_repeater_clock(
-        client,
-        target,
-        login_clock=login_clock,
-        stored_clock=stored_clock,
-        cmd_timeout=cmd_timeout,
-        attempts=attempts,
-        log=log,
-        session=session,
-    )
-
-    try:
-        want_acl = resolve_node_acl(doc, node, keys or {})
-    except UnknownPerson as exc:
-        log.step(f"acl: unknown person {exc}")
-        want_acl = []
-    if want_acl and "acl" in due:
-        if heard_acl is None:
-            wait_cap = mesh_wait_seconds(6000, cap=cmd_timeout)
-
-            acl_raw = await retry_binary_req(
-                "GET_ACL",
-                lambda dest_wait: client.commands.req_acl_sync(
-                    target.pubkey_hex, timeout=dest_wait, min_timeout=8
-                ),
-                client=client,
-                attempts=attempts,
-                log=log,
-                session=session,
-                target=target,
-                wait_s=wait_cap,
-                cap=cmd_timeout,
-            )
-            heard_acl = normalize_acl_payload(acl_raw)
-        if await _apply_acl(
-            client, target, want_acl, heard_acl,
-            cmd_timeout=cmd_timeout,
-            attempts=attempts,
-            log=log, session=session,
-        ) == "ok":
-            stamp("acl")
-        else:
-            return abort("acl")
-    elif want_acl:
-        log.step("acl: skip (synced)")
-
-    remaining = apply_due_fields(conn, target.key, node, sites, doc=doc, keys=keys)
-    if not radio_apply_due_fields(remaining):
-        if "identity" in applicable and "identity" in remaining:
-            stamp("identity")
-        remaining = apply_due_fields(
-            conn, target.key, node, sites, doc=doc, keys=keys
-        )
-    if not remaining:
-        pid = profile_id(node, sites, doc=doc, keys=keys, key=target.key)
-        log.step(f"profile OK ({pid})")
-        return True
-    log.step(f"profile partial ({len(remaining)} due: {', '.join(remaining)})")
-    return False
-
-
-def persist_guest_if_new(nodes_path: Any, doc: dict[str, Any]) -> None:
-    nodes = doc.get("nodes")
-    if isinstance(nodes, dict):
-        sync_paused(Path(nodes_path), nodes)
-    write_nodes_doc(nodes_path, doc)

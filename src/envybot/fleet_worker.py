@@ -6,6 +6,7 @@ import asyncio
 import sqlite3
 import time
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any
 
 from envybot.apply import (
@@ -21,8 +22,10 @@ from envybot.apply import (
     desired_repeat,
     owner_info_cli_payload,
     owner_info_for_apply,
+    persist_guest_password,
     profile_id,
     radio_apply_due_fields,
+    reconcile_heard,
     rxgain_apply_enabled,
 )
 from envybot.apply import (
@@ -74,6 +77,7 @@ from envybot.ota_parse import (
     parse_ota_status,
 )
 from envybot.radio import (
+    AUDIT_GET_ATTEMPTS,
     FleetSession,
     NEIGHBOR_DISCOVER_WAIT_S,
     OTA_LS_WAIT_S,
@@ -135,11 +139,14 @@ APPLY_FIELD_ORDER = (
     "acl",
 )
 
+AUDIT_GET_GROUPS = frozenset({"name", "lat", "lon", "advert", "flood_advert", "acl"})
+
 
 @dataclass
 class WorkerContext:
     client: MeshCore
     conn: sqlite3.Connection
+    nodes_path: Path
     nodes: dict[str, Any]
     sites: dict[str, dict[str, Any]]
     doc: dict[str, Any]
@@ -250,7 +257,9 @@ def _pin_ota_unsupported(
     return True
 
 
-def _attempt_cap(ctx: WorkerContext) -> int | None:
+def _attempt_cap(ctx: WorkerContext, job: RadioJob) -> int | None:
+    if job.attempt_cap is not None:
+        return job.attempt_cap
     return ctx.max_attempts if ctx.max_attempts else None
 
 
@@ -384,7 +393,8 @@ def build_poll_jobs(
             )
             jobs.append(RadioJob(kind="get:ota_ls", unit_key=target.key))
         else:
-            jobs.append(RadioJob(kind=f"get:{group}", unit_key=target.key))
+            cap = AUDIT_GET_ATTEMPTS if group in AUDIT_GET_GROUPS else None
+            jobs.append(RadioJob(kind=f"get:{group}", unit_key=target.key, attempt_cap=cap))
     return jobs
 
 
@@ -434,7 +444,7 @@ def build_manual_jobs(
         return build_stage_jobs(target, stage_mid)
     if manual_job == "install":
         return build_install_jobs(target)
-    if manual_job == "push":
+    if manual_job == "deploy":
         return build_poll_jobs(
             target,
             [],
@@ -454,8 +464,8 @@ def build_manual_jobs(
         target,
         due,
         do_apply=do_apply,
-        apply_due=apply_due or manual_job == "push",
-        force_apply=manual_job == "push",
+        apply_due=apply_due or manual_job == "deploy",
+        force_apply=manual_job == "deploy",
         skip_discover=skip_discover,
         discover_wait=discover_wait,
     )
@@ -578,6 +588,30 @@ def _console_poll_group(cmd: str) -> str | None:
     return None
 
 
+def _reconcile_audit_group(
+    group: str,
+    heard: Any,
+    *,
+    ctx: WorkerContext,
+    target: RouterTarget,
+    node: dict[str, Any],
+) -> None:
+    if group not in AUDIT_GET_GROUPS:
+        return
+    field = "flood" if group == "flood_advert" else group
+    reconcile_heard(
+        ctx.conn,
+        target.key,
+        node,
+        ctx.sites,
+        doc=ctx.doc,
+        keys=ctx.keys,
+        field=field,
+        heard=heard,
+        log=ctx.log,
+    )
+
+
 def _apply_cli_poll_reply(
     group: str,
     raw: str,
@@ -647,35 +681,42 @@ def _apply_cli_poll_reply(
         acc.raw_bl = raw
         acc.record_group(ctx, target.key, "bootloader")
         return True
+    node = ctx.nodes.get(target.key) or {}
     if group == "name":
         acc.name = parse_get_value(raw) or ""
         acc.record_group(ctx, target.key, "name")
+        _reconcile_audit_group("name", acc.name, ctx=ctx, target=target, node=node)
         return True
     if group == "lat":
         acc.lat = parse_coord(raw)
         if acc.lat is None:
             acc.lat = 0.0
         acc.record_group(ctx, target.key, "lat")
+        _reconcile_audit_group("lat", acc.lat, ctx=ctx, target=target, node=node)
         return True
     if group == "lon":
         acc.lon = parse_coord(raw)
         if acc.lon is None:
             acc.lon = 0.0
         acc.record_group(ctx, target.key, "lon")
+        _reconcile_audit_group("lon", acc.lon, ctx=ctx, target=target, node=node)
         return True
     if group == "advert":
         acc.advert_min = parse_int_get_value(raw) or 0
         acc.record_group(ctx, target.key, "advert")
+        _reconcile_audit_group("advert", acc.advert_min, ctx=ctx, target=target, node=node)
         return True
     if group == "flood_advert":
         acc.flood_h = parse_int_get_value(raw) or 0
         acc.record_group(ctx, target.key, "flood_advert")
+        _reconcile_audit_group("flood_advert", acc.flood_h, ctx=ctx, target=target, node=node)
         return True
     if group == "acl":
         acl = parse_serial_acl(raw)
         acc.acl = acl
         acc.heard_acl = acl
         acc.record_group(ctx, target.key, "acl")
+        _reconcile_audit_group("acl", acl, ctx=ctx, target=target, node=node)
         return True
     return False
 
@@ -786,7 +827,7 @@ async def execute_job(
 ) -> tuple[JobOutcome, Any | None]:
     target = uq.target
     attempt_num = job.attempt + 1
-    attempt_cap = _attempt_cap(ctx)
+    attempt_cap = _attempt_cap(ctx, job)
     acc = _poll_acc(uq)
     node = ctx.nodes.get(target.key) or {}
     route_extra = uq.session_extra
@@ -936,6 +977,9 @@ async def execute_job(
             acc.heard_acl = acl
             uq.session_extra["heard_acl"] = acl
             acc.record_group(ctx, target.key, "acl")
+            _reconcile_audit_group(
+                "acl", acl, ctx=ctx, target=target, node=ctx.nodes.get(target.key) or {}
+            )
             return JobOutcome.HEARD, acl
         return JobOutcome.TIMEOUT, None
 
@@ -1263,7 +1307,7 @@ async def _execute_apply(
         return JobOutcome.HEARD, clock
 
     bind = site_binding(target.key, node, ctx.sites)
-    attempt_cap = _attempt_cap(ctx)
+    attempt_cap = _attempt_cap(ctx, job)
     send: SetSend = "timeout"
 
     if field == "name":
@@ -1317,6 +1361,7 @@ async def _execute_apply(
         )
     elif field == "guest":
         guest = _ensure_guest_password(node, ctx.doc, target.key)
+        persist_guest_password(ctx.nodes_path, target.key, node)
         send = await _set_cli(
             ctx.client, target, f"set guest.password {guest}",
             cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
@@ -1467,12 +1512,12 @@ async def _execute_apply(
 
 def unit_policy_for_manual(
     manual_job: str | None,
-    args_force: bool,
+    args_full_sync: bool,
     args_live: bool,
     args_group: list[str] | None,
     min_interval: float,
 ) -> PollPolicy:
-    if args_force:
+    if args_full_sync:
         return PollPolicy(force=True, live_only=False, force_groups=frozenset(args_group or ()), min_interval=min_interval)
     if manual_job == "pull":
         return PollPolicy(force=False, force_groups=frozenset(GET_GROUP_ORDER), min_interval=min_interval)

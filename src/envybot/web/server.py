@@ -174,7 +174,7 @@ class MonitorWeb:
             key,
             node,
             binding.sites,
-            force=job == "push",
+            force=job == "deploy",
             doc=binding.doc,
             keys=binding.keys,
         )
@@ -972,7 +972,7 @@ def make_app(web_ctx: MonitorWeb) -> web.Application:
     app.router.add_post("/api/unit/{key}", _handle_unit_edit)
     app.router.add_post("/api/refresh/{key}", lambda r: _handle_manual_job(r, "refresh"))
     app.router.add_post("/api/pull/{key}", lambda r: _handle_manual_job(r, "pull"))
-    app.router.add_post("/api/push/{key}", lambda r: _handle_manual_job(r, "push"))
+    app.router.add_post("/api/deploy/{key}", lambda r: _handle_manual_job(r, "deploy"))
     app.router.add_post("/api/stage/{key}", _handle_stage_job)
     app.router.add_post("/api/install/{key}", _handle_install_job)
     app.router.add_post("/api/console/open", _handle_console_open)

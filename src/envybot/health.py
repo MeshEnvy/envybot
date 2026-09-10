@@ -10,7 +10,7 @@ CheckStatus = Literal["ok", "warn", "bad", "unknown"]
 Grade = Literal["ok", "warn", "bad", "unknown"]
 Headline = Literal["paused", "healthy", "unreachable", "attention"]
 
-_IN_FLIGHT = frozenset({"queued", "refreshing", "pulling", "pushing", "polling"})
+_IN_FLIGHT = frozenset({"queued", "refreshing", "pulling", "deploying", "polling"})
 
 # Power (mV) — 1S Li-ion / WisBlock (charge 4.2 V, operating max 4.3 V)
 POWER_WARN_MV = 3700
@@ -385,7 +385,7 @@ def compute_health(
                 "Config",
                 "bad",
                 drift_detail or "Last pull: advert interval is on",
-                fix="Push sets advert and flood advert to 0. Pull again to confirm. A leftover name or GPS is not an advert.",
+                fix="Deploy sets advert and flood advert to 0. Pull again to confirm. A leftover name or GPS is not an advert.",
             )
         )
     elif drift == "due":

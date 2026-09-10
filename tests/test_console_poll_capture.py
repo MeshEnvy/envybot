@@ -20,10 +20,11 @@ from envybot.jobs import UnitQueue
 from envybot.radio import FleetSession, PollLog, RouterTarget
 
 
-def _worker_ctx(conn: sqlite3.Connection) -> WorkerContext:
+def _worker_ctx(conn: sqlite3.Connection, book: Path | None = None) -> WorkerContext:
     return WorkerContext(
         client=MagicMock(),
         conn=conn,
+        nodes_path=(book or Path("/tmp")) / "nodes.yaml",
         nodes={},
         sites={},
         doc={},
@@ -51,7 +52,7 @@ class ConsolePollCaptureTests(unittest.TestCase):
     def test_ver_stamps_firmware(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            ctx = _worker_ctx(conn)
+            ctx = _worker_ctx(conn, Path(tmp))
             target = RouterTarget(
                 key="me0032",
                 unit_id="me0032",
@@ -71,7 +72,7 @@ class ConsolePollCaptureTests(unittest.TestCase):
     def test_ota_stats_stamps_ota_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            ctx = _worker_ctx(conn)
+            ctx = _worker_ctx(conn, Path(tmp))
             target = RouterTarget(
                 key="me0032",
                 unit_id="me0032",

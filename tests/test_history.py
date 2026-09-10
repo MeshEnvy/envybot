@@ -191,12 +191,12 @@ class HistoryTests(unittest.TestCase):
             self.assertAlmostEqual(hist["status"][0]["lon"], -119.8138)
             self.assertEqual(_backfill_sample_loc_v2(conn, book), 0)
 
-    def test_apply_profile(self) -> None:
+    def test_apply_field_stamp(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            self.assertIsNone(last_ok_apply(conn, "me0001", "profile"))
-            insert_apply(conn, unit="me0001", field="profile", desired="private", ok=True)
-            self.assertEqual(last_ok_apply(conn, "me0001", "profile"), "private")
+            self.assertIsNone(last_ok_apply(conn, "me0001", "name"))
+            insert_apply(conn, unit="me0001", field="name", desired="Patrick", ok=True)
+            self.assertEqual(last_ok_apply(conn, "me0001", "name"), "Patrick")
 
     def test_import_jsonl_then_delete(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

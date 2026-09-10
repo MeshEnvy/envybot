@@ -60,7 +60,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   when leftover MeshCore pubkey/admin exist. No UI, poll, apply, or
   edits. Blank platform = meshcore.
 - `paused: true` stays in the UI. Fleet skips auto poll/apply. Refresh,
-  Pull, and Push still hit the radio. Trust/cmd ignore the flag.
+  Pull, and Deploy still hit the radio. Trust/cmd ignore the flag.
 - `routing: direct | path | flood` is mesh send policy (default **path** when
   omitted). Path uses cached route (including learned zero-hop direct),
   flood-logins when cache is empty, and discards stale cache after 3 timeouts.
@@ -91,16 +91,21 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Alias is UI/selector only (not pushed to radio).
 - Site-bound apply SETs public advert profile (fuzzed GPS, owner info, site
   advert name) and defaults `advert.interval 0` + `flood.advert.interval 12`
-  unless the row overrides. Bench/unbound SETs adverts off.
+  unless the row overrides. Bench/unbound SETs adverts off. Pre-0.1.3 units:
+  pin `advert_interval_min: 0` + `flood_advert_interval_h: 0` on the node row
+  until OTA ≥0.1.3 (book-only; no firmware gate in apply).
 - Passwords are unique and strong per unit. Apply/onboard roll blank, weak
   (`m35h3nvy`, placeholders, short), or colliding guests. Admin is never
   invented by apply. Apply SETs book admin (`password`) after ACL/login.
-- Apply due = `profile_id` vs last ok sqlite stamp, or weak guest assign.
-  Per-field stamps in sqlite `applies` (name, lat, lon, …, ota_autofetch).
+- Apply due = per-field sqlite `applies` (name, lat, lon, …, ota_autofetch)
+  vs book desired, or weak guest assign. Audit GET mismatch clears that
+  field's stamp and re-queues SET. Guest password rolls persist to disk at
+  assign time. `sync_book` reloads `nodes.yaml` / `sites.yaml` / `keys.yaml`
+  in place during a long fleet run (new units still need restart).
   `ota config autofetch` `Unknown command` stamps the field done (no CLI).
   A SET timeout still retries. Onboard stamps those after USB SET + ACL
-  (private only). Legacy
-  `profile` ok row still counts as fully synced. `--force` is Pull plus Push.
+  (private only). `--full-sync` is Deploy plus periodic/inventory GETs
+  (no audit GETs on the same pass).
   UI ``due`` is that stamp (apply needed). ``leak`` is a later pull that
   still shows advert or flood advert on. Name or GPS is not an advert.
   A last-seen interval older than the apply stamp is ignored. Poll default: status/telemetry every 1h
@@ -110,8 +115,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   `ota_ls` to that `firmware_version` (no refresh until `ver` changes).
   Long-running fleet re-checks due groups about every 60s
   while idle, and after each swim-lane batch (so apply-due units
-  do not wait for the whole fleet to go quiet). fw/bl/ota once; name/gps/advert/acl audit-only (Pull /
-  `--group` / `--force`). Status/telemetry samples log bound-site GPS.
+  do not wait for the whole fleet to go quiet). fw/bl/ota once; name/gps/advert/acl
+  audit GET weekly (cap 3 attempts), on Pull / `--group`, or when never stamped.
+  Status/telemetry samples log bound-site GPS.
   One-shot `sample_loc_backfill` stamps current site loc onto older
   rows that lack it. Bench/unmapped stay blank. Voltage is status
   `battery_mv` only (telemetry voltage stored, unused). Voltage/temp When
@@ -127,8 +133,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   per-command retry cap (scheduler-owned); logs show `N/max` not `N/1`.
   Auto poll/apply only: `--retry-delay` (default 60s) parks a unit after timeout
   before retry; `--miss-cooldown` (default 3600s) skips cadence re-seed after
-  max attempts. Console and manual Refresh/Pull/Push are exempt; manual UI
-  clears backoff and cooldown. `--force` or `--unit` bypass cooldown on startup.
+  max attempts. Console and manual Refresh/Pull/Deploy are exempt; manual UI
+  clears backoff and cooldown. `--full-sync` or `--unit` bypass cooldown on startup.
   Successful GET_STATUS / GET_TELEMETRY / CLI log a one-line result as soon
   as they land (same beat as `login OK`). An apply field whose stamp
   already matches logs `field: skip (synced)` (no radio).
@@ -137,7 +143,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Path mode flood-discovers when cache is empty; timeout on cached path (3x)
   discards cache and re-floods.
   Neighbor discover wait (default 12s) is a background timer, not radio hold.
-  Manual Refresh/Pull/Push replace that unit's remaining jobs except a
+  Manual Refresh/Pull/Deploy replace that unit's remaining jobs except a
   queued console send (stays in front). A click mid-GET supersedes the
   in-flight result (does not pop the new head). Sqlite stamps incrementally per successful GET/SET. Apply GETs ACL when
   due to drop extras. A SET timeout parks and retries. A SET CLI error or
@@ -175,11 +181,11 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
   sidebar list (first click fly/select, second opens detail). Open card is
   `?unit=<key>` (`replaceState`; reload restores). `?map=1` reopens the map.
   `--web-only` browses the book without a radio. Never expose secrets.
-  **Refresh**, **Pull**, and **Push** always enqueue (even while that unit
+  **Refresh**, **Pull**, and **Deploy** always enqueue (even while that unit
   is polling) and run ahead of auto work until the click is done. Overrides
   `--skip` and `paused`. Refresh is live GET only (status/telemetry);
   Pull adds sticky GET plus OTA/neighbors;
-  Push is SET-only force.   **Console** (header or unit-row icon): tabbed modal, optional extra sessions to the
+  Deploy is SET-only (clears stamps).   **Console** (header or unit-row icon): tabbed modal, optional extra sessions to the
   same unit. Row icon focuses the first tab for that unit or opens one.
   Open is radio-free. CLI jumps that unit (login on first send if not
   authed, or if a login job is already queued). Login timeout clears
@@ -195,8 +201,8 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
   Unread `*` on a tab (header icon too when hidden).
   `localStorage` + hello survive refresh / fleet restart.
   Audit `source=console`. Tracked CLI replies stamp last-seen.
-  Push force-SETs profile (including passwords). CLI `--force` is Pull plus
-  Push. Auto-apply queues when `apply_is_due` even if the fleet is mid-sync.
+  Deploy re-SETs profile (including passwords). CLI `--full-sync` is Pull plus
+  Deploy. Auto-apply queues when `apply_is_due` even if the fleet is mid-sync.
   **Pause** (detail checkbox) writes `paused: true` and drops the unit from
   auto poll/apply on the next job boundary (in-flight exchange finishes).
   Map sidebar and dashboard cards fade paused rows.

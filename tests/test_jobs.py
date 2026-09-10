@@ -16,7 +16,7 @@ from envybot.jobs import (
     drop_ota_poll_jobs,
     job_still_queued,
 )
-from envybot.radio import RouterTarget
+from envybot.radio import AUDIT_GET_ATTEMPTS, RouterTarget
 
 
 def _target(key: str = "me0001") -> RouterTarget:
@@ -180,6 +180,24 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
 
         await sched.run(execute, on_job_done=on_done, once=True)
         self.assertEqual(remaining, [1, 0])
+
+    async def test_audit_get_respects_job_attempt_cap(self) -> None:
+        sched = FleetScheduler(max_attempts=10, retry_delay=0.0)
+        t = _target()
+        sched.enqueue_jobs(
+            t,
+            [RadioJob(kind="get:name", unit_key="me0001", attempt_cap=AUDIT_GET_ATTEMPTS)],
+        )
+        attempts = 0
+
+        async def execute(job: RadioJob, uq: UnitQueue) -> tuple[JobOutcome, object | None]:
+            nonlocal attempts
+            attempts += 1
+            return JobOutcome.TIMEOUT, None
+
+        await sched.run(execute, once=True)
+        self.assertEqual(attempts, AUDIT_GET_ATTEMPTS)
+        self.assertFalse(sched.units["me0001"].jobs)
 
     async def test_apply_timeout_retries_then_drops_remaining_sets(self) -> None:
         sched = FleetScheduler(max_attempts=2, retry_delay=0.0)

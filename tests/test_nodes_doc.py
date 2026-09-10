@@ -9,9 +9,10 @@ from pathlib import Path
 from envybot.nodes_doc import (
     is_decommissioned,
     is_paused,
-    sync_paused,
+    sync_book,
     write_nodes_doc,
 )
+from ruamel.yaml import YAML as YamlLoader
 from envybot.routing import resolve_routing, routing_explicit
 from ruamel.yaml import YAML
 
@@ -39,9 +40,14 @@ class PausedTests(unittest.TestCase):
     def test_true_is_paused(self) -> None:
         self.assertTrue(is_paused({"paused": True}))
 
-    def test_sync_paused_from_disk(self) -> None:
+
+class SyncBookTests(unittest.TestCase):
+    def test_sync_book_disk_wins(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "nodes.yaml"
+            book = Path(tmp)
+            path = book / "nodes.yaml"
+            (book / "sites.yaml").write_text("sites: {}\n", encoding="utf-8")
+            (book / "keys.yaml").write_text("people: {}\n", encoding="utf-8")
             disk = {
                 "next_unit": 3,
                 "nodes": {
@@ -50,63 +56,47 @@ class PausedTests(unittest.TestCase):
                 },
             }
             write_nodes_doc(path, disk)
-            mem = {
+            doc: dict = {"next_unit": 3}
+            nodes = {
                 "me0001": {"unit_id": "ME0001", "guest_password": "new"},
                 "me0002": {"unit_id": "ME0002", "paused": True},
             }
-            sync_paused(path, mem)
-            self.assertTrue(is_paused(mem["me0001"]))
-            self.assertEqual(mem["me0001"]["guest_password"], "new")
-            self.assertFalse(is_paused(mem["me0002"]))
+            sites: dict = {}
+            keys: dict = {}
+            self.assertTrue(sync_book(path, doc, nodes, sites, keys))
+            self.assertTrue(is_paused(nodes["me0001"]))
+            self.assertNotIn("guest_password", nodes["me0001"])
+            self.assertFalse(is_paused(nodes["me0002"]))
 
-    def test_sync_alias_and_notes_from_disk(self) -> None:
+    def test_sync_book_sites_and_public_advert(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "nodes.yaml"
-            disk = {
-                "next_unit": 2,
-                "nodes": {
-                    "me0001": {
-                        "unit_id": "ME0001",
-                        "alias": "Bag",
-                        "notes": "Spare repeater",
-                    },
+            book = Path(tmp)
+            path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            (book / "keys.yaml").write_text("people: {}\n", encoding="utf-8")
+            write_nodes_doc(
+                path,
+                {
+                    "next_unit": 2,
+                    "public_advert": {"suffix": "ME"},
+                    "nodes": {"me0001": {"unit_id": "ME0001"}},
                 },
-            }
-            write_nodes_doc(path, disk)
-            mem = {"me0001": {"unit_id": "ME0001", "guest_password": "new"}}
-            sync_paused(path, mem)
-            self.assertEqual(mem["me0001"]["alias"], "Bag")
-            self.assertEqual(mem["me0001"]["notes"], "Spare repeater")
-            self.assertEqual(mem["me0001"]["guest_password"], "new")
+            )
+            yaml = YamlLoader()
+            yaml.dump(
+                {"sites": {"ophir": {"node": "me0001", "loc": [39.5, -119.8]}}},
+                sites_path.open("w", encoding="utf-8"),
+            )
+            doc = {"next_unit": 2}
+            nodes = {"me0001": {"unit_id": "ME0001"}}
+            sites: dict = {}
+            keys: dict = {}
+            self.assertTrue(sync_book(path, doc, nodes, sites, keys))
+            self.assertEqual(doc["public_advert"], {"suffix": "ME"})
+            self.assertEqual(sites["ophir"]["loc"], [39.5, -119.8])
 
-    def test_sync_power_prefs_from_disk(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "nodes.yaml"
-            disk = {
-                "next_unit": 2,
-                "nodes": {
-                    "me0001": {
-                        "unit_id": "ME0001",
-                        "powersaving": True,
-                        "fem_rxgain": False,
-                    },
-                },
-            }
-            write_nodes_doc(path, disk)
-            mem = {"me0001": {"unit_id": "ME0001", "guest_password": "new"}}
-            sync_paused(path, mem)
-            self.assertTrue(mem["me0001"]["powersaving"])
-            self.assertFalse(mem["me0001"]["fem_rxgain"])
-            self.assertEqual(mem["me0001"]["guest_password"], "new")
-            disk["nodes"]["me0001"].pop("powersaving")
-            disk["nodes"]["me0001"].pop("fem_rxgain")
-            write_nodes_doc(path, disk)
-            sync_paused(path, mem)
-            self.assertNotIn("powersaving", mem["me0001"])
-            self.assertNotIn("fem_rxgain", mem["me0001"])
-
-    def test_persist_guest_keeps_disk_paused(self) -> None:
-        from envybot.apply import persist_guest_if_new
+    def test_persist_guest_writes_disk(self) -> None:
+        from envybot.apply import persist_guest_password
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "nodes.yaml"
@@ -117,12 +107,8 @@ class PausedTests(unittest.TestCase):
                     "nodes": {"me0001": {"unit_id": "ME0001", "paused": True}},
                 },
             )
-            mem_doc = {
-                "next_unit": 2,
-                "nodes": {"me0001": {"unit_id": "ME0001", "guest_password": "rolled"}},
-            }
-            persist_guest_if_new(path, mem_doc)
-            self.assertTrue(is_paused(mem_doc["nodes"]["me0001"]))
+            node = {"unit_id": "ME0001", "guest_password": "rolled", "last_guest_roll": 123}
+            persist_guest_password(path, "me0001", node)
             from envybot.nodes_doc import load_nodes_doc
 
             disk = load_nodes_doc(path)
@@ -150,7 +136,12 @@ class RoutingBookTests(unittest.TestCase):
                 "me0001": {"unit_id": "ME0001", "guest_password": "new"},
                 "me0002": {"unit_id": "ME0002", "routing": "direct"},
             }
-            sync_paused(path, mem)
+            doc = {"next_unit": 3}
+            sites: dict = {}
+            keys: dict = {}
+            (path.parent / "sites.yaml").write_text("sites: {}\n", encoding="utf-8")
+            (path.parent / "keys.yaml").write_text("people: {}\n", encoding="utf-8")
+            sync_book(path, doc, mem, sites, keys)
             self.assertEqual(routing_explicit(mem["me0001"]), "direct")
             self.assertEqual(routing_explicit(mem["me0002"]), "flood")
             self.assertNotIn("flood", mem["me0002"])

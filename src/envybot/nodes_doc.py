@@ -9,6 +9,7 @@ from typing import Any
 
 from ruamel.yaml import YAML
 
+from envybot.keys_doc import keys_path, load_keys
 from envybot.position import load_sites
 
 HEX_PUBKEY_RE = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -78,7 +79,7 @@ NODES_YAML_HEADER = (
     "# admin1_pubkey / admin1_secret: Meshtastic remote-admin. Not MC ACL.\n"
     "# firmware_platform: meshcore | meshtastic. Meshtastic rows stay in the\n"
     "#   book; envybot ignores them (no UI, poll, apply, trust, cmd).\n"
-    "# paused: true skips auto fleet poll/apply. Still in the UI. Refresh/Pull/Push override.\n"
+    "# paused: true skips auto fleet poll/apply. Still in the UI. Refresh/Pull/Deploy override.\n"
     "# stability_ack_ts: unix epoch when reboot warning was dismissed in the UI.\n"
     "#   Ignores earlier uptime drops until the next reboot.\n"
     "# routing: direct | path | flood — mesh send policy (default path when omitted).\n"
@@ -88,8 +89,9 @@ NODES_YAML_HEADER = (
     "# next_unit: next free ME number (never reuse).\n"
     "# admin_password / guest_password: unique + strong per unit. Privacy apply\n"
     "#   rolls blank, weak, or colliding guest passwords (never reuse m35h3nvy).\n"
-    "# Apply due = per-field sqlite applies (legacy profile row still honored).\n"
-    "#   Poll: status/telemetry hourly, neighbors daily; audit GET on --force.\n"
+    "# Apply due = per-field sqlite applies vs book desired.\n"
+    "#   Poll: status/telemetry hourly, neighbors daily; audit GET weekly on Pull.\n"
+    "#   sync_book reloads sites/public_advert/keys live; new units need restart.\n"
     "# Tool: envybot. Fleet: ./envybot fleet. Trust: ./envybot trust.\n"
     "# Never copy secrets (passwords, keypairs) into public trees.\n"
 )
@@ -171,51 +173,60 @@ def is_paused(node: dict[str, Any] | None) -> bool:
     return bool(node and node.get("paused") is True)
 
 
-def sync_paused(nodes_path: Path, nodes: dict[str, Any]) -> None:
-    """Copy UI book fields from disk so in-memory persist does not clobber them."""
+_book_mtime: float | None = None
+
+
+def _book_files_mtime(nodes_path: Path) -> float | None:
+    """Latest mtime across nodes.yaml, sites.yaml, keys.yaml."""
+    book = nodes_path.parent
+    mtimes: list[float] = []
+    for rel in ("nodes.yaml", "sites.yaml", keys_path(book).name):
+        try:
+            mtimes.append((book / rel).stat().st_mtime)
+        except OSError:
+            pass
+    return max(mtimes) if mtimes else None
+
+
+def sync_book(
+    nodes_path: Path,
+    doc: dict[str, Any],
+    nodes: dict[str, Any],
+    sites: dict[str, dict[str, Any]],
+    keys: dict[str, list[str]],
+) -> bool:
+    """Reload book from disk when mtimes change. Mutates in place. Returns True if reloaded."""
+    global _book_mtime
+    mtime = _book_files_mtime(nodes_path)
+    if mtime is None:
+        return False
+    if _book_mtime is not None and mtime == _book_mtime:
+        return False
     try:
         fresh = load_nodes_doc(nodes_path)
     except OSError:
-        return
+        return False
+    _book_mtime = mtime
+    for key, val in fresh.items():
+        if key == "nodes":
+            continue
+        doc[key] = val
     disk_nodes = fresh.get("nodes") or {}
     if not isinstance(disk_nodes, dict):
-        return
-    for key, mem in nodes.items():
+        disk_nodes = {}
+    for key, mem in list(nodes.items()):
         if not isinstance(mem, dict):
             continue
         disk = disk_nodes.get(key)
         if not isinstance(disk, dict):
             continue
-        if disk.get("paused") is True:
-            mem["paused"] = True
-        else:
-            mem.pop("paused", None)
-        if "repeat" in disk:
-            mem["repeat"] = disk["repeat"]
-        else:
-            mem.pop("repeat", None)
-        for field in ("routing", "alias", "notes"):
-            val = disk.get(field)
-            if field == "routing":
-                if isinstance(val, str) and val.strip():
-                    mem["routing"] = val.strip().lower()
-                else:
-                    mem.pop("routing", None)
-                continue
-            if isinstance(val, str) and val.strip():
-                mem[field] = val.strip() if field == "alias" else val
-            else:
-                mem.pop(field, None)
-        for field in (
-            "powersaving",
-            "fem_rxgain",
-            "rxgain",
-            "board",
-        ):
-            if field in disk:
-                mem[field] = disk[field]
-            else:
-                mem.pop(field, None)
+        mem.clear()
+        mem.update(disk)
+    sites.clear()
+    sites.update(load_sites(nodes_path.parent / "sites.yaml"))
+    keys.clear()
+    keys.update(load_keys(keys_path(nodes_path)))
+    return True
 
 
 def is_decommissioned(node: dict[str, Any] | None) -> bool:

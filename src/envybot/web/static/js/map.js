@@ -88,7 +88,7 @@ export function unitStatus(unit) {
   if (state === 'queued') return 'queued'
   if (state === 'refreshing') return 'refreshing'
   if (state === 'pulling') return 'pulling'
-  if (state === 'pushing') return 'pushing'
+  if (state === 'deploying') return 'deploying'
   const headline =
     unit?.health && typeof unit.health === 'object' && 'headline' in unit.health
       ? unit.health.headline

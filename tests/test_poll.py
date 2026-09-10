@@ -18,14 +18,14 @@ class _Res:
         self.base_hash = kwargs.get("base_hash")
         self.firmware_platform = kwargs.get("firmware_platform")
         self.name = kwargs.get("name")
-        self.lat = None
-        self.lon = None
+        self.lat = kwargs.get("lat")
+        self.lon = kwargs.get("lon")
         self.node_clock = None
         self.status = kwargs.get("status")
         self.telemetry = kwargs.get("telemetry")
-        self.advert_interval_min = None
-        self.flood_advert_interval_h = None
-        self.acl = None
+        self.advert_interval_min = kwargs.get("advert_interval_min")
+        self.flood_advert_interval_h = kwargs.get("flood_advert_interval_h")
+        self.acl = kwargs.get("acl")
         self.neighbors = kwargs.get("neighbors")
         self.polled_groups = kwargs.get("polled_groups", frozenset())
         self.ota = kwargs.get("ota")
@@ -86,14 +86,45 @@ class PollCadenceTests(unittest.TestCase):
     def test_audit_groups_skip_by_default(self) -> None:
         policy = PollPolicy(force=False, min_interval=86400.0)
         now = 1_700_000_000
-        seen = {"name_at": now - 100, "gps_at": now - 100, "acl_at": now - 100}
+        seen = {
+            "name_at": now - 100,
+            "gps_at": now - 100,
+            "advert_at": now - 100,
+            "flood_advert_at": now - 100,
+            "acl_at": now - 100,
+        }
         for group in ("name", "lat", "lon", "advert", "flood_advert", "acl"):
             self.assertFalse(group_is_due(seen, group, policy=policy, now=now))
 
-    def test_audit_groups_on_force(self) -> None:
+    def test_audit_groups_excluded_from_force(self) -> None:
         policy = PollPolicy(force=True)
-        seen = {"name_at": 1, "status_at": 1}
-        self.assertTrue(group_is_due(seen, "name", policy=policy, now=2_000_000_000))
+        now = 2_000_000_000
+        seen = {
+            "name_at": now - 100,
+            "gps_at": now - 100,
+            "advert_at": now - 100,
+            "flood_advert_at": now - 100,
+            "acl_at": now - 100,
+            "status_at": now - 100,
+        }
+        self.assertFalse(group_is_due(seen, "name", policy=policy, now=now))
+        self.assertTrue(group_is_due(seen, "status", policy=policy, now=now + 4000))
+
+    def test_audit_groups_on_force_groups(self) -> None:
+        policy = PollPolicy(force=False, force_groups=frozenset({"name"}))
+        seen = {"name_at": 1_700_000_000}
+        self.assertTrue(group_is_due(seen, "name", policy=policy, now=1_700_000_100))
+
+    def test_audit_groups_weekly_interval(self) -> None:
+        from envybot.radio import AUDIT_POLL_INTERVAL
+
+        policy = PollPolicy(force=False)
+        now = 1_700_000_000
+        seen = {"name_at": now - int(AUDIT_POLL_INTERVAL) + 100}
+        self.assertFalse(group_is_due(seen, "name", policy=policy, now=now))
+        self.assertTrue(
+            group_is_due(seen, "name", policy=policy, now=now + AUDIT_POLL_INTERVAL)
+        )
 
     def test_periodic_respects_interval(self) -> None:
         policy = PollPolicy(min_interval=3600.0)
@@ -221,7 +252,10 @@ class TrustStampTests(unittest.TestCase):
             conn = open_history(Path(tmp))
             from envybot.history import insert_apply
 
-            insert_apply(conn, unit="me0001", field="profile", desired=pre, ok=True)
+            for field, des in applicable_field_desireds(
+                node, None, doc=doc_before, keys=keys_before, key="me0001"
+            ).items():
+                insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
             self.assertTrue(
                 stamp_profile_after_trust(
                     conn,
@@ -333,7 +367,7 @@ class GetPlanTests(unittest.TestCase):
         self.assertIn("(have)", skip)
         self.assertIn("neighbors (fresh", skip)
         self.assertIn("name", skip)
-        self.assertIn("(audit)", skip)
+        self.assertIn("(audit <", skip)
 
 
 class SeedAutoWorkTests(unittest.TestCase):
@@ -497,6 +531,12 @@ class SeedAutoWorkTests(unittest.TestCase):
                     firmware_version="v1.0.0",
                     bootloader_version="1",
                     base_hash="abc",
+                    name="ME0001",
+                    lat=0.0,
+                    lon=0.0,
+                    advert_interval_min=0,
+                    flood_advert_interval_h=0,
+                    acl=[],
                     status={"battery_mv": 3900},
                     telemetry=[{"channel": "power", "type": "voltage", "value": 3.9}],
                     neighbors=[],
@@ -506,6 +546,12 @@ class SeedAutoWorkTests(unittest.TestCase):
                             "firmware",
                             "bootloader",
                             "ota",
+                            "name",
+                            "lat",
+                            "lon",
+                            "advert",
+                            "flood_advert",
+                            "acl",
                             "status",
                             "telemetry",
                             "ota_status",

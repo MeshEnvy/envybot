@@ -65,7 +65,7 @@ PULLED_AT_SUFFIX = "_pulled_at"
 DEFAULT_STALE_SECS = 86400.0
 NEIGHBOR_FRESH_SECS = 7 * 24 * 3600
 
-SessionState = str  # idle | queued | refreshing | pulling | pushing | polling | ok | unreachable | paused
+SessionState = str  # idle | queued | refreshing | pulling | deploying | polling | ok | unreachable | paused
 
 RADIO_PREF_FIELDS = (
     ("powersaving", "Power saving"),

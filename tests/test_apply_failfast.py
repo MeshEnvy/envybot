@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from collections import deque
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from envybot.apply import apply_one
-from envybot.history import open_history
+from envybot.fleet_worker import _execute_apply
+from envybot.history import last_ok_apply, open_history, stamp_apply
+from envybot.apply import applicable_field_desireds
+from envybot.jobs import FleetScheduler, JobOutcome, RadioJob, UnitQueue
 from envybot.radio import PollLog, RouterTarget
 
 
@@ -29,38 +33,41 @@ class ApplyFailFastTests(unittest.IsolatedAsyncioTestCase):
         steps: list[str] = []
         log = PollLog(progress=False)
         log.step = lambda msg: steps.append(msg)  # type: ignore[method-assign]
-        client = MagicMock()
-        session = MagicMock()
 
         with tempfile.TemporaryDirectory() as tmp:
-            conn = open_history(tmp)
+            conn = open_history(Path(tmp))
+            name_job = RadioJob(kind="apply:name", unit_key="me0003")
+            lat_job = RadioJob(kind="apply:lat", unit_key="me0003")
+            uq = UnitQueue(target=target, jobs=deque([name_job, lat_job]))
+            ctx = MagicMock(
+                client=MagicMock(),
+                conn=conn,
+                nodes_path=Path(tmp) / "nodes.yaml",
+                nodes={"me0003": node},
+                sites={},
+                doc={"nodes": {"me0003": node}},
+                keys={},
+                session=MagicMock(),
+                log=log,
+                cmd_timeout=9.0,
+                max_attempts=10,
+            )
             calls: list[str] = []
 
-            async def fake_send_cmd_sync(_client, _target, cmd, **kwargs):
+            async def fake_set_cli(_client, _target, cmd, **kwargs):
                 calls.append(cmd)
-                return None
+                return "timeout"
 
-            with patch("envybot.apply.send_cmd_sync", new=fake_send_cmd_sync):
-                ok = await apply_one(
-                    client,
-                    target,
-                    node=node,
-                    doc={"nodes": {"me0003": node}},
-                    sites=None,
-                    cmd_timeout=9.0,
-                    attempts=10,
-                    session=session,
-                    log=log,
-                    conn=conn,
-                    keys={},
-                )
+            with patch("envybot.fleet_worker._set_cli", new=fake_set_cli):
+                outcome, payload = await _execute_apply(name_job, uq, ctx, node, 1)
 
-        self.assertFalse(ok)
-        self.assertEqual(calls, ["set name ME0003"])
-        self.assertTrue(any("apply aborted: name unreachable" in s for s in steps))
+        self.assertEqual(outcome, JobOutcome.TIMEOUT)
+        self.assertEqual(payload, "name")
+        self.assertEqual(len(calls), 1)
+        self.assertTrue(calls[0].startswith("set name "))
         self.assertFalse(any(cmd.startswith("set lat") for cmd in calls))
 
-    async def test_set_fields_use_full_attempts(self) -> None:
+    async def test_scheduler_drops_remaining_apply_after_exhausted_retries(self) -> None:
         target = RouterTarget(
             key="me0001",
             unit_id="ME0001",
@@ -69,32 +76,24 @@ class ApplyFailFastTests(unittest.IsolatedAsyncioTestCase):
             pubkey_hex="bb" * 32,
             admin_password="x",
         )
-        node = {"name": "Test", "guest_password": "GuestOneStrong1"}
-        log = PollLog()
-        seen_attempts: list[int] = []
+        sched = FleetScheduler(max_attempts=2, retry_delay=0.0)
+        sched.enqueue_jobs(
+            target,
+            [
+                RadioJob(kind="apply:name", unit_key="me0001"),
+                RadioJob(kind="apply:lat", unit_key="me0001"),
+            ],
+        )
 
-        async def fake_send_cmd_sync(_client, _target, cmd, **kwargs):
-            seen_attempts.append(kwargs.get("attempts", 0))
-            return None
+        async def execute(job: RadioJob, uq: UnitQueue) -> tuple[JobOutcome, object | None]:
+            if job.kind == "apply:name":
+                return JobOutcome.TIMEOUT, "name"
+            return JobOutcome.HEARD, None
 
-        with tempfile.TemporaryDirectory() as tmp:
-            conn = open_history(tmp)
-            with patch("envybot.apply.send_cmd_sync", new=fake_send_cmd_sync):
-                await apply_one(
-                    MagicMock(),
-                    target,
-                    node=node,
-                    doc={"nodes": {"me0001": node}},
-                    sites=None,
-                    cmd_timeout=9.0,
-                    attempts=10,
-                    session=MagicMock(),
-                    log=log,
-                    conn=conn,
-                    keys={},
-                )
-
-        self.assertEqual(seen_attempts, [10])
+        await sched.run(execute, once=True)
+        uq = sched.units["me0001"]
+        self.assertTrue(uq.apply_aborted)
+        self.assertEqual([j.kind for j in uq.jobs], [])
 
     async def test_identity_stamped_when_only_metadata_due(self) -> None:
         target = RouterTarget(
@@ -111,40 +110,39 @@ class ApplyFailFastTests(unittest.IsolatedAsyncioTestCase):
             "admin_password": "AdminOneStrong1",
             "identity_pubkey": "cc" * 32,
         }
-        steps: list[str] = []
-        log = PollLog(progress=False)
-        log.step = lambda msg: steps.append(msg)  # type: ignore[method-assign]
+        job = RadioJob(kind="apply:name", unit_key="me0001")
+        uq = UnitQueue(target=target, jobs=deque([job]))
 
         with tempfile.TemporaryDirectory() as tmp:
-            conn = open_history(tmp)
-            from envybot.apply import applicable_field_desireds
-
+            conn = open_history(Path(tmp))
             applicable = applicable_field_desireds(node, None)
             for field, des in applicable.items():
                 if field == "identity":
                     continue
-                from envybot.history import insert_apply
+                stamp_apply(conn, unit="me0001", field=field, desired=des, ok=True)
 
-                insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
-
-            ok = await apply_one(
-                MagicMock(),
-                target,
-                node=node,
-                doc={"nodes": {"me0001": node}},
-                sites=None,
-                cmd_timeout=9.0,
-                attempts=10,
-                session=MagicMock(),
-                log=log,
+            ctx = MagicMock(
+                client=MagicMock(),
                 conn=conn,
+                nodes_path=Path(tmp) / "nodes.yaml",
+                nodes={"me0001": node},
+                sites={},
+                doc={"nodes": {"me0001": node}},
                 keys={},
+                session=MagicMock(),
+                log=PollLog(progress=False),
+                cmd_timeout=9.0,
+                max_attempts=10,
             )
+            with patch("envybot.fleet_worker._set_cli", new=AsyncMock(return_value="ok")):
+                outcome, payload = await _execute_apply(job, uq, ctx, node, 1)
 
-        self.assertTrue(ok)
-        self.assertTrue(any(s.startswith("profile OK") for s in steps))
-        from envybot.history import last_ok_apply
-
+        self.assertEqual(outcome, JobOutcome.HEARD)
+        self.assertTrue(payload)
         self.assertEqual(
             last_ok_apply(conn, "me0001", "identity"), applicable["identity"]
         )
+
+
+if __name__ == "__main__":
+    unittest.main()

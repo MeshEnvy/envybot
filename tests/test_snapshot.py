@@ -8,7 +8,7 @@ from pathlib import Path
 
 from ruamel.yaml import YAML
 
-from envybot.apply import profile_id
+from envybot.apply import applicable_field_desireds
 from envybot.history import import_yaml_last_seen, insert_apply, open_history, record_poll
 from envybot.position import approx_miles, haversine_miles, is_placeholder_gps, lookup_site_name
 from envybot.web.snapshot import (
@@ -382,13 +382,11 @@ class SnapshotTests(unittest.TestCase):
                 nodes_path.open("w", encoding="utf-8"),
             )
             conn = open_history(book)
-            insert_apply(
-                conn,
-                unit="me0001",
-                field="profile",
-                desired=profile_id(private, {}, doc={"nodes": {"me0001": private}}, keys={}),
-                ok=True,
+            applicable = applicable_field_desireds(
+                private, {}, doc={"nodes": {"me0001": private}}, keys={}, key="me0001"
             )
+            for field, des in applicable.items():
+                insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
             conn.close()
             snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
             self.assertIsNone(snap["units"]["me0001"]["drift"])

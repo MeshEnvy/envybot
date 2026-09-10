@@ -199,18 +199,23 @@ class DueTests(unittest.TestCase):
             conn = open_history(Path(tmp))
             self.assertTrue(apply_is_due(conn, "me0001", _STRONG, None))
 
-    def test_weak_guest_is_due_after_ok_profile(self) -> None:
+    def test_weak_guest_is_due_after_ok_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
             node = {**_STRONG, "guest_password": "m35h3nvy"}
-            insert_apply(conn, unit="me0001", field="profile", desired=_id(node), ok=True)
+            applicable = applicable_field_desireds(_STRONG, None, key="me0001")
+            for field, des in applicable.items():
+                if field == "guest":
+                    continue
+                insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
             self.assertTrue(apply_is_due(conn, "me0001", node, None))
 
     def test_after_ok_private_not_due_after_leak_heard(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            desired = _id(_STRONG)
-            insert_apply(conn, unit="me0001", field="profile", desired=desired, ok=True)
+            applicable = applicable_field_desireds(_STRONG, None, key="me0001")
+            for field, des in applicable.items():
+                insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
             self.assertFalse(apply_is_due(conn, "me0001", _STRONG, None))
             record_poll(
                 conn,
@@ -219,20 +224,12 @@ class DueTests(unittest.TestCase):
             )
             self.assertFalse(apply_is_due(conn, "me0001", _STRONG, None))
 
-    def test_legacy_private_profile_stamp_when_fields_synced(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            conn = open_history(Path(tmp))
-            applicable = applicable_field_desireds(_STRONG, None)
-            for field, des in applicable.items():
-                insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
-            insert_apply(conn, unit="me0001", field="profile", desired="private", ok=True)
-            self.assertFalse(apply_is_due(conn, "me0001", _STRONG, None))
-            self.assertEqual(apply_due_fields(conn, "me0001", _STRONG, None), [])
-
     def test_yaml_edit_is_due(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            insert_apply(conn, unit="me0001", field="profile", desired=_id(_STRONG), ok=True)
+            applicable = applicable_field_desireds(_STRONG, None, key="me0001")
+            for field, des in applicable.items():
+                insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
             edited = {**_STRONG, "guest_password": "GuestTwoStrong2"}
             self.assertTrue(apply_is_due(conn, "me0001", edited, None))
 
@@ -271,7 +268,7 @@ class DueTests(unittest.TestCase):
     def test_ota_autofetch_due_when_other_fields_synced(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            applicable = applicable_field_desireds(_STRONG, None)
+            applicable = applicable_field_desireds(_STRONG, None, key="me0001")
             for field, des in applicable.items():
                 if field == "ota_autofetch":
                     continue
@@ -283,7 +280,7 @@ class DueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
             node = {**_STRONG, "powersaving": True, "fem_rxgain": False}
-            applicable = applicable_field_desireds(node, None)
+            applicable = applicable_field_desireds(node, None, key="me0001")
             for field, des in applicable.items():
                 if field in ("powersaving", "fem_rxgain"):
                     continue
@@ -304,13 +301,15 @@ class DueTests(unittest.TestCase):
     def test_force(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            insert_apply(conn, unit="me0001", field="profile", desired="private", ok=True)
-            self.assertTrue(apply_is_due(conn, "me0001", {}, None, force=True))
+            applicable = applicable_field_desireds(_STRONG, None, key="me0001")
+            for field, des in applicable.items():
+                insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
+            self.assertTrue(apply_is_due(conn, "me0001", _STRONG, None, force=True))
 
     def test_partial_field_sync_only_retries_gaps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            applicable = applicable_field_desireds(_STRONG, None)
+            applicable = applicable_field_desireds(_STRONG, None, key="me0001")
             for field in ("lon", "advert", "path_hash"):
                 insert_apply(
                     conn, unit="me0001", field=field, desired=applicable[field], ok=True
@@ -325,7 +324,7 @@ class DueTests(unittest.TestCase):
     def test_identity_only_due_when_radio_synced(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            applicable = applicable_field_desireds(_STRONG, None)
+            applicable = applicable_field_desireds(_STRONG, None, key="me0001")
             for field, des in applicable.items():
                 if field == "identity":
                     continue
@@ -345,7 +344,7 @@ class DueTests(unittest.TestCase):
     def test_format_apply_plan_splits_synced_from_due(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            applicable = applicable_field_desireds(_STRONG, None)
+            applicable = applicable_field_desireds(_STRONG, None, key="me0001")
             for field, des in applicable.items():
                 if field in {"name", "lat", "lon"}:
                     insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
@@ -354,6 +353,67 @@ class DueTests(unittest.TestCase):
             self.assertNotIn("name,", need)
             self.assertTrue(need.startswith("advert") or ", advert" in need)
             self.assertEqual(skip, "name, lat, lon (synced)")
+
+
+class ReconcileTests(unittest.TestCase):
+    def test_mismatch_clears_stamp(self) -> None:
+        from envybot.apply import reconcile_heard
+
+        node = {**_STRONG, "name": "Patrick"}
+        sites = {"ophir": {"node": "me0001", "loc": [39.5, -119.8], "advert_name": "Ophir"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            applicable = applicable_field_desireds(node, sites, key="me0001")
+            insert_apply(conn, unit="me0001", field="name", desired=applicable["name"], ok=True)
+            changed = reconcile_heard(
+                conn,
+                "me0001",
+                node,
+                sites,
+                doc={},
+                keys={},
+                field="name",
+                heard="Wrong Name",
+            )
+            self.assertTrue(changed)
+            self.assertIsNone(last_ok_apply(conn, "me0001", "name"))
+
+    def test_sync_book_site_loc_marks_lat_lon_due(self) -> None:
+        from envybot.nodes_doc import sync_book, write_nodes_doc
+
+        node = {
+            **_STRONG,
+            "unit_id": "ME0001",
+            "name": "Ophir",
+        }
+        sites = {"ophir": {"node": "me0001", "loc": [39.5, -119.8], "advert_name": "Ophir"}}
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            (book / "keys.yaml").write_text("people: {}\n", encoding="utf-8")
+            write_nodes_doc(nodes_path, {"next_unit": 2, "nodes": {"me0001": node}})
+            from ruamel.yaml import YAML
+
+            yaml = YAML()
+            yaml.dump({"sites": sites}, sites_path.open("w", encoding="utf-8"))
+            conn = open_history(book)
+            applicable = applicable_field_desireds(node, sites, key="me0001")
+            for field, des in applicable.items():
+                insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
+            self.assertEqual(apply_due_fields(conn, "me0001", node, sites), [])
+            yaml.dump(
+                {"sites": {"ophir": {**sites["ophir"], "loc": [39.6, -119.9]}}},
+                sites_path.open("w", encoding="utf-8"),
+            )
+            doc = {"next_unit": 2}
+            mem_nodes = {"me0001": dict(node)}
+            mem_sites: dict = dict(sites)
+            keys: dict = {}
+            sync_book(nodes_path, doc, mem_nodes, mem_sites, keys)
+            due = apply_due_fields(conn, "me0001", mem_nodes["me0001"], mem_sites)
+            self.assertIn("lat", due)
+            self.assertIn("lon", due)
 
 
 class FormatTests(unittest.TestCase):

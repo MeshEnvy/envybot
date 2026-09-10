@@ -861,7 +861,7 @@ def clear_apply_stamps(
     *,
     fields: list[str] | None = None,
 ) -> None:
-    """Drop apply stamps so the next run re-SETs (--force)."""
+    """Drop apply stamps so the next run re-SETs (Deploy / --full-sync)."""
     if fields:
         placeholders = ", ".join("?" for _ in fields)
         conn.execute(

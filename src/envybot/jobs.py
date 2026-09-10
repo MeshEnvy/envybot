@@ -29,10 +29,10 @@ TIMER_JOB_KINDS = frozenset(
     {"get:neighbors_wait", "get:ota_ls_wait", "get:post_install_wait"}
 )
 
-# Auto poll/apply only. Console and manual Refresh/Pull/Push are exempt.
+# Auto poll/apply only. Console and manual Refresh/Pull/Deploy are exempt.
 DEFAULT_RETRY_DELAY_S = 60.0
 DEFAULT_MISS_COOLDOWN_S = 3600.0
-MANUAL_UI_JOBS = frozenset({"refresh", "pull", "push"})
+MANUAL_UI_JOBS = frozenset({"refresh", "pull", "deploy"})
 
 
 def _auto_retry_policy(job: RadioJob, uq: UnitQueue) -> bool:
@@ -53,6 +53,7 @@ class RadioJob:
     kind: str
     unit_key: str
     attempt: int = 0
+    attempt_cap: int | None = None
     manual: bool = False
     manual_job: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
@@ -217,7 +218,7 @@ class FleetScheduler:
         manual_job: str,
         jobs: list[RadioJob],
     ) -> tuple[int, str | None]:
-        """Refresh / Pull / Push. Returns (http_status, error)."""
+        """Refresh / Pull / Deploy. Returns (http_status, error)."""
         uq = self.get_or_create(target)
         self._cancel_timer(uq)
         uq.manual = True
@@ -383,14 +384,15 @@ class FleetScheduler:
                 uq.apply_aborted = True
         else:
             job.attempt += 1
-            if self.max_attempts and job.attempt >= self.max_attempts:
+            cap = job.attempt_cap or self.max_attempts
+            if cap and job.attempt >= cap:
                 uq.jobs.popleft()
                 dropped = uq.session_extra.setdefault("dropped_jobs", [])
                 if isinstance(dropped, list):
                     dropped.append(job.kind)
                 if job.future and not job.future.done() and not defer:
                     job.future.set_exception(
-                        TimeoutError(f"{job.kind} gave up after {self.max_attempts} attempts")
+                        TimeoutError(f"{job.kind} gave up after {cap} attempts")
                     )
                 if job.kind == "login":
                     uq.jobs.clear()

@@ -9,7 +9,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from envybot.fleet_worker import PollAccumulator, WorkerContext, _execute_apply
+from envybot.fleet_worker import (
+    AUDIT_GET_GROUPS,
+    PollAccumulator,
+    WorkerContext,
+    _execute_apply,
+    build_poll_jobs,
+)
+from envybot.radio import AUDIT_GET_ATTEMPTS
 from envybot.apply import applicable_field_desireds
 from envybot.history import last_ok_apply, open_history, source_histories, stamp_apply
 from envybot.jobs import JobOutcome, RadioJob, UnitQueue
@@ -19,6 +26,32 @@ from envybot.radio import (
     PollLog,
     RouterTarget,
 )
+
+
+class BuildPollJobsTests(unittest.TestCase):
+    def test_audit_get_jobs_use_lower_attempt_cap(self) -> None:
+        target = RouterTarget(
+            key="me0001",
+            unit_id="ME0001",
+            name="Test",
+            site=None,
+            pubkey_hex="aa" * 32,
+            admin_password="secret",
+        )
+        jobs = build_poll_jobs(
+            target,
+            list(AUDIT_GET_GROUPS),
+            do_apply=False,
+            apply_due=False,
+            force_apply=False,
+            skip_discover=True,
+        )
+        audit_jobs = [j for j in jobs if j.kind.split(":", 1)[-1] in AUDIT_GET_GROUPS]
+        self.assertTrue(audit_jobs)
+        for job in audit_jobs:
+            self.assertEqual(job.attempt_cap, AUDIT_GET_ATTEMPTS)
+        self.assertEqual(jobs[0].kind, "login")
+        self.assertIsNone(jobs[0].attempt_cap)
 
 
 class RecordGroupTests(unittest.TestCase):
@@ -59,6 +92,7 @@ class ApplyTimeoutTests(unittest.IsolatedAsyncioTestCase):
         return WorkerContext(
             client=MagicMock(),
             conn=open_history(Path(tmp)),
+            nodes_path=Path(tmp) / "nodes.yaml",
             nodes={"me0048": node},
             sites={},
             doc={"nodes": {"me0048": node}},

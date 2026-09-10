@@ -16,7 +16,7 @@ import {
   patchUnit,
   postBenchLoc,
   pullUnit,
-  pushUnit,
+  deployUnit,
   refreshUnit,
   stageUnit,
   openConsole as apiOpenConsole,
@@ -283,7 +283,7 @@ const App = {
       "queued",
       "refreshing",
       "pulling",
-      "pushing",
+      "deploying",
       "staging",
       "installing",
       "polling",
@@ -296,7 +296,7 @@ const App = {
       return MANUAL_BUSY.has(state);
     }
 
-    /** @param {Record<string, unknown> | undefined} unit @param {'refresh' | 'pull' | 'push'} [job] */
+    /** @param {Record<string, unknown> | undefined} unit @param {'refresh' | 'pull' | 'deploy'} [job] */
     function canManualUnit(unit, job) {
       if (!unit || !manualAccepting.value) return false;
       return true;
@@ -998,14 +998,14 @@ const App = {
       return typeof row.index === "number" || typeof row.index === "string";
     }
 
-    /** @param {Record<string, unknown>} unit @param {'refresh' | 'pull' | 'push' | 'stage' | 'install'} job */
+    /** @param {Record<string, unknown>} unit @param {'refresh' | 'pull' | 'deploy' | 'stage' | 'install'} job */
     function markOptimistic(unit, job) {
       const key = String(unit.key);
       const prev = fleet.units[key] || unit;
       const stateMap = {
         refresh: "refreshing",
         pull: "pulling",
-        push: "pushing",
+        deploy: "deploying",
         stage: "staging",
         install: "installing",
       };
@@ -1025,14 +1025,14 @@ const App = {
       };
     }
 
-    /** @param {Record<string, unknown>} unit @param {'refresh' | 'pull' | 'push'} job @param {Event} [ev] */
+    /** @param {Record<string, unknown>} unit @param {'refresh' | 'pull' | 'deploy'} job @param {Event} [ev] */
     async function runManualJob(unit, job, ev) {
       ev?.stopPropagation?.();
       if (!canManualUnit(unit, job)) return;
       markOptimistic(unit, job);
       pushMap();
       const fn =
-        job === "refresh" ? refreshUnit : job === "pull" ? pullUnit : pushUnit;
+        job === "refresh" ? refreshUnit : job === "pull" ? pullUnit : deployUnit;
       try {
         const updated = await fn(String(unit.key));
         applyUnit(updated);
@@ -1972,7 +1972,6 @@ const App = {
       pollPrevRow,
       unitLabel,
       unitTitle,
-      togglePublic,
       toggleRepeat,
       togglePaused,
       ackStability,
@@ -2300,7 +2299,7 @@ const App = {
             </label>
             <label
               class="book-toggle book-toggle-pause"
-              title="Skip auto poll and apply. Refresh, Pull, and Push still work."
+              title="Skip auto poll and apply. Refresh, Pull, and Deploy still work."
             >
               <input type="checkbox" :checked="!!selectedUnit.paused" @change="togglePaused(selectedUnit, $event)" />
               <span class="switch" aria-hidden="true"></span>
@@ -2325,11 +2324,11 @@ const App = {
               </button>
               <button
                 type="button"
-                class="manual-btn manual-btn-push"
-                :disabled="!canManualUnit(selectedUnit, 'push')"
-                @click="runManualJob(selectedUnit, 'push', $event)"
+                class="manual-btn manual-btn-deploy"
+                :disabled="!canManualUnit(selectedUnit, 'deploy')"
+                @click="runManualJob(selectedUnit, 'deploy', $event)"
               >
-                Push
+                Deploy
               </button>
             </div>
           </div>

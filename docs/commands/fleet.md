@@ -42,7 +42,7 @@ migrator.
 | periodic | `ota_status`, `ota_ls` | 24h (`ota status` + delayed `ota ls`). Skip after `Unknown command` until firmware changes |
 | periodic | `neighbors` | 24h (`discover.neighbors` + wait + GET) |
 | inventory | `firmware`, `bootloader`, `ota` | until sqlite stamp exists |
-| audit | `name`, `lat`, `lon`, `advert`, `flood_advert`, `acl` | **Pull**, `--group`, or `--force` only |
+| audit | `name`, `lat`, `lon`, `advert`, `flood_advert`, `acl` | weekly when stamped; **Pull** or `--group` forces now (3 attempts max) |
 
 Neighbors: remote `discover.neighbors` (zero-hop CTL) then `GET_NEIGHBOURS`.
 `--no-discover` skips the search. `--discover-wait SEC` changes the listen
@@ -55,13 +55,18 @@ while other units are still GETting. No extra radio traffic unless
 status/telemetry is ≥1h stale, OTA/neighbors ≥24h, or apply is due. UI
 freshness stays 24h.
 
-Default runs never GET sticky identity fields. UI ``due`` follows the
-apply profile stamp. ``leak`` is a later pull that still shows advert
-or flood advert on. Leftover name or GPS is not an advert. A last-seen
-interval older than the apply stamp is ignored.
+Default runs never GET sticky identity fields unless the weekly audit
+interval elapsed. UI ``due`` follows per-field apply stamps. Audit GET
+mismatch clears that field's stamp and re-queues SET. ``leak`` is a
+later pull that still shows advert or flood advert on. Leftover name or
+GPS is not an advert. A last-seen interval older than the apply stamp is
+ignored. Book edits to `sites.yaml`, `public_advert`, or `keys.yaml`
+reload live during a long fleet run; adding a new unit row still needs
+restart. Pre-0.1.3 units: pin `advert_interval_min: 0` and
+`flood_advert_interval_h: 0` on the node row until OTA ≥0.1.3.
 
 `paused: true` on a node skips auto GET and apply. The unit stays on the
-map modal. **Refresh**, **Pull**, and **Push** still work from the UI. Unpause
+map modal. **Refresh**, **Pull**, and **Deploy** still work from the UI. Unpause
 (or delete the key) returns the unit to the next fleet run. Mid-run pause
 takes effect at the next job boundary. `trust` / `cmd` do not honor pause.
 
@@ -88,7 +93,7 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
   badge stays on the current job stage (Logging in, Fetching ACL, …) while the
   unit is queued or retrying. `unreachable` only after `--attempts` is exhausted
   on login/GET (or a hard fail). A SET timeout is not unreachable.
-- Pick order: a manual Refresh/Pull/Push stays at the front until that
+- Pick order: a manual Refresh/Pull/Deploy stays at the front until that
   click finishes, then least-recently-served among ready lanes. No inventory
   priority. Two manuals interleave with each other.
 - `--attempts` (default 10) caps retries **per command** at the scheduler.
@@ -100,15 +105,15 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
   a cached path discard the cache and re-flood.
   `--retry-delay` (default 60s) parks auto poll/apply units after a timeout
   before retry; `--miss-cooldown` (default 3600s) skips re-seed after max
-  attempts. Console and manual Refresh/Pull/Push are exempt; manual UI also
-  clears cooldown. `--force` or `--unit` bypass cooldown on startup seed.
+  attempts. Console and manual Refresh/Pull/Deploy are exempt; manual UI also
+  clears cooldown. `--full-sync` or `--unit` bypass cooldown on startup seed.
   `--round-delay` pauses between scheduler retry rounds. On drop: `gave up after N,
   continuing` (actual attempts, and only when that job was dropped). A
   displaced in-flight login is not a give-up. Failed login drops remaining
   console CLI (`stopping`, not `continuing`). On unit done with gaps: `partial OK`.
 - Per-attempt mesh audit rows land in sqlite `mesh_audit` (unit, kind, label,
   path, wait, outcome, reply snippet). Query the book DB; no UI yet.
-- UI Refresh/Pull/Push always enqueue, even while that unit is polling.
+- UI Refresh/Pull/Deploy always enqueue, even while that unit is polling.
   The click replaces remaining jobs for that unit and runs next.
 - Sqlite updates incrementally after each successful GET group or SET field.
 
@@ -141,10 +146,11 @@ While the companion worker is live:
 |--------|-----|-----|
 | **Refresh** | status, telemetry (ignore interval) | only if profile is due |
 | **Pull** | all GET groups (incl. OTA + neighbors) | only if profile is due |
-| **Push** | none | force re-SET profile (incl. guest/admin passwords) |
+| **Deploy** | none | re-SET profile (incl. guest/admin passwords) |
 
-List cards expose **Refresh** only. Detail adds **Pull** and **Push** (Push
-is visually distinct; it rewrites passwords). CLI `--force` is Pull plus Push.
+List cards expose **Refresh** only. Detail adds **Pull** and **Deploy** (Deploy
+is visually distinct; it rewrites passwords). CLI `--full-sync` is Deploy
+plus periodic/inventory GETs (audit GETs wait for Pull or the weekly cadence).
 
 ### Console (header)
 
@@ -170,7 +176,7 @@ console. The header icon also toggles.
   Further lines stage behind the current or parked line and can be edited
   or deleted.
 - An in-flight poll/apply wait finishes, then the console head runs.
-- Refresh / Pull / Push stay available. They sit behind queued console
+- Refresh / Pull / Deploy stay available. They sit behind queued console
   sends on the same unit.
 - `--web-only` can open tabs; send returns 409 (no radio). A normal
   `fleet` start accepts console send during companion handshake and
@@ -221,8 +227,9 @@ Apply is due when any SET field stamp misses the book desired value
 (stored in sqlite `applies` per field: name, lat, lon, advert, flood,
 guest, admin, path_hash, dutycycle, ota_autofetch, powersaving, fem_rxgain, rxgain, acl, identity). A successful
 [`onboard`](onboard.md) stamps those fields so a new private unit is not
-due for a first mesh apply. A legacy ok `applies.profile` row still
-means fully synced. `--force` clears field stamps and re-SETs everything. Each attempt (including retries) prints
+due for a first mesh apply. `--full-sync` or **Deploy** clears field
+stamps and re-SETs everything (full-sync skips audit GETs on that pass).
+Each attempt (including retries) prints
 `apply need` / `apply skip` from current stamps, and `poll need` /
 `poll skip` when GET groups remain. A queued SET whose stamp already
 matches prints `field: skip (synced)` and does not go on the air. A private node still needs a guest password
@@ -249,13 +256,13 @@ Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
 | `--web-only` | Browse the book. No radio. |
 | `--no-web` | Headless poll/apply |
 | `--unit KEY` | One unit (repeatable) |
-| `--force` | Pull every GET group and Push profile |
+| `--full-sync` | Deploy profile plus periodic/inventory GETs (no audit GETs on same pass) |
 | `--refresh-paths` | Clear companion cached hop paths for all poll targets before work (operator moved; next login floods to rediscover) |
 | `--live` | Periodic GET only (status/telemetry/neighbors) |
 | `--no-discover` | GET neighbor table without remote `discover.neighbors` |
 | `--discover-wait SEC` | Listen after discover (default 12; timer job, radio idle) |
 | `--retry-delay SEC` | Auto only: park unit after timeout before retry (default 60). Console and manual UI exempt. |
-| `--miss-cooldown SEC` | Auto only: after max attempts, skip re-seed until cooldown (default 3600). `--force`, `--unit`, or manual UI bypass. |
+| `--miss-cooldown SEC` | Auto only: after max attempts, skip re-seed until cooldown (default 3600). `--full-sync`, `--unit`, or manual UI bypass. |
 | `--round-delay SEC` | Pause between scheduler retry rounds |
 | `--poll-only` | GET only |
 | `--apply-only` | SET only |
@@ -274,7 +281,7 @@ that still shows advert on (`leak`). Leftover name or GPS is not an advert.
 List cards show the same primary label with unit id
 as secondary when it differs. While the companion worker is live, **Refresh** on a
 unit pulls live telemetry now; **Pull** also GETs fw/name/GPS/advert/acl;
-**Push** force-SETs the book profile (overrides `--skip`, `paused`, and
+**Deploy** re-SETs the book profile (overrides `--skip`, `paused`, and
 up-to-date skips). Pause is a checkbox on the detail card
 (`paused: true`). Routing policy is Path (default) / Direct / Flood on the
 detail card; list cards show live route and a danger badge when policy is flood.

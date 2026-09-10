@@ -6,6 +6,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Changed
+
+- Fleet UI **Push** is **Deploy** (`POST /api/deploy/{key}`). CLI `--force`
+  is **`--full-sync`** (Pull every GET group plus Deploy profile). Session
+  state is `deploying`.
+
 ### Added
 
 - Fleet detail **Heard** rows show approximate miles from the unit. Book

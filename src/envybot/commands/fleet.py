@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from envybot.apply import apply_is_due, format_apply_plan, persist_guest_if_new
+from envybot.apply import apply_is_due, format_apply_plan
 from envybot.fleet_worker import (
     WorkerContext,
     build_apply_jobs,
@@ -39,7 +39,7 @@ from envybot.nodes_doc import (
     is_paused,
     load_nodes_doc,
     load_sites_for_book,
-    sync_paused,
+    sync_book,
 )
 from envybot.routing import resolve_routing, routing_explicit
 from envybot.poll import (
@@ -249,7 +249,7 @@ async def run(args: argparse.Namespace) -> int:
 
     include = {u.lower() for u in args.unit} if args.unit else None
     skip = {u.lower() for u in args.skip} if args.skip else None
-    bypass_cooldown = bool(args.force or include)
+    bypass_cooldown = bool(args.full_sync or include)
     all_targets = load_targets(
         nodes_path, deployed_only=args.deployed_only, include=include, skip=skip
     )
@@ -259,7 +259,7 @@ async def run(args: argparse.Namespace) -> int:
     if paused_targets and not args.quiet:
         print(
             f"Paused {len(paused_targets)} unit(s): "
-            f"{', '.join(t.key for t in paused_targets)} (Refresh, Pull, and Push still work)"
+            f"{', '.join(t.key for t in paused_targets)} (Refresh, Pull, and Deploy still work)"
         )
     if not all_targets:
         print("No pollable routers matched filters.", file=sys.stderr)
@@ -271,8 +271,8 @@ async def run(args: argparse.Namespace) -> int:
     do_poll = not args.apply_only
     do_apply = not args.poll_only
     policy = PollPolicy(
-        force=args.force,
-        live_only=args.live and not args.force,
+        force=args.full_sync,
+        live_only=args.live and not args.full_sync,
         force_groups=frozenset(args.group or ()),
         min_interval=args.min_interval,
     )
@@ -304,7 +304,7 @@ async def run(args: argparse.Namespace) -> int:
         policy=policy,
         do_poll=do_poll,
         do_apply=do_apply,
-        force=args.force,
+        force=args.full_sync,
         now=now,
         skip_discover=args.no_discover,
         discover_wait=args.discover_wait,
@@ -347,7 +347,7 @@ async def run(args: argparse.Namespace) -> int:
             )
         )
     elif not args.once:
-        print("Fleet idle — Refresh, Pull, or Push units in the UI or Ctrl+C to exit.")
+        print("Fleet idle — Refresh, Pull, or Deploy units in the UI or Ctrl+C to exit.")
 
     log = PollLog(progress=not args.quiet, verbose=args.verbose)
     session = FleetSession()
@@ -362,6 +362,7 @@ async def run(args: argparse.Namespace) -> int:
     worker_ctx = WorkerContext(
         client=client,
         conn=conn,
+        nodes_path=nodes_path,
         nodes=nodes,
         sites=sites,
         doc=doc,
@@ -397,7 +398,6 @@ async def run(args: argparse.Namespace) -> int:
 
     succeeded: dict[str, bool] = {}
     interrupted = False
-    yaml_dirty = False
     round_num = 0
     total = max(initial_units, len(all_targets))
     current_lane: str | None = None
@@ -429,8 +429,8 @@ async def run(args: argparse.Namespace) -> int:
                 )
         node_record = nodes.get(target.key) or {}
         job_name = uq.manual_job
-        unit_force = args.force or job_name == "push"
-        apply_due_now = job_name == "push" or apply_is_due(
+        unit_force = args.full_sync or job_name == "deploy"
+        apply_due_now = job_name == "deploy" or apply_is_due(
             conn, target.key, node_record, sites, force=unit_force, doc=doc, keys=keys
         )
         if not args.quiet and job.kind not in TIMER_JOB_KINDS:
@@ -490,7 +490,7 @@ async def run(args: argparse.Namespace) -> int:
             )
 
     async def on_job_done(uq: Any, job: Any, outcome: JobOutcome, payload: Any) -> None:
-        nonlocal yaml_dirty, round_num
+        nonlocal round_num
         target = uq.target
         tab_id = str(job.extra.get("tab_id") or "")
         if web_ctx and tab_id:
@@ -576,9 +576,6 @@ async def run(args: argparse.Namespace) -> int:
             await web_ctx.console.fail_sending(
                 target.key, error=str(payload or "login failed")
             )
-        node_record = nodes.get(target.key) or {}
-        guest_before = str(node_record.get("guest_password") or "")
-
         prev = session_states.get(target.key) or {}
         due = list(getattr(target, "due_groups", []))
         apply_job = str(job.kind).startswith("apply:")
@@ -658,9 +655,6 @@ async def run(args: argparse.Namespace) -> int:
             if uq.manual_job != "console":
                 manual_keys.discard(target.key)
 
-        if str(node_record.get("guest_password") or "") != guest_before:
-            yaml_dirty = True
-
         if web_ctx:
             sample_evt = job_sample(
                 job,
@@ -668,7 +662,7 @@ async def run(args: argparse.Namespace) -> int:
                 outcome,
                 payload,
                 site_loc=site_loc_for_unit(
-                    target.key, node_record, sites, doc=doc
+                    target.key, nodes.get(target.key) or {}, sites, doc=doc
                 ),
             )
             sess = dict(session_states.get(target.key, {}))
@@ -687,7 +681,7 @@ async def run(args: argparse.Namespace) -> int:
     async def execute_one(job: Any, uq: Any) -> tuple[JobOutcome, Any | None]:
         if not await session.ensure_companion_connected(log=log):
             return JobOutcome.TIMEOUT, "companion disconnected"
-        sync_paused(nodes_path, nodes)
+        sync_book(nodes_path, doc, nodes, sites, keys)
         node_row = nodes.get(uq.target.key) or {}
         uq.target.routing = resolve_routing(node_row)
         uq.target.routing_explicit = routing_explicit(node_row)
@@ -700,7 +694,7 @@ async def run(args: argparse.Namespace) -> int:
             if not uq.jobs:
                 session_states[uq.target.key] = {"state": "paused"}
             return JobOutcome.HARD_FAIL, "paused"
-        uq.session_extra["force_apply"] = args.force or uq.manual_job == "push"
+        uq.session_extra["force_apply"] = args.full_sync or uq.manual_job == "deploy"
         return await execute_job(job, uq, worker_ctx)
 
     async def pause_watch() -> None:
@@ -734,10 +728,10 @@ async def run(args: argparse.Namespace) -> int:
                 await scheduler.wait_for_work(timeout=CADENCE_CHECK_S)
                 if scheduler._stop:
                     break
-                sync_paused(nodes_path, nodes)
+                sync_book(nodes_path, doc, nodes, sites, keys)
                 cadence_policy = PollPolicy(
                     force=False,
-                    live_only=args.live and not args.force,
+                    live_only=args.live and not args.full_sync,
                     force_groups=frozenset(args.group or ()),
                     min_interval=args.min_interval,
                 )
@@ -788,11 +782,12 @@ async def run(args: argparse.Namespace) -> int:
                 continue
             cadence_policy = PollPolicy(
                 force=False,
-                live_only=args.live and not args.force,
+                live_only=args.live and not args.full_sync,
                 force_groups=frozenset(args.group or ()),
                 min_interval=args.min_interval,
             )
             before_keys = {k for k, uq in scheduler.units.items() if uq.jobs}
+            sync_book(nodes_path, doc, nodes, sites, keys)
             seeded = _seed_auto_work(
                 scheduler,
                 auto_targets=auto_targets,
@@ -844,9 +839,6 @@ async def run(args: argparse.Namespace) -> int:
             web_ctx.set_worker_active(False)
         await client.stop_auto_message_fetching()
         await client.disconnect()
-        if yaml_dirty:
-            persist_guest_if_new(nodes_path, doc)
-
     ok_count = len(succeeded)
     pending_count = scheduler.pending_count()
     print(f"fleet {ok_count}/{total} router(s)")
@@ -882,7 +874,7 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_RETRY_DELAY_S,
         metavar="SEC",
         help="Auto poll/apply only: park unit after timeout before retry (default 60). "
-        "Console and manual Refresh/Pull/Push are exempt.",
+        "Console and manual Refresh/Pull/Deploy are exempt.",
     )
     parser.add_argument(
         "--miss-cooldown",
@@ -890,7 +882,7 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_MISS_COOLDOWN_S,
         metavar="SEC",
         help="Auto poll/apply only: after max attempts, skip re-seed until cooldown (default 3600). "
-        "Use --force, --unit, or manual UI to bypass.",
+        "Use --full-sync, --unit, or manual UI to bypass.",
     )
     parser.add_argument("--round-delay", type=float, default=0.0)
     parser.add_argument("--max-rounds", type=int, default=0)
@@ -910,7 +902,11 @@ def main(argv: list[str] | None = None) -> int:
         metavar="SECS",
         help="Live GET interval for status/telemetry (default 3600). Neighbors stay 24h.",
     )
-    parser.add_argument("--force", action="store_true", help="Pull every GET group and Push profile")
+    parser.add_argument(
+        "--full-sync",
+        action="store_true",
+        help="Pull every GET group and Deploy profile",
+    )
     parser.add_argument(
         "--refresh-paths",
         action="store_true",

@@ -53,17 +53,19 @@ class DueTests(unittest.TestCase):
             self.assertIn("firmware", due)
             self.assertIn("status", due)
             self.assertIn("telemetry", due)
-            self.assertNotIn("lat", due)
-            self.assertNotIn("name", due)
+            self.assertIn("name", due)
+            self.assertIn("lat", due)
             self.assertNotIn("path_hash", due)
             self.assertNotIn("dutycycle", due)
 
-    def test_force_includes_audit(self) -> None:
+    def test_force_excludes_audit_without_force_groups(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            due = due_groups(conn, "me0001", policy=PollPolicy(force=True), now=10)
-            self.assertIn("lat", due)
-            self.assertIn("acl", due)
+            record_poll(conn, unit="me0001", res=_Res(), ts=10)
+            due = due_groups(conn, "me0001", policy=PollPolicy(force=True), now=20)
+            self.assertNotIn("lat", due)
+            self.assertNotIn("acl", due)
+            self.assertIn("status", due)
 
     def test_inventory_complete_skips(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

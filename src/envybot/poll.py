@@ -10,32 +10,35 @@ from typing import Any
 from envybot.history import get_last_seen, record_poll
 from envybot.nodes_doc import is_paused
 from envybot.radio import (
+    AUDIT_POLL_INTERVAL,
     DEFAULT_MIN_POLL_INTERVAL,
     NEIGHBOR_POLL_INTERVAL,
     OTA_POLL_INTERVAL,
-    PULL_GROUP_ORDER,
-    PULL_GROUPS,
-    PullGroupSpec,
-    PullPolicy,
     PollResult,
     RouterTarget,
     format_interval,
-    format_pull_plan,
-    poll_one,
     poll_summary,
 )
 
-# GET groups. Sticky identity (name/gps/advert/acl) is audit-only; SET via apply.
+
+@dataclass(frozen=True)
+class PullGroupSpec:
+    mode: str  # "inventory" | "audit" | "periodic"
+    pulled_at_key: str
+    interval: float | None = None
+
+
+# GET groups. Audit identity (name/gps/advert/acl) reconciles stamps; SET via apply.
 GET_GROUPS: dict[str, PullGroupSpec] = {
     "firmware": PullGroupSpec("inventory", "firmware_at"),
     "bootloader": PullGroupSpec("inventory", "bootloader_at"),
     "ota": PullGroupSpec("inventory", "ota_at"),
-    "name": PullGroupSpec("audit", "name_at"),
-    "lat": PullGroupSpec("audit", "gps_at"),
-    "lon": PullGroupSpec("audit", "gps_at"),
-    "advert": PullGroupSpec("audit", "advert_at"),
-    "flood_advert": PullGroupSpec("audit", "flood_advert_at"),
-    "acl": PullGroupSpec("audit", "acl_at"),
+    "name": PullGroupSpec("audit", "name_at", interval=AUDIT_POLL_INTERVAL),
+    "lat": PullGroupSpec("audit", "gps_at", interval=AUDIT_POLL_INTERVAL),
+    "lon": PullGroupSpec("audit", "gps_at", interval=AUDIT_POLL_INTERVAL),
+    "advert": PullGroupSpec("audit", "advert_at", interval=AUDIT_POLL_INTERVAL),
+    "flood_advert": PullGroupSpec("audit", "flood_advert_at", interval=AUDIT_POLL_INTERVAL),
+    "acl": PullGroupSpec("audit", "acl_at", interval=AUDIT_POLL_INTERVAL),
     "ota_status": PullGroupSpec("periodic", "ota_status_at", interval=OTA_POLL_INTERVAL),
     "ota_ls": PullGroupSpec("periodic", "ota_ls_at", interval=OTA_POLL_INTERVAL),
     "status": PullGroupSpec("periodic", "status_at"),
@@ -48,9 +51,9 @@ PERIODIC_GROUPS = tuple(g for g in GET_GROUP_ORDER if GET_GROUPS[g].mode == "per
 LIVE_GROUPS = tuple(g for g in PERIODIC_GROUPS if GET_GROUPS[g].interval is None)
 DAILY_GROUPS = tuple(g for g in PERIODIC_GROUPS if GET_GROUPS[g].interval is not None)
 OTA_CLI_GROUPS = frozenset({"ota", "ota_status", "ota_ls"})
-MANUAL_JOBS = frozenset({"refresh", "pull", "push", "stage", "install"})
+MANUAL_JOBS = frozenset({"refresh", "pull", "deploy", "stage", "install"})
 IN_FLIGHT_STATES = frozenset(
-    {"queued", "refreshing", "pulling", "pushing", "staging", "installing", "polling", "console"}
+    {"queued", "refreshing", "pulling", "deploying", "staging", "installing", "polling", "console"}
 )
 
 _STAGE_LABELS = {
@@ -116,7 +119,7 @@ def manual_job_session_state(job: str) -> str:
     return {
         "refresh": "refreshing",
         "pull": "pulling",
-        "push": "pushing",
+        "deploy": "deploying",
         "stage": "staging",
         "install": "installing",
         "console": "console",
@@ -229,10 +232,18 @@ def group_is_due(
     spec = GET_GROUPS[group]
     if group in OTA_CLI_GROUPS and ota_cli_absent(seen):
         return False
-    if policy.force or group in policy.force_groups:
+    if group in policy.force_groups:
+        return True
+    if policy.force and spec.mode != "audit":
         return True
     if spec.mode == "audit":
-        return False
+        if not group_complete(seen, group):
+            return True
+        stamp = _stamp(seen, spec.pulled_at_key)
+        if stamp is None:
+            return True
+        interval = group_interval(group, policy)
+        return interval <= 0 or (now - stamp) >= interval
     if policy.live_only and spec.mode != "periodic":
         return False
     if not group_complete(seen, group):
@@ -300,7 +311,7 @@ def partition_paused(
     *,
     forced_keys: set[str] | None = None,
 ) -> tuple[list[RouterTarget], list[RouterTarget]]:
-    """Split auto-work targets from paused ones. Manual Refresh/Pull/Push stays active."""
+    """Split auto-work targets from paused ones. Manual Refresh/Pull/Deploy stays active."""
     forced = forced_keys or set()
     active: list[RouterTarget] = []
     paused: list[RouterTarget] = []
@@ -333,7 +344,7 @@ def format_get_plan(
         ", ".join(f"{g} ({_get_need_note(seen, g)})" for g in due_groups) or "none"
     )
     skip_inv: list[str] = []
-    skip_audit: list[str] = []
+    skip_audit_fresh: dict[float, list[str]] = {}
     skip_fresh: list[str] = []
     skip_nocli: list[str] = []
     for group in GET_GROUP_ORDER:
@@ -346,14 +357,14 @@ def format_get_plan(
         if spec.mode == "inventory":
             skip_inv.append(group)
         elif spec.mode == "audit":
-            skip_audit.append(group)
+            skip_audit_fresh.setdefault(group_interval(group, policy), []).append(group)
         else:
             skip_fresh.append(group)
     skip_bits: list[str] = []
     if skip_inv:
         skip_bits.append(f"{', '.join(skip_inv)} (have)")
-    if skip_audit:
-        skip_bits.append(f"{', '.join(skip_audit)} (audit)")
+    for iv, names in skip_audit_fresh.items():
+        skip_bits.append(f"{', '.join(names)} (audit <{format_interval(iv)})")
     if skip_nocli:
         skip_bits.append(f"{', '.join(skip_nocli)} (no CLI)")
     if skip_fresh:
@@ -408,13 +419,11 @@ __all__ = [
     "DAILY_GROUPS",
     "OTA_CLI_GROUPS",
     "PERIODIC_GROUPS",
+    "PullGroupSpec",
     "ota_cli_absent",
     "omit_unsupported_ota",
-    "PULL_GROUP_ORDER",
-    "PULL_GROUPS",
     "PollPolicy",
     "PollResult",
-    "PullPolicy",
     "due_groups",
     "group_interval",
     "group_is_due",
@@ -423,11 +432,9 @@ __all__ = [
     "refresh_due_groups",
     "format_get_plan",
     "format_interval",
-    "format_pull_plan",
     "gaps_from_poll",
     "partition_due",
     "partition_paused",
-    "poll_one",
     "poll_summary",
     "record_poll",
 ]

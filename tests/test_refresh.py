@@ -1,4 +1,4 @@
-"""Manual Refresh / Pull / Push API."""
+"""Manual Refresh / Pull / Deploy API."""
 
 from __future__ import annotations
 
@@ -129,16 +129,16 @@ class MonitorWebManualJobTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(uq.manual_job, "refresh")
         self.assertTrue(uq.manual)
 
-    async def test_enqueue_push_bumps_when_busy(self) -> None:
+    async def test_enqueue_deploy_bumps_when_busy(self) -> None:
         self.web_ctx.set_worker_active(True)
         self.web_ctx._session_states["me0003"] = {"state": "polling"}
-        status, err = await self.web_ctx.enqueue_job("me0003", "push")
+        status, err = await self.web_ctx.enqueue_job("me0003", "deploy")
         self.assertEqual(status, 200)
         self.assertIsNone(err)
         uq = self.scheduler.units.get("me0003")
         self.assertIsNotNone(uq)
         assert uq is not None
-        self.assertEqual(uq.manual_job, "push")
+        self.assertEqual(uq.manual_job, "deploy")
         self.assertTrue(any(j.kind.startswith("apply:") for j in uq.jobs))
 
     async def test_wait_for_work(self) -> None:
@@ -215,7 +215,7 @@ class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
         assert uq is not None
         self.assertEqual(uq.manual_job, "refresh")
 
-    async def test_post_pull_and_push(self) -> None:
+    async def test_post_pull_and_deploy(self) -> None:
         self.web_ctx.set_worker_active(True)
         resp = await self.client.post("/api/pull/me0003")
         self.assertEqual(resp.status, 200)
@@ -224,13 +224,13 @@ class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(uq.manual_job, "pull")
         self.scheduler.units.pop("me0003", None)
         self.web_ctx._session_states.pop("me0003", None)
-        resp = await self.client.post("/api/push/me0003")
+        resp = await self.client.post("/api/deploy/me0003")
         self.assertEqual(resp.status, 200)
         body = await resp.json()
-        self.assertEqual(body.get("session", {}).get("state"), "pushing")
+        self.assertEqual(body.get("session", {}).get("state"), "deploying")
         uq = self.scheduler.units.get("me0003")
         assert uq is not None
-        self.assertEqual(uq.manual_job, "push")
+        self.assertEqual(uq.manual_job, "deploy")
 
     async def test_post_unit_paused(self) -> None:
         resp = await self.client.post("/api/unit/me0003", json={"paused": True})
@@ -301,7 +301,7 @@ class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class FleetManualJobBuildTests(unittest.TestCase):
-    def test_refresh_pull_push_due_groups(self) -> None:
+    def test_refresh_pull_deploy_due_groups(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             book = Path(tmp)
             nodes_path = book / "nodes.yaml"
@@ -352,12 +352,12 @@ class FleetManualJobBuildTests(unittest.TestCase):
             self.assertNotIn("get:ota", skip_kinds)
             self.assertNotIn("get:ota_status", skip_kinds)
             self.assertNotIn("get:ota_ls", skip_kinds)
-            push = build_manual_jobs(
-                target, "push", do_poll=True, do_apply=True, apply_due=True, skip_discover=False
+            deploy = build_manual_jobs(
+                target, "deploy", do_poll=True, do_apply=True, apply_due=True, skip_discover=False
             )
-            get_kinds = [j.kind for j in push if j.kind.startswith("get:")]
+            get_kinds = [j.kind for j in deploy if j.kind.startswith("get:")]
             self.assertEqual(get_kinds, [])
-            apply_kinds = [j.kind for j in push if j.kind.startswith("apply:")]
+            apply_kinds = [j.kind for j in deploy if j.kind.startswith("apply:")]
             self.assertTrue(apply_kinds)
 
 

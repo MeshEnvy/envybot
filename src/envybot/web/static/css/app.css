@@ -824,7 +824,7 @@ body {
 .badge-queued,
 .badge-refreshing,
 .badge-pulling,
-.badge-pushing,
+.badge-deploying,
 .badge-staging,
 .badge-installing {
   background: #2a283d;
@@ -1007,7 +1007,7 @@ body {
   text-transform: uppercase;
 }
 
-.manual-btn-push {
+.manual-btn-deploy {
   border-color: #c49bff;
   background: #2a1f3d;
   color: #c49bff;
@@ -1017,7 +1017,7 @@ body {
   background: #243a4d;
 }
 
-.manual-btn-push:hover:not(:disabled) {
+.manual-btn-deploy:hover:not(:disabled) {
   background: #352a4d;
 }
 
