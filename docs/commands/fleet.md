@@ -185,6 +185,7 @@ console. The header icon also toggles.
   is only the detail card. `?map=1` reopens the map modal.
 - Map sidebar row or pin: first click selects and flies; second click on the
   same unit opens detail and hides the map. Dashboard card click opens detail.
+  Cards and detail show `board` from the book.
 - Up/down in the input recalls commands sent on that tab. Separate from
   the transcript: **Clear history** does not wipe recall. The clipboard
   icon copies the transcript.

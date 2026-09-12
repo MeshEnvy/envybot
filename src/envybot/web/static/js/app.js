@@ -2193,6 +2193,7 @@ const App = {
             >{{ unitStage(unit) }}</span>
             <span v-else class="dash-foot-meta">
               <span v-if="cardShowNodeId(unit)" class="unit-id">{{ cardNodeId(unit) }}</span>
+              <span v-if="unit.board" class="unit-id">{{ unit.board }}</span>
               <span
                 v-if="showPolicyFloodBadge(unit)"
                 class="routing-policy-danger"
@@ -2266,6 +2267,7 @@ const App = {
           </div>
           <p class="sub">
             {{ selectedUnit.unit_id }}
+            <span v-if="selectedUnit.board"> · {{ selectedUnit.board }}</span>
             · {{ formatRelative(selectedUnit.last_heard, fleet.now) }}
             <span v-if="selectedUnit.drift"> · {{ selectedUnit.drift }}</span>
           </p>

@@ -166,8 +166,6 @@ def desired_rxgain(node: dict[str, Any]) -> bool | None:
 def node_board_token(node: dict[str, Any]) -> str:
     raw = node.get("board")
     if raw is None or raw == "":
-        raw = node.get("hardware")
-    if raw is None or raw == "":
         return ""
     return str(raw).strip().lower().replace("_", "-").replace(" ", "-")
 

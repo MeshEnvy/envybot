@@ -38,9 +38,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   Onboard applies the same keys.
 - Fleet cards show book apply prefs (power saving, FEM LNA,
   SX1262 boost, duty cycle, path hash, OTA autofetch) plus applied/due
-  from sqlite stamps.
+  from sqlite stamps. Cards and detail show `board`.
 
 ### Removed
+
+- Book `hardware` key. Radio family is `board` only (`heltec-t096` |
+  `rak4631`). Fleet snapshot and UI read `board`.
 
 - `fem_vfem` / `radio.fem.vfem` apply, onboard, and book keys. Firmware
   CLI was reverted 09-05.

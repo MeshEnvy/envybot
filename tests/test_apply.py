@@ -15,6 +15,7 @@ from envybot.apply import (
     desired_powersaving,
     desired_rxgain,
     format_apply_plan,
+    node_board_token,
     profile_id,
     profile_parts,
     radio_apply_due_fields,
@@ -179,6 +180,14 @@ class ProfileTests(unittest.TestCase):
         self.assertFalse(desired_fem_rxgain({**_STRONG, "fem_rxgain": False}))
         self.assertFalse(desired_fem_rxgain({**_STRONG, "radio.fem.rxgain": "off"}))
         self.assertTrue(desired_fem_rxgain({**_STRONG, "fem_rxgain": "on"}))
+
+
+class BoardTokenTests(unittest.TestCase):
+    def test_reads_board_only(self) -> None:
+        self.assertEqual(node_board_token({"board": "Heltec T096"}), "heltec-t096")
+        self.assertEqual(node_board_token({"board": "rak4631"}), "rak4631")
+        self.assertEqual(node_board_token({}), "")
+        self.assertEqual(node_board_token({"hardware": "heltec-t096"}), "")
 
 
 class RxgainGuardTests(unittest.TestCase):

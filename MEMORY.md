@@ -155,7 +155,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   `rxgain` (on|off) apply only when the book sets them. `fem_vfem` is
   gone (`radio.fem.vfem` CLI reverted 09-05).
   `rxgain` also
-  needs `board: heltec-t096` (or `t096`). Temporary off is firmware
+  needs `board: heltec-t096` (or `t096`). `board` is the only radio-family
+  book key. Temporary off is firmware
   `try`, not apply. Missing CLI
   (`unsupported` / `unknown config`) stamps done. Seeder launch is 10%. `set dutycycle` needs MeshCore 1.15+;
   older 1.x uses `set af` (50% = af 1.0).

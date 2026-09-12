@@ -182,7 +182,7 @@ def new_node(unit_id: str) -> dict[str, Any]:
         "firmware_platform": "meshcore",
         "firmware_version": None,
         "bootloader_version": None,
-        "hardware": None,
+        "board": None,
         "last_admin_roll": None,
         "last_guest_roll": None,
         "last_key_roll": None,

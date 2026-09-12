@@ -628,7 +628,7 @@ def sanitize_unit(
         "live_route_label": abbrev_live_route_label(live_route["label"])
         if live_route and live_route.get("label")
         else None,
-        "hardware": node.get("hardware"),
+        "board": (str(node.get("board") or "").strip() or None),
         "notes": node.get("notes"),
         "firmware_version": (seen or {}).get("firmware_version"),
         "firmware_platform": node.get("firmware_platform"),
