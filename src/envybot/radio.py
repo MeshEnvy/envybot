@@ -9,11 +9,12 @@ import re
 import sqlite3
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
+from envybot.keys_doc import find_person_for_pubkey, keys_path, load_keys
 from envybot.nodes_doc import (
     HEX_PUBKEY_RE,
     PLACEHOLDER_PW,
@@ -531,6 +532,9 @@ class CompanionCandidate:
     tcp_host: str | None = None
     tcp_port: int | None = None
     node_name: str | None = None
+    pubkey_hex: str | None = None
+    keys_person: str | None = None
+    probe_error: str | None = None
 
 
 @dataclass
@@ -3152,6 +3156,110 @@ def candidate_from_args(args: argparse.Namespace) -> CompanionCandidate | None:
     return None
 
 
+def companion_candidate_display(cand: CompanionCandidate) -> str:
+    """Human label for picker/probe; includes pubkey when probed."""
+    parts = [cand.label]
+    if cand.pubkey_hex:
+        parts.append(f"pubkey {cand.pubkey_hex[:12]}…")
+        if cand.keys_person:
+            parts.append(f"({cand.keys_person})")
+    elif cand.probe_error:
+        parts.append(f"probe failed: {cand.probe_error}")
+    return " — ".join(parts)
+
+
+def _book_keys_for_args(args: argparse.Namespace) -> dict[str, list[str]] | None:
+    nodes = getattr(args, "nodes", None)
+    if nodes is None:
+        return None
+    path = keys_path(Path(nodes))
+    if not path.is_file():
+        return None
+    return load_keys(path)
+
+
+async def probe_companion_candidate(
+    args: argparse.Namespace, cand: CompanionCandidate, *, keys: dict[str, list[str]] | None = None
+) -> CompanionCandidate:
+    """Brief connect to read companion SELF_INFO pubkey, then disconnect."""
+    client, err = await try_open_companion(
+        transport=cand.transport,
+        verbose=args.verbose,
+        baud=args.baud,
+        ble_address=cand.ble_address,
+        ble_device=cand.ble_device,
+        serial_port=cand.serial_port,
+        tcp_host=cand.tcp_host,
+        tcp_port=cand.tcp_port,
+    )
+    if client is None:
+        return replace(cand, probe_error=err or "connect failed")
+    try:
+        name = _self_info_name(client)
+        await ensure_companion_identity(client)
+        pubkey = companion_identity(client)
+        person = find_person_for_pubkey(keys, pubkey) if keys and pubkey else None
+        return replace(
+            cand,
+            node_name=name or cand.node_name,
+            pubkey_hex=pubkey,
+            keys_person=person,
+        )
+    except Exception as exc:
+        return replace(cand, probe_error=str(exc))
+    finally:
+        await client.disconnect()
+
+
+async def probe_companion_candidates(
+    args: argparse.Namespace, candidates: list[CompanionCandidate]
+) -> list[CompanionCandidate]:
+    if len(candidates) <= 1:
+        return candidates
+    keys = _book_keys_for_args(args)
+    print(f"Probing {len(candidates)} companion(s) for pubkey …", file=sys.stderr)
+    out: list[CompanionCandidate] = []
+    for cand in candidates:
+        out.append(await probe_companion_candidate(args, cand, keys=keys))
+    return out
+
+
+def _print_companion_candidates(candidates: list[CompanionCandidate], header: str) -> None:
+    print(header, file=sys.stderr)
+    for i, cand in enumerate(candidates, 1):
+        print(f"  {i}. {companion_candidate_display(cand)}", file=sys.stderr)
+
+
+def pick_companion(candidates: list[CompanionCandidate]) -> CompanionCandidate:
+    """Return the sole candidate, or prompt on a TTY when several are found."""
+    if not candidates:
+        raise SystemExit("No companion candidates to pick from")
+    if len(candidates) == 1:
+        return candidates[0]
+    if not sys.stdin.isatty():
+        _print_companion_candidates(
+            candidates,
+            "Multiple companions — pass --ble ADDRESS, --serial PORT, or --tcp host:port:",
+        )
+        raise SystemExit(2)
+    _print_companion_candidates(candidates, "Multiple companions — pick one:")
+    while True:
+        try:
+            raw = input(f"Pick companion [1-{len(candidates)}]: ").strip()
+        except EOFError:
+            raise SystemExit("Companion pick cancelled")
+        if not raw:
+            continue
+        try:
+            idx = int(raw)
+        except ValueError:
+            print("Enter a number from the list.", file=sys.stderr)
+            continue
+        if 1 <= idx <= len(candidates):
+            return candidates[idx - 1]
+        print(f"Enter 1–{len(candidates)}.", file=sys.stderr)
+
+
 async def post_connect(client: MeshCore) -> None:
     """Shared post-connect setup: clock sync, auto-fetch, contact sync."""
     res = await client.commands.set_time(int(time.time()))
@@ -3177,14 +3285,10 @@ async def connect_candidate(args: argparse.Namespace, cand: CompanionCandidate) 
         ble_list = await scan_ble_candidates(args.scan_timeout)
         if not ble_list:
             raise SystemExit("No BLE MeshCore companions found (NUS service scan)")
-        if len(ble_list) > 1:
-            print("Multiple BLE companions — pass --ble ADDRESS to pick one:", file=sys.stderr)
-            for i, c in enumerate(ble_list, 1):
-                print(f"  {i}. {c.label}", file=sys.stderr)
-            raise SystemExit(2)
-        cand = ble_list[0]
+        ble_list = await probe_companion_candidates(args, ble_list)
+        cand = pick_companion(ble_list)
 
-    print(f"Connecting via {cand.label} …")
+    print(f"Connecting via {companion_candidate_display(cand)} …")
     client, err = await try_open_companion(
         transport=cand.transport,
         verbose=args.verbose,
@@ -3217,26 +3321,17 @@ async def probe_only(args: argparse.Namespace) -> int:
         print("  Serial: only ports that respond to appstart count")
         return 1
 
+    keys = _book_keys_for_args(args)
     print(f"\nFound {len(candidates)} candidate(s):")
     any_ok = False
     for cand in candidates:
-        client, err = await try_open_companion(
-            transport=cand.transport,
-            verbose=args.verbose,
-            baud=args.baud,
-            ble_address=cand.ble_address,
-            ble_device=cand.ble_device,
-            serial_port=cand.serial_port,
-            tcp_host=cand.tcp_host,
-            tcp_port=cand.tcp_port,
-        )
-        if client is None:
-            print(f"  ✗ {cand.label} — {err}")
+        probed = await probe_companion_candidate(args, cand, keys=keys)
+        if probed.probe_error:
+            print(f"  ✗ {companion_candidate_display(probed)}")
             continue
-        name = _self_info_name(client) or cand.node_name or "?"
-        print(f"  ✓ {cand.label} — companion OK ({name})")
+        name = probed.node_name or "?"
+        print(f"  ✓ {companion_candidate_display(probed)} — companion OK ({name})")
         any_ok = True
-        await client.disconnect()
 
     if explicit and any_ok:
         hint = {
@@ -3264,28 +3359,26 @@ async def connect(args: argparse.Namespace) -> MeshCore:
             "BLE companion tags are not USB serial companions — use --transport ble (default auto)."
         )
 
-    last_err = "none tried"
-    for cand in candidates:
-        client, err = await try_open_companion(
-            transport=cand.transport,
-            verbose=args.verbose,
-            baud=args.baud,
-            ble_address=cand.ble_address,
-            ble_device=cand.ble_device,
-            serial_port=cand.serial_port,
-            tcp_host=cand.tcp_host,
-            tcp_port=cand.tcp_port,
-        )
-        if client is not None:
-            name = _self_info_name(client)
-            print(f"Using {cand.label}" + (f" ({name})" if name else ""))
-            await post_connect(client)
-            return client
-        last_err = err or "unknown"
-        if args.verbose:
-            print(f"  skip {cand.label}: {last_err}")
-
-    raise SystemExit(f"No companion accepted connection. Last error: {last_err}. Try --probe.")
+    candidates = await probe_companion_candidates(args, candidates)
+    cand = pick_companion(candidates)
+    print(f"Connecting via {companion_candidate_display(cand)} …")
+    client, err = await try_open_companion(
+        transport=cand.transport,
+        verbose=args.verbose,
+        baud=args.baud,
+        ble_address=cand.ble_address,
+        ble_device=cand.ble_device,
+        serial_port=cand.serial_port,
+        tcp_host=cand.tcp_host,
+        tcp_port=cand.tcp_port,
+    )
+    if client is None:
+        raise SystemExit(f"Failed to connect ({cand.label}): {err}. Try --probe.")
+    name = _self_info_name(client)
+    if name:
+        print(f"Companion ready: {name}")
+    await post_connect(client)
+    return client
 
 
 def strip_legacy_version_poll_notes(node: dict[str, Any]) -> None:

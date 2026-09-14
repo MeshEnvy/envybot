@@ -175,7 +175,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 
 ## Desk radios
 
-BLE companion for `fleet` / `trust` / `cmd`. USB DUT for `onboard`.
+BLE companion for `fleet` / `trust` / `cmd`. Multiple BLE tags: brief probe for
+pubkey prefix, TTY `Pick companion [1-N]:`; headless needs `--ble ADDRESS`.
+USB DUT for `onboard`.
 Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 
 - **Fleet UI:** `./envybot fleet` serves `127.0.0.1:8787` by default.
