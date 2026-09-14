@@ -70,6 +70,8 @@ COMPANION_RECONNECT_ATTEMPTS = 5
 CLOCK_SKEW_MAX = 300  # seconds; sync when *live login* RTC vs host exceeds this
 FLEET_DUTYCYCLE_PCT = 50.0
 FLEET_OTA_AUTOFETCH = "off"
+FLEET_FEM_RXGAIN = False
+FLEET_AGC_RESET_INTERVAL = 4
 OTA_AUTOFETCH_VALUES = frozenset({"off", "any", "signed"})
 OTA_AUTOFETCH_RE = re.compile(r"autofetch=(off|any|signed)", re.I)
 DUTYCYCLE_MATCH_EPS = 0.5
@@ -1103,6 +1105,10 @@ class FemRxgainUnsupported(Exception):
     """Board or firmware has no ``set radio.fem.rxgain``."""
 
 
+class AgcResetUnsupported(Exception):
+    """Firmware has no ``set agc.reset.interval`` CLI."""
+
+
 def fem_rxgain_cli_missing(text: str | None) -> bool:
     """RAK ``unsupported`` or older MeshCore ``unknown config``."""
     if not text:
@@ -1232,6 +1238,79 @@ async def set_rxgain_policy(
         return None
     log.step(f"radio.rxgain set OK ({word})")
     return enabled
+
+
+async def push_flood_advert(
+    client: MeshCore,
+    target: RouterTarget,
+    *,
+    cmd_timeout: float,
+    attempts: int,
+    log: PollLog,
+    session: FleetSession | None = None,
+    attempt_num: int | None = None,
+    attempt_cap: int | None = None,
+) -> bool | None:
+    """Send ``advert`` (flood) after identity SETs. None on timeout."""
+    raw = await send_cmd_sync(
+        client,
+        target,
+        "advert",
+        timeout=cmd_timeout,
+        attempts=attempts,
+        log=log,
+        session=session,
+        attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
+    )
+    if raw is None:
+        log.step("push_advert: no response")
+        return None
+    if cli_error_reply(raw):
+        log.step(f"push_advert: failed ({raw.strip()[:40]})")
+        return False
+    log.step("push_advert: flood advert sent")
+    return True
+
+
+async def set_agc_reset_interval_policy(
+    client: MeshCore,
+    target: RouterTarget,
+    *,
+    cmd_timeout: float,
+    attempts: int,
+    log: PollLog,
+    session: FleetSession | None = None,
+    interval: int | None = None,
+    attempt_num: int | None = None,
+    attempt_cap: int | None = None,
+) -> int | None:
+    """``set agc.reset.interval <secs>``. Raises AgcResetUnsupported if missing."""
+    if interval is None:
+        return None
+    want = max(0, int(interval))
+    raw = await send_cmd_sync(
+        client,
+        target,
+        f"set agc.reset.interval {want}",
+        timeout=cmd_timeout,
+        attempts=attempts,
+        log=log,
+        session=session,
+        attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
+    )
+    if raw is None:
+        log.step("agc.reset: no response")
+        return None
+    if cli_unknown_reply(raw) or fem_rxgain_cli_missing(raw):
+        log.step("agc.reset: unsupported")
+        raise AgcResetUnsupported()
+    if cli_error_reply(raw) or not cli_set_ok(raw):
+        log.step(f"agc.reset: set failed ({raw.strip()[:40]})")
+        return None
+    log.step(f"agc.reset set OK ({want})")
+    return want
 
 
 async def set_ota_autofetch_policy(

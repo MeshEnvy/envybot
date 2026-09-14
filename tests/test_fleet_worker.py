@@ -14,6 +14,7 @@ from envybot.fleet_worker import (
     PollAccumulator,
     WorkerContext,
     _execute_apply,
+    build_apply_jobs,
     build_poll_jobs,
 )
 from envybot.radio import AUDIT_GET_ATTEMPTS
@@ -245,6 +246,64 @@ class ApplyTimeoutTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(outcome, JobOutcome.HEARD)
             self.assertTrue(payload)
             self.assertEqual(last_ok_apply(ctx.conn, "me0048", "fem_rxgain"), want)
+
+    async def test_push_advert_after_identity_set(self) -> None:
+        target = RouterTarget(
+            key="me0049",
+            unit_id="ME0049",
+            name="ME0049",
+            site="mount-schader",
+            pubkey_hex="aa" * 32,
+            admin_password="AdminOneStrong1",
+        )
+        node = {
+            "guest_password": "GuestOneStrong1",
+            "admin_password": "AdminOneStrong1",
+            "identity_pubkey": "aa" * 32,
+        }
+        uq = UnitQueue(target=target, jobs=deque())
+        uq.session_extra["apply_identity_changed"] = True
+        job = RadioJob(kind="apply:push_advert", unit_key="me0049")
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = self._ctx(tmp, node)
+            with patch(
+                "envybot.fleet_worker.push_flood_advert",
+                new=AsyncMock(return_value=True),
+            ) as push:
+                outcome, payload = await _execute_apply(job, uq, ctx, node, 1)
+        self.assertEqual(outcome, JobOutcome.HEARD)
+        self.assertTrue(payload)
+        push.assert_awaited_once()
+
+    async def test_push_advert_skips_when_identity_unchanged(self) -> None:
+        target = RouterTarget(
+            key="me0049",
+            unit_id="ME0049",
+            name="ME0049",
+            site=None,
+            pubkey_hex="aa" * 32,
+            admin_password="AdminOneStrong1",
+        )
+        node = {
+            "guest_password": "GuestOneStrong1",
+            "admin_password": "AdminOneStrong1",
+        }
+        job = RadioJob(kind="apply:push_advert", unit_key="me0049")
+        uq = UnitQueue(target=target, jobs=deque([job]))
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = self._ctx(tmp, node)
+            with patch(
+                "envybot.fleet_worker.push_flood_advert",
+                new=AsyncMock(return_value=True),
+            ) as push:
+                outcome, payload = await _execute_apply(job, uq, ctx, node, 1)
+        self.assertEqual(outcome, JobOutcome.HEARD)
+        self.assertEqual(payload, "skip")
+        push.assert_not_awaited()
+
+    def test_build_apply_jobs_includes_push_advert(self) -> None:
+        kinds = [j.kind for j in build_apply_jobs("me0049", force=False)]
+        self.assertEqual(kinds[-2:], ["apply:clock", "apply:push_advert"])
 
 
 if __name__ == "__main__":

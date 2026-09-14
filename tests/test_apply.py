@@ -10,6 +10,7 @@ from envybot.apply import (
     apply_due_fields,
     apply_is_due,
     applicable_field_desireds,
+    desired_agc_reset_interval,
     desired_fem_rxgain,
     desired_ota_autofetch,
     desired_powersaving,
@@ -143,6 +144,8 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(parts["path_hash"], 1)
         self.assertEqual(parts["dutycycle"], 50)
         self.assertEqual(parts["ota_autofetch"], "off")
+        self.assertFalse(parts["fem_rxgain"])
+        self.assertEqual(parts["agc_reset_interval"], 4)
 
     def test_ota_autofetch_in_parts(self) -> None:
         parts = profile_parts({**_STRONG, "ota_autofetch": "any"}, None)
@@ -151,11 +154,13 @@ class ProfileTests(unittest.TestCase):
     def test_optional_power_prefs_omitted_until_set(self) -> None:
         parts = profile_parts(_STRONG, None)
         self.assertNotIn("powersaving", parts)
-        self.assertNotIn("fem_rxgain", parts)
         self.assertNotIn("rxgain", parts)
+        self.assertFalse(parts["fem_rxgain"])
+        self.assertEqual(parts["agc_reset_interval"], 4)
         self.assertEqual(_id(_STRONG), _id({**_STRONG}))
         self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "powersaving": True}))
-        self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "fem_rxgain": False}))
+        self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "fem_rxgain": True}))
+        self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "agc_reset_interval": 8}))
         self.assertEqual(_id(_STRONG), _id({**_STRONG, "rxgain": False}))
         self.assertNotEqual(
             _id(_STRONG),
@@ -176,10 +181,16 @@ class ProfileTests(unittest.TestCase):
         self.assertFalse(desired_powersaving({**_STRONG, "powersaving": "off"}))
 
     def test_desired_fem_rxgain_alias(self) -> None:
-        self.assertIsNone(desired_fem_rxgain({}))
+        self.assertFalse(desired_fem_rxgain({}))
         self.assertFalse(desired_fem_rxgain({**_STRONG, "fem_rxgain": False}))
         self.assertFalse(desired_fem_rxgain({**_STRONG, "radio.fem.rxgain": "off"}))
         self.assertTrue(desired_fem_rxgain({**_STRONG, "fem_rxgain": "on"}))
+
+    def test_desired_agc_reset_interval(self) -> None:
+        self.assertEqual(desired_agc_reset_interval({}), 4)
+        self.assertEqual(desired_agc_reset_interval({**_STRONG, "agc_reset_interval": 8}), 8)
+        self.assertEqual(desired_agc_reset_interval({**_STRONG, "agc_reset_interval": 5}), 4)
+        self.assertEqual(desired_agc_reset_interval({**_STRONG, "agc_reset_interval": "bogus"}), 4)
 
 
 class BoardTokenTests(unittest.TestCase):

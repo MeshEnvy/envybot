@@ -92,9 +92,11 @@ _STAGE_LABELS = {
     "apply:ota_autofetch": "Setting OTA autofetch",
     "apply:powersaving": "Setting powersaving",
     "apply:fem_rxgain": "Setting FEM RX gain",
+    "apply:agc_reset_interval": "Setting AGC reset interval",
     "apply:rxgain": "Setting radio RX gain",
     "apply:acl": "Setting ACL",
     "apply:clock": "Syncing clock",
+    "apply:push_advert": "Pushing flood advert",
     "console:login": "Console login",
     "console:cli": "Console CLI",
 }

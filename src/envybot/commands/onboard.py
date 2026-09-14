@@ -34,6 +34,7 @@ except ImportError as exc:  # pragma: no cover
 
 from envybot.apply import (
     board_allows_rxgain,
+    desired_agc_reset_interval,
     desired_fem_rxgain,
     desired_ota_autofetch,
     desired_powersaving,
@@ -63,6 +64,7 @@ from envybot.passwords import (
     password_is_strong,
 )
 from envybot.radio import (
+    FLEET_AGC_RESET_INTERVAL,
     FLEET_DUTYCYCLE_PCT,
     FLEET_PATH_HASH_MODE,
     airtime_factor_for_dutycycle,
@@ -786,10 +788,8 @@ def apply_fem_rxgain_policy(
     *,
     force: bool,
 ) -> bool:
-    """``set radio.fem.rxgain`` when the book sets it. Skip if unsupported."""
+    """``set radio.fem.rxgain`` (fleet default off). Skip if unsupported."""
     want = desired_fem_rxgain(node or {})
-    if want is None:
-        return False
     word = "on" if want else "off"
     raw = cli.cmd("get radio.fem.rxgain")
     if fem_rxgain_cli_missing(raw):
@@ -835,6 +835,31 @@ def apply_rxgain_policy(
         setter=f"set radio.rxgain {word}",
         verify=lambda: word in (cli.cmd("get radio.rxgain") or "").lower(),
         ok_label=word,
+        force=force,
+    )
+
+
+def apply_agc_reset_interval_policy(
+    cli: RepeaterSerial,
+    node: dict[str, Any] | None,
+    *,
+    force: bool,
+) -> bool:
+    """``set agc.reset.interval`` (fleet default 4). Skip if unsupported."""
+    want = desired_agc_reset_interval(node or {})
+    raw = cli.cmd("get agc.reset.interval")
+    if fem_rxgain_cli_missing(raw):
+        print("   skipped (unsupported)")
+        return False
+    got = parse_int_get_value(raw)
+    already = got == want
+    return apply_if_needed(
+        cli,
+        step="set agc.reset.interval",
+        already=already,
+        setter=f"set agc.reset.interval {want}",
+        verify=lambda: parse_int_get_value(cli.cmd("get agc.reset.interval")) == want,
+        ok_label=str(want),
         force=force,
     )
 
@@ -913,6 +938,9 @@ def onboard(
 
     print("4d. radio.rxgain …")
     apply_rxgain_policy(cli, node, force=force)
+
+    print(f"4e. agc.reset.interval {FLEET_AGC_RESET_INTERVAL} …")
+    apply_agc_reset_interval_policy(cli, node, force=force)
 
     print("5. adverts 0/0 …")
     adv = parse_int_get_value(cli.cmd("get advert.interval"))

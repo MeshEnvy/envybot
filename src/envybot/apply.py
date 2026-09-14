@@ -42,7 +42,9 @@ from envybot.public_advert import (
     resolve_public_apply_position,
 )
 from envybot.radio import (
+    FLEET_AGC_RESET_INTERVAL,
     FLEET_DUTYCYCLE_PCT,
+    FLEET_FEM_RXGAIN,
     FLEET_OTA_AUTOFETCH,
     FLEET_PATH_HASH_MODE,
     FleetSession,
@@ -59,6 +61,7 @@ from envybot.radio import (
     retry_binary_req,
     send_cmd_sync,
     set_book_coord,
+    set_agc_reset_interval_policy,
     set_dutycycle_policy,
     set_fem_rxgain_policy,
     set_ota_autofetch_policy,
@@ -94,6 +97,7 @@ APPLY_FIELDS = (
     "ota_autofetch",
     "powersaving",
     "fem_rxgain",
+    "agc_reset_interval",
     "rxgain",
     "acl",
     "identity",
@@ -145,13 +149,29 @@ def desired_powersaving(node: dict[str, Any]) -> bool | None:
     return _parse_optional_bool(node.get("powersaving"))
 
 
-def desired_fem_rxgain(node: dict[str, Any]) -> bool | None:
-    """None unless the book sets ``fem_rxgain`` (alias ``radio.fem.rxgain``)."""
+def desired_fem_rxgain(node: dict[str, Any]) -> bool:
+    """Book override or fleet default (FEM LNA off)."""
     if "fem_rxgain" in node:
-        return _parse_optional_bool(node.get("fem_rxgain"))
+        parsed = _parse_optional_bool(node.get("fem_rxgain"))
+        if parsed is not None:
+            return parsed
     if "radio.fem.rxgain" in node:
-        return _parse_optional_bool(node.get("radio.fem.rxgain"))
-    return None
+        parsed = _parse_optional_bool(node.get("radio.fem.rxgain"))
+        if parsed is not None:
+            return parsed
+    return FLEET_FEM_RXGAIN
+
+
+def desired_agc_reset_interval(node: dict[str, Any]) -> int:
+    """Book override or fleet default. Rounded to firmware 4-second steps."""
+    val = node.get("agc_reset_interval")
+    if val is None or val == "":
+        return FLEET_AGC_RESET_INTERVAL
+    try:
+        secs = max(0, int(val))
+    except (TypeError, ValueError):
+        return FLEET_AGC_RESET_INTERVAL
+    return (secs + 2) // 4 * 4
 
 
 def desired_rxgain(node: dict[str, Any]) -> bool | None:
@@ -270,13 +290,12 @@ def profile_parts(
         "owner": owner_info_for_apply(node, doc, key=key, sites=sites),
         "path_hash": desired_path_hash_mode(node),
         "repeat": desired_repeat(node, sites, key=key),
+        "fem_rxgain": desired_fem_rxgain(node),
+        "agc_reset_interval": desired_agc_reset_interval(node),
     }
     powersaving = desired_powersaving(node)
     if powersaving is not None:
         parts["powersaving"] = powersaving
-    fem_rxgain = desired_fem_rxgain(node)
-    if fem_rxgain is not None:
-        parts["fem_rxgain"] = fem_rxgain
     rxgain = rxgain_apply_enabled(node)
     if rxgain is not None:
         parts["rxgain"] = rxgain

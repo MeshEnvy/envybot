@@ -14,6 +14,7 @@ from envybot.apply import (
     apply_due_fields,
     apply_is_due,
     clear_apply_stamps,
+    desired_agc_reset_interval,
     desired_dutycycle,
     desired_fem_rxgain,
     desired_ota_autofetch,
@@ -104,11 +105,14 @@ from envybot.radio import (
     send_cmd_once,
     set_book_coord,
     set_dutycycle_policy,
+    AgcResetUnsupported,
     FemRxgainUnsupported,
     OtaAutofetchUnsupported,
+    set_agc_reset_interval_policy,
     set_fem_rxgain_policy,
     set_ota_autofetch_policy,
     set_path_hash_policy,
+    push_flood_advert,
     set_powersaving_policy,
     set_rxgain_policy,
     trigger_neighbor_discover_once,
@@ -135,11 +139,13 @@ APPLY_FIELD_ORDER = (
     "ota_autofetch",
     "powersaving",
     "fem_rxgain",
+    "agc_reset_interval",
     "rxgain",
     "acl",
 )
 
 AUDIT_GET_GROUPS = frozenset({"name", "lat", "lon", "advert", "flood_advert", "acl"})
+IDENTITY_PUSH_ADVERT_FIELDS = frozenset({"name", "lat", "lon"})
 
 
 @dataclass
@@ -405,6 +411,7 @@ def build_apply_jobs(unit_key: str, *, force: bool) -> list[RadioJob]:
     for field in APPLY_FIELD_ORDER:
         jobs.append(RadioJob(kind=f"apply:{field}", unit_key=unit_key))
     jobs.append(RadioJob(kind="apply:clock", unit_key=unit_key))
+    jobs.append(RadioJob(kind="apply:push_advert", unit_key=unit_key))
     return jobs
 
 
@@ -1283,7 +1290,27 @@ async def _execute_apply(
     if field == "force_clear":
         if force:
             clear_apply_stamps(ctx.conn, target.key)
+        uq.session_extra.pop("apply_identity_changed", None)
         return JobOutcome.HEARD, None
+
+    if field == "push_advert":
+        if not uq.session_extra.pop("apply_identity_changed", False):
+            ctx.log.step("push_advert: skip (identity unchanged)")
+            return JobOutcome.HEARD, "skip"
+        attempt_cap = _attempt_cap(ctx, job)
+        sent = await push_flood_advert(
+            ctx.client,
+            target,
+            cmd_timeout=ctx.cmd_timeout,
+            attempts=1,
+            log=ctx.log,
+            session=ctx.session,
+            attempt_num=attempt_num,
+            attempt_cap=attempt_cap,
+        )
+        if sent is None:
+            return JobOutcome.TIMEOUT, None
+        return JobOutcome.HEARD, sent
 
     due = due_fields()
     if field not in due and field != "clock":
@@ -1442,6 +1469,19 @@ async def _execute_apply(
             send = "ok"
         else:
             send = "ok" if applied is not None else "timeout"
+    elif field == "agc_reset_interval":
+        try:
+            applied = await set_agc_reset_interval_policy(
+                ctx.client, target, cmd_timeout=ctx.cmd_timeout, attempts=1,
+                log=ctx.log, session=ctx.session,
+                interval=desired_agc_reset_interval(node),
+                attempt_num=attempt_num, attempt_cap=attempt_cap,
+            )
+        except AgcResetUnsupported:
+            ctx.log.step("agc.reset: skip (unsupported)")
+            send = "ok"
+        else:
+            send = "ok" if applied is not None else "timeout"
     elif field == "rxgain":
         try:
             applied = await set_rxgain_policy(
@@ -1494,6 +1534,8 @@ async def _execute_apply(
         return JobOutcome.HARD_FAIL, field
 
     if send == "ok":
+        if field in IDENTITY_PUSH_ADVERT_FIELDS:
+            uq.session_extra["apply_identity_changed"] = True
         stamp_key = "flood" if field == "flood" else field
         if stamp_key in applicable:
             stamp(stamp_key)

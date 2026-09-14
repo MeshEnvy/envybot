@@ -151,8 +151,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Poll and apply password-login every MeshCore unit. Live RTC from login
   timestamp or ``clock`` CLI.
 - Duty-cycle default is 50% (stock MeshCore). `nodes.yaml` `dutycycle`
-  overrides. Optional `powersaving` / `fem_rxgain` /
-  `rxgain` (on|off) apply only when the book sets them. `fem_vfem` is
+  overrides. Fleet always applies `fem_rxgain` off and `agc_reset_interval`
+  4 (book override). Optional `powersaving` / `rxgain` (on|off) apply only
+  when the book sets them. `fem_vfem` is
   gone (`radio.fem.vfem` CLI reverted 09-05).
   `rxgain` also
   needs `board: heltec-t096` (or `t096`). `board` is the only radio-family
@@ -160,6 +161,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   `try`, not apply. Missing CLI
   (`unsupported` / `unknown config`) stamps done. Seeder launch is 10%. `set dutycycle` needs MeshCore 1.15+;
   older 1.x uses `set af` (50% = af 1.0).
+  After apply, if name/lat/lon SET this pass, fleet sends `advert` (flood).
   Onboard also SETs `path.hash.mode` 1 (2-byte), same as fleet apply,
   and always SETs admin (write-only; yaml is the value, not a skip),
   then stamps the private profile. A successful onboard is fleet-ready

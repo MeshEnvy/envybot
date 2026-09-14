@@ -135,7 +135,7 @@ temperature (with vs-ambient delta), Open-Meteo weather column, and gap.
 Interpolated gauges are italic. Detail 10 rows, **Load more** +10. Sparklines
 prefer `polls` when loaded. Default history limit is 80 (72h). SSE `unit`
 events merge live status/telemetry into the polls list.
-Cards show book apply prefs (power saving, FEM LNA, duty cycle, path hash,
+Cards show book apply prefs (power saving, FEM LNA, AGC reset, duty cycle, path hash,
 OTA autofetch) with applied/due from sqlite stamps. Not a live radio GET.
 
 ## Manual jobs (UI)
@@ -216,17 +216,20 @@ rolled and written back to the book. `public: true` pushes site name (or
 
 Always also SETs `path.hash.mode` (default 1 = 2-byte), `dutycycle`
 (default 50, stock MeshCore), `ota config autofetch` (default `off`; missing CLI stamps
-done), optional `powersaving` / `fem_rxgain` / `rxgain`
-when those keys are in the book (missing CLI stamps done). `rxgain`
-needs `board: heltec-t096`. Temporary off is firmware `try`. Also SETs a strong book admin
+done), `radio.fem.rxgain` (default off), `agc.reset.interval` (default 4; missing CLI
+stamps done), optional `powersaving` / `rxgain` when those keys are in the book (missing
+CLI stamps done). `rxgain` needs `board: heltec-t096`. Temporary off is firmware `try`.
+Also SETs a strong book admin
 via `password`, and clock if unset
-or behind. Password-login every unit before GET or SET (login establishes
+or behind. After apply finishes, if name or GPS changed this pass, fleet sends
+`advert` (flood) so the mesh hears the new identity. Password-login every unit before GET or SET (login establishes
 the repeater session and refreshes mesh paths). Live clock comes from
 the login timestamp or `clock` CLI afterward.
 
 Apply is due when any SET field stamp misses the book desired value
 (stored in sqlite `applies` per field: name, lat, lon, advert, flood,
-guest, admin, path_hash, dutycycle, ota_autofetch, powersaving, fem_rxgain, rxgain, acl, identity). A successful
+guest, admin, path_hash, dutycycle, ota_autofetch, powersaving, fem_rxgain,
+agc_reset_interval, rxgain, acl, identity). A successful
 [`onboard`](onboard.md) stamps those fields so a new private unit is not
 due for a first mesh apply. `--full-sync` or **Deploy** clears field
 stamps and re-SETs everything (full-sync skips audit GETs on that pass).
