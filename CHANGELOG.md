@@ -14,6 +14,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- **Companion neighbor ping** on connect (`fleet` / `trust` / `cmd`): zero-hop
+  `NODE_DISCOVER_REQ`, 10s listen, lists nearby repeaters (name, pubkey prefix,
+  SNR). Warns when none answered. Skips on unsupported companion firmware.
 - Fleet detail **Heard** rows show approximate miles from the unit. Book
   display GPS for fleet peers; companion advert GPS for community nodes.
 - **`weather backfill`** — Open-Meteo hourly cache for bound site GPS. Poll

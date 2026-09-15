@@ -124,7 +124,11 @@ except ImportError:  # pragma: no cover
     MeshCore = Any  # type: ignore[misc,assignment]
 
 
+# RF sensitivity first so multihop apply hears replies before identity SETs.
 APPLY_FIELD_ORDER = (
+    "fem_rxgain",
+    "agc_reset_interval",
+    "rxgain",
     "name",
     "lat",
     "lon",
@@ -138,9 +142,6 @@ APPLY_FIELD_ORDER = (
     "dutycycle",
     "ota_autofetch",
     "powersaving",
-    "fem_rxgain",
-    "agc_reset_interval",
-    "rxgain",
     "acl",
 )
 

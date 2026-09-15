@@ -71,7 +71,7 @@ COMPANION_RECONNECT_ATTEMPTS = 5
 CLOCK_SKEW_MAX = 300  # seconds; sync when *live login* RTC vs host exceeds this
 FLEET_DUTYCYCLE_PCT = 50.0
 FLEET_OTA_AUTOFETCH = "off"
-FLEET_FEM_RXGAIN = False
+FLEET_FEM_RXGAIN = True
 FLEET_AGC_RESET_INTERVAL = 4
 OTA_AUTOFETCH_VALUES = frozenset({"off", "any", "signed"})
 OTA_AUTOFETCH_RE = re.compile(r"autofetch=(off|any|signed)", re.I)
@@ -3260,6 +3260,152 @@ def pick_companion(candidates: list[CompanionCandidate]) -> CompanionCandidate:
         print(f"Enter 1–{len(candidates)}.", file=sys.stderr)
 
 
+DISCOVER_REPEATER_FILTER = 1 << CONTACT_TYPE_REPEATER
+COMPANION_DISCOVER_WAIT_S = 10.0
+
+
+def normalize_discover_tag(tag: Any) -> str | None:
+    """Normalize discover tag to 8-byte little-endian hex (meshcore-py wire form)."""
+    if tag is None:
+        return None
+    if isinstance(tag, int):
+        return tag.to_bytes(4, "little", signed=False).hex()
+    text = str(tag).strip().lower()
+    if text.startswith("0x"):
+        text = text[2:]
+    return text or None
+
+
+def discover_response_row(
+    payload: dict[str, Any] | None,
+    *,
+    expected_tag_hex: str,
+) -> dict[str, Any] | None:
+    """Return one repeater discover row when payload matches tag and type."""
+    if not isinstance(payload, dict):
+        return None
+    tag_hex = normalize_discover_tag(payload.get("tag"))
+    if not tag_hex or tag_hex != expected_tag_hex:
+        return None
+    node_type = payload.get("node_type")
+    try:
+        if int(node_type) != CONTACT_TYPE_REPEATER:
+            return None
+    except (TypeError, ValueError):
+        return None
+    pubkey = str(payload.get("pubkey") or "").strip().lower()
+    if not pubkey:
+        return None
+    snr = payload.get("SNR")
+    try:
+        snr_f = float(snr) if snr is not None else None
+    except (TypeError, ValueError):
+        snr_f = None
+    return {"pubkey": pubkey, "snr": snr_f}
+
+
+def discover_repeater_label(client: MeshCore, pubkey: str) -> str:
+    """Resolve on-air name from companion contacts, else pubkey prefix."""
+    lookup = client.get_contact_by_key_prefix(pubkey[:12]) if len(pubkey) >= 8 else None
+    if lookup:
+        name = str(lookup.get("adv_name") or "").strip()
+        if name:
+            return name[:32]
+    return pubkey[:8]
+
+
+def format_companion_neighbor_report(rows: list[dict[str, Any]]) -> list[str]:
+    """Human lines for companion zero-hop discover replies."""
+    if not rows:
+        return [
+            "Companion repeaters nearby: none. "
+            "Fleet may not get out (antenna, channel, or radio deaf)."
+        ]
+    lines = [f"Companion repeaters nearby ({len(rows)}):"]
+    for row in rows:
+        name = str(row.get("name") or row.get("pubkey", "")[:8])
+        prefix = str(row.get("pubkey") or "")[:8]
+        snr = row.get("snr")
+        snr_text = f"{snr:.1f} dB" if isinstance(snr, (int, float)) else "?"
+        lines.append(f"  {name:<24} {prefix}  {snr_text}")
+    return lines
+
+
+def merge_discover_row(
+    rows: dict[str, dict[str, Any]], row: dict[str, Any], *, client: MeshCore
+) -> None:
+    """Keep the strongest SNR per pubkey prefix."""
+    pubkey = row["pubkey"]
+    key = pubkey[:8] if len(pubkey) >= 8 else pubkey
+    snr = row.get("snr")
+    existing = rows.get(key)
+    if existing is None:
+        rows[key] = {
+            "pubkey": pubkey if len(pubkey) >= 8 else key,
+            "snr": snr,
+            "name": discover_repeater_label(client, pubkey),
+        }
+        return
+    prev = existing.get("snr")
+    if snr is not None and (prev is None or snr > prev):
+        existing["snr"] = snr
+        if len(pubkey) > len(str(existing.get("pubkey") or "")):
+            existing["pubkey"] = pubkey
+
+
+async def companion_neighbor_ping(
+    client: MeshCore,
+    *,
+    wait_s: float = COMPANION_DISCOVER_WAIT_S,
+) -> None:
+    """Zero-hop NODE_DISCOVER_REQ: list nearby repeaters that answer (Tools-style ping)."""
+    collected: dict[str, dict[str, Any]] = {}
+    expected_tag_hex: str | None = None
+
+    def on_discover(event: Any) -> None:
+        if expected_tag_hex is None:
+            return
+        row = discover_response_row(
+            event.payload if isinstance(event.payload, dict) else None,
+            expected_tag_hex=expected_tag_hex,
+        )
+        if row is not None:
+            merge_discover_row(collected, row, client=client)
+
+    sub = client.subscribe(EventType.DISCOVER_RESPONSE, on_discover)
+    try:
+        print(f"Companion neighbor ping ({wait_s:g}s) …", flush=True)
+        res = await client.commands.send_node_discover_req(
+            filter=DISCOVER_REPEATER_FILTER,
+            prefix_only=True,
+            since=0,
+        )
+        if res is None:
+            print("Companion neighbor ping skipped (no response)")
+            return
+        if res.is_error():
+            reason = ""
+            if isinstance(res.payload, dict):
+                reason = str(res.payload.get("reason") or "")
+            print(f"Companion neighbor ping skipped ({reason or 'error'})")
+            return
+        expected_tag_hex = normalize_discover_tag(res.payload.get("tag"))
+        if not expected_tag_hex:
+            print("Companion neighbor ping skipped (missing tag)")
+            return
+        await asyncio.sleep(wait_s)
+    finally:
+        sub.unsubscribe()
+
+    ordered = sorted(
+        collected.values(),
+        key=lambda r: (r.get("snr") is not None, r.get("snr") or -999.0),
+        reverse=True,
+    )
+    for line in format_companion_neighbor_report(ordered):
+        print(line, flush=True)
+
+
 async def post_connect(client: MeshCore) -> None:
     """Shared post-connect setup: clock sync, auto-fetch, contact sync."""
     res = await client.commands.set_time(int(time.time()))
@@ -3278,6 +3424,7 @@ async def post_connect(client: MeshCore) -> None:
             "Companion ACL prefix: unknown (SELF_INFO missing public_key)",
             file=sys.stderr,
         )
+    await companion_neighbor_ping(client)
 
 
 async def connect_candidate(args: argparse.Namespace, cand: CompanionCandidate) -> MeshCore:

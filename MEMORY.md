@@ -151,9 +151,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Poll and apply password-login every MeshCore unit. Live RTC from login
   timestamp or ``clock`` CLI.
 - Duty-cycle default is 50% (stock MeshCore). `nodes.yaml` `dutycycle`
-  overrides. Fleet always applies `fem_rxgain` off and `agc_reset_interval`
-  4 (book override). Optional `powersaving` / `rxgain` (on|off) apply only
-  when the book sets them. `fem_vfem` is
+  overrides. Fleet apply runs RF first after login: `fem_rxgain` on (default),
+  `agc_reset_interval` 4, then book `rxgain` when set. Optional `powersaving`
+  applies only when the book sets it. `fem_vfem` is
   gone (`radio.fem.vfem` CLI reverted 09-05).
   `rxgain` also
   needs `board: heltec-t096` (or `t096`). `board` is the only radio-family
@@ -179,6 +179,10 @@ BLE companion for `fleet` / `trust` / `cmd`. Multiple BLE tags: brief probe for
 pubkey prefix, TTY `Pick companion [1-N]:`; headless needs `--ble ADDRESS`.
 USB DUT for `onboard`.
 Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
+On connect (`post_connect`): zero-hop `NODE_DISCOVER_REQ` ping (10s listen);
+lists nearby repeaters that answer (name from contacts, pubkey prefix, SNR).
+Warns when none. Companion firmware v8+ (`CMD_SEND_CONTROL_DATA`); older
+companions skip. Not re-run on BLE recover.
 
 - **Fleet UI:** `./envybot fleet` serves `127.0.0.1:8787` by default.
   Main view is a **card dashboard** (batt / temp / traffic / err sparklines,
@@ -247,4 +251,4 @@ Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-09 (--refresh-paths fleet flag)
+Last updated: 2026-09-14 (companion neighbor ping on connect)

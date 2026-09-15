@@ -216,10 +216,10 @@ rolled and written back to the book. `public: true` pushes site name (or
 
 Always also SETs `path.hash.mode` (default 1 = 2-byte), `dutycycle`
 (default 50, stock MeshCore), `ota config autofetch` (default `off`; missing CLI stamps
-done), `radio.fem.rxgain` (default off), `agc.reset.interval` (default 4; missing CLI
-stamps done), optional `powersaving` / `rxgain` when those keys are in the book (missing
-CLI stamps done). `rxgain` needs `board: heltec-t096`. Temporary off is firmware `try`.
-Also SETs a strong book admin
+done), optional `powersaving` when set in the book. RF sensitivity SETs run first after
+login: `radio.fem.rxgain` (default on), `agc.reset.interval` (default 4), then optional
+`radio.rxgain` when the book sets it (`board: heltec-t096`). Missing CLI stamps done.
+Temporary off is firmware `try`. Also SETs a strong book admin
 via `password`, and clock if unset
 or behind. After apply finishes, if name or GPS changed this pass, fleet sends
 `advert` (flood) so the mesh hears the new identity. Password-login every unit before GET or SET (login establishes
@@ -254,6 +254,12 @@ on units that were already profile-synced so fleet does not re-push.
 
 Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
 `--attempts`, …).
+
+On companion connect (not `--web-only`), fleet sends a zero-hop repeater
+discover ping (MeshCore app Tools-style `NODE_DISCOVER_REQ`), listens 10s,
+and prints nearby repeaters that answer (name, pubkey prefix, SNR). Empty
+list warns that fleet may not get out. Requires companion firmware with
+`CMD_SEND_CONTROL_DATA` (v8+); older companions skip silently.
 
 | Flag | Meaning |
 |------|---------|

@@ -83,6 +83,9 @@ PROFILE_ID_VERSION = 1
 RXGAIN_BOARD_TOKENS = frozenset({"heltec-t096", "t096"})
 
 APPLY_FIELDS = (
+    "fem_rxgain",
+    "agc_reset_interval",
+    "rxgain",
     "name",
     "lat",
     "lon",
@@ -96,9 +99,6 @@ APPLY_FIELDS = (
     "dutycycle",
     "ota_autofetch",
     "powersaving",
-    "fem_rxgain",
-    "agc_reset_interval",
-    "rxgain",
     "acl",
     "identity",
 )
@@ -150,7 +150,7 @@ def desired_powersaving(node: dict[str, Any]) -> bool | None:
 
 
 def desired_fem_rxgain(node: dict[str, Any]) -> bool:
-    """Book override or fleet default (FEM LNA off)."""
+    """Book override or fleet default (FEM LNA on)."""
     if "fem_rxgain" in node:
         parsed = _parse_optional_bool(node.get("fem_rxgain"))
         if parsed is not None:

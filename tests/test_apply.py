@@ -144,7 +144,7 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(parts["path_hash"], 1)
         self.assertEqual(parts["dutycycle"], 50)
         self.assertEqual(parts["ota_autofetch"], "off")
-        self.assertFalse(parts["fem_rxgain"])
+        self.assertTrue(parts["fem_rxgain"])
         self.assertEqual(parts["agc_reset_interval"], 4)
 
     def test_ota_autofetch_in_parts(self) -> None:
@@ -155,11 +155,11 @@ class ProfileTests(unittest.TestCase):
         parts = profile_parts(_STRONG, None)
         self.assertNotIn("powersaving", parts)
         self.assertNotIn("rxgain", parts)
-        self.assertFalse(parts["fem_rxgain"])
+        self.assertTrue(parts["fem_rxgain"])
         self.assertEqual(parts["agc_reset_interval"], 4)
         self.assertEqual(_id(_STRONG), _id({**_STRONG}))
         self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "powersaving": True}))
-        self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "fem_rxgain": True}))
+        self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "fem_rxgain": False}))
         self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "agc_reset_interval": 8}))
         self.assertEqual(_id(_STRONG), _id({**_STRONG, "rxgain": False}))
         self.assertNotEqual(
@@ -181,7 +181,7 @@ class ProfileTests(unittest.TestCase):
         self.assertFalse(desired_powersaving({**_STRONG, "powersaving": "off"}))
 
     def test_desired_fem_rxgain_alias(self) -> None:
-        self.assertFalse(desired_fem_rxgain({}))
+        self.assertTrue(desired_fem_rxgain({}))
         self.assertFalse(desired_fem_rxgain({**_STRONG, "fem_rxgain": False}))
         self.assertFalse(desired_fem_rxgain({**_STRONG, "radio.fem.rxgain": "off"}))
         self.assertTrue(desired_fem_rxgain({**_STRONG, "fem_rxgain": "on"}))
@@ -306,7 +306,7 @@ class DueTests(unittest.TestCase):
                     continue
                 insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
             due = apply_due_fields(conn, "me0001", node, None)
-            self.assertEqual(due, ["powersaving", "fem_rxgain"])
+            self.assertEqual(due, ["fem_rxgain", "powersaving"])
             self.assertNotIn("powersaving", applicable_field_desireds(_STRONG, None))
 
     def test_onboard_stamp_after_site_bound(self) -> None:
@@ -357,7 +357,11 @@ class DueTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
             need, skip = format_apply_plan(conn, "me0001", _STRONG, None)
-            self.assertTrue(need.startswith("name,") or need.startswith("name ("))
+            self.assertTrue(
+                need.startswith("fem_rxgain,")
+                or need.startswith("fem_rxgain (")
+                or need.startswith("agc_reset_interval,")
+            )
             self.assertTrue(need.startswith("v1:") or "(v1:" in need)
             self.assertEqual(skip, "none")
 

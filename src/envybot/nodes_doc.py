@@ -71,7 +71,7 @@ NODES_YAML_HEADER = (
     "# path_hash_mode / dutycycle: radio prefs (apply/onboard default 1 / 50).\n"
     "# ota_autofetch: off|any|signed (apply/onboard default off).\n"
     "# powersaving / rxgain: optional on|off. Apply SETs only when present.\n"
-    "# fem_rxgain: T096 FEM LNA (stock radio.fem.rxgain). Default off; book override.\n"
+    "# fem_rxgain: T096 FEM LNA (stock radio.fem.rxgain). Default on; book override.\n"
     "# agc_reset_interval: seconds (4-step). Default 4 (set agc.reset.interval 4).\n"
     "#   rxgain is SX1262 boosted gain. Apply ignores it unless board is\n"
     "#   heltec-t096 (or t096). Temporary off is firmware try, not apply.\n"

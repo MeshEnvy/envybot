@@ -304,6 +304,10 @@ class ApplyTimeoutTests(unittest.IsolatedAsyncioTestCase):
     def test_build_apply_jobs_includes_push_advert(self) -> None:
         kinds = [j.kind for j in build_apply_jobs("me0049", force=False)]
         self.assertEqual(kinds[-2:], ["apply:clock", "apply:push_advert"])
+        self.assertEqual(
+            kinds[:3],
+            ["apply:fem_rxgain", "apply:agc_reset_interval", "apply:rxgain"],
+        )
 
 
 if __name__ == "__main__":
