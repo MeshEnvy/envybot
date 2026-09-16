@@ -13,6 +13,7 @@ from envybot.radio import (
     RouterTarget,
     contact_out_path_label,
     contact_route_audit_label,
+    contact_route_display_label,
     log_contact_path,
     PollLog,
     prepare_login_route,
@@ -76,7 +77,7 @@ class ContactOutPathTests(unittest.TestCase):
                 lines.append(msg)
 
         log_contact_path(client, _target(), log=CaptureLog())
-        self.assertEqual(lines, ["path: 266a b3b3"])
+        self.assertEqual(lines, ["path: 266a → b3b3"])
 
     def test_log_flood_when_no_path(self) -> None:
         client = MagicMock()
@@ -93,6 +94,26 @@ class ContactOutPathTests(unittest.TestCase):
 
         log_contact_path(client, _target(), log=CaptureLog())
         self.assertEqual(lines, ["path: flood"])
+
+    def test_log_path_resolves_repeater_names(self) -> None:
+        contact = {
+            "out_path_len": 2,
+            "out_path_hash_mode": 1,
+            "out_path": "266ab3b3",
+        }
+        known = {
+            "266a": {"adv_name": "Alpha", "public_key": "266a" + "0" * 60},
+            "b3b3": {"adv_name": "Bravo", "public_key": "b3b3" + "0" * 60},
+        }
+        client = MagicMock()
+
+        def lookup(prefix: str) -> dict[str, Any] | None:
+            token = prefix.strip().lower()[:4]
+            return known.get(token)
+
+        client.get_contact_by_key_prefix.side_effect = lookup
+        label = contact_route_display_label(client, contact)
+        self.assertEqual(label, "Alpha (266a) → Bravo (b3b3)")
 
 
 class PrepareRouteTests(unittest.IsolatedAsyncioTestCase):

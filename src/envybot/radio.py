@@ -1617,6 +1617,27 @@ def publish_live_route(
     return live
 
 
+def resolve_hop_label(client: MeshCore, hop: str) -> str:
+    """Map a path hop hash to companion advert name, else return the hop token."""
+    token = hop.strip().lower()
+    if not token:
+        return hop
+    lookup = client.get_contact_by_key_prefix(token)
+    if lookup:
+        name = str(lookup.get("adv_name") or "").strip()
+        if name:
+            return f"{name} ({token})"
+    return token
+
+
+def contact_route_display_label(client: MeshCore, contact: dict[str, Any] | None) -> str:
+    """Human path for logs: repeater names when companion knows them, else hop hashes."""
+    audit = contact_route_audit_label(contact)
+    if audit in ("direct", "flood"):
+        return audit
+    return " → ".join(resolve_hop_label(client, hop) for hop in audit.split())
+
+
 def log_contact_path(
     client: MeshCore, target: RouterTarget, *, log: PollLog | None = None
 ) -> None:
@@ -1628,7 +1649,7 @@ def log_contact_path(
     """
     log = log or PollLog()
     contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])
-    log.step(f"path: {contact_route_audit_label(contact)}")
+    log.step(f"path: {contact_route_display_label(client, contact)}")
 
 
 def _audit_redact(text: str | None, *, max_len: int = 500) -> str | None:

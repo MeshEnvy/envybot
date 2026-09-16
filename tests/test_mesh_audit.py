@@ -201,7 +201,7 @@ class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
                 lines.append(msg)
 
         log_contact_path(client, target, log=CaptureLog())
-        self.assertEqual(lines, ["path: 266a b3b3"])
+        self.assertEqual(lines, ["path: 266a → b3b3"])
         self.assertEqual(audit_path_at_send(client, target), "266a b3b3")
 
 
