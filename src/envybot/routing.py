@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -179,3 +180,75 @@ def route_session_from_extra(extra: dict[str, Any] | None) -> RouteSession:
 def persist_route_session(extra: dict[str, Any], session: RouteSession) -> None:
     extra["path_failures"] = session.path_failures
     extra["route_session"] = {"path_failures": session.path_failures}
+
+
+@dataclass(frozen=True)
+class ForcedPath:
+    """Operator-pinned hop list for companion out_path."""
+
+    hops: tuple[str, ...]
+    path_hex: str
+    hash_mode: int
+
+    def label(self) -> str:
+        return " ".join(self.hops)
+
+    def to_extra(self) -> dict[str, Any]:
+        return {
+            "hops": list(self.hops),
+            "path_hex": self.path_hex,
+            "hash_mode": self.hash_mode,
+        }
+
+
+def parse_force_path(
+    raw: str | None,
+    *,
+    hash_mode: int = FLEET_PATH_HASH_MODE,
+) -> ForcedPath | None:
+    """Parse ``EA6E,E9BD,C458`` into a companion out_path (default 2-byte hashes)."""
+    if not raw or not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not text:
+        return None
+    parts = [p.strip().lower() for p in re.split(r"[\s,]+", text) if p.strip()]
+    if not parts:
+        return None
+    chunk = (hash_mode + 1) * 2
+    hops: list[str] = []
+    for part in parts:
+        token = part.split(":", 1)[0].replace(":", "")
+        if len(token) != chunk:
+            raise ValueError(
+                f"hop {part!r} must be {chunk} hex chars for hash_mode {hash_mode}"
+            )
+        try:
+            int(token, 16)
+        except ValueError as exc:
+            raise ValueError(f"hop {part!r} is not valid hex") from exc
+        hops.append(token)
+    return ForcedPath(hops=tuple(hops), path_hex="".join(hops), hash_mode=hash_mode)
+
+
+def forced_path_from_extra(extra: dict[str, Any] | None) -> ForcedPath | None:
+    if not extra:
+        return None
+    raw = extra.get("forced_path")
+    if isinstance(raw, ForcedPath):
+        return raw
+    if not isinstance(raw, dict):
+        return None
+    hops_raw = raw.get("hops")
+    path_hex = raw.get("path_hex")
+    hash_mode = raw.get("hash_mode", FLEET_PATH_HASH_MODE)
+    if not isinstance(hops_raw, list) or not hops_raw or not isinstance(path_hex, str):
+        return None
+    try:
+        hash_mode = int(hash_mode)
+    except (TypeError, ValueError):
+        hash_mode = FLEET_PATH_HASH_MODE
+    hops = tuple(str(h).strip().lower() for h in hops_raw if str(h).strip())
+    if not hops:
+        return None
+    return ForcedPath(hops=hops, path_hex=path_hex.lower(), hash_mode=hash_mode)

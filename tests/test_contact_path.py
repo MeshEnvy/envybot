@@ -21,7 +21,7 @@ from envybot.radio import (
     refresh_fleet_paths,
     reset_to_flood,
 )
-from envybot.routing import RoutingMode
+from envybot.routing import RoutingMode, parse_force_path
 
 
 def _target(*, routing: RoutingMode = RoutingMode.PATH) -> RouterTarget:
@@ -163,6 +163,34 @@ class PrepareRouteTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(contact["out_path_len"], 0)
         client.commands.update_contact.assert_awaited()
+
+    async def test_force_path_pins_hops(self) -> None:
+        client = MagicMock()
+        contact = {
+            "public_key": "b2f84713d830" + "0" * 52,
+            "out_path_len": -1,
+            "out_path_hash_mode": -1,
+            "out_path": "",
+        }
+        client.get_contact_by_key_prefix.return_value = contact
+
+        async def _pin_contact(_contact: dict[str, Any], *, path: str, path_hash_mode: int) -> Any:
+            _contact["out_path"] = path
+            _contact["out_path_hash_mode"] = path_hash_mode
+            _contact["out_path_len"] = len(path) // ((path_hash_mode + 1) * 2)
+            return MagicMock(type=EventType.OK, payload={})
+
+        client.commands.update_contact = AsyncMock(side_effect=_pin_contact)
+        forced = parse_force_path("ea6e,e9bd")
+        assert forced is not None
+        route_extra = {"forced_path": forced.to_extra()}
+        await prepare_login_route(client, _target(), log=PollLog(), route_extra=route_extra)
+        client.commands.update_contact.assert_awaited_once()
+        kwargs = client.commands.update_contact.await_args.kwargs
+        self.assertEqual(kwargs["path"], "ea6ee9bd")
+        self.assertEqual(kwargs["path_hash_mode"], 1)
+        self.assertEqual(route_extra["live_route"]["kind"], "hops")
+        self.assertEqual(route_extra["live_route"]["label"], "ea6e e9bd")
 
     async def test_flood_policy_resets_flood(self) -> None:
         client = MagicMock()

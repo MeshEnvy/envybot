@@ -29,10 +29,12 @@ from envybot.position import book_coord, display_name, load_sites, site_binding
 from envybot.history import begin_mesh_audit, finish_mesh_audit, mark_mesh_audit_late
 from envybot.routing import (
     FLEET_PATH_HASH_MODE,
+    ForcedPath,
     RouteSession,
     RoutingMode,
     contact_out_path_label,
     contact_route_audit_label,
+    forced_path_from_extra,
     has_cached_route,
     live_route_from_contact,
     persist_route_session,
@@ -1174,6 +1176,86 @@ async def set_powersaving_policy(
     return enabled
 
 
+async def set_hop_retry_policy(
+    client: MeshCore,
+    target: RouterTarget,
+    *,
+    cmd_timeout: float,
+    attempts: int,
+    log: PollLog,
+    session: FleetSession | None = None,
+    count: int | None = None,
+    attempt_num: int | None = None,
+    attempt_cap: int | None = None,
+) -> int | None:
+    """``set hop.retry <count>`` (0-5). Stamp on OK."""
+    if count is None:
+        return None
+    want = int(count)
+    raw = await send_cmd_sync(
+        client,
+        target,
+        f"set hop.retry {want}",
+        timeout=cmd_timeout,
+        attempts=attempts,
+        log=log,
+        session=session,
+        attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
+    )
+    if raw is None:
+        log.substep("hop.retry: no response")
+        return None
+    if cli_unknown_reply(raw):
+        log.substep("hop.retry: unsupported")
+        return None
+    if cli_error_reply(raw) or not cli_set_ok(raw):
+        log.substep(f"hop.retry: set failed ({raw.strip()[:40]})")
+        return None
+    log.substep(f"hop.retry set OK ({want})")
+    return want
+
+
+async def set_hop_retry_ms_policy(
+    client: MeshCore,
+    target: RouterTarget,
+    *,
+    cmd_timeout: float,
+    attempts: int,
+    log: PollLog,
+    session: FleetSession | None = None,
+    ms: int | None = None,
+    attempt_num: int | None = None,
+    attempt_cap: int | None = None,
+) -> int | None:
+    """``set hop.retry.ms <milliseconds>`` (200-10000). Stamp on OK."""
+    if ms is None:
+        return None
+    want = int(ms)
+    raw = await send_cmd_sync(
+        client,
+        target,
+        f"set hop.retry.ms {want}",
+        timeout=cmd_timeout,
+        attempts=attempts,
+        log=log,
+        session=session,
+        attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
+    )
+    if raw is None:
+        log.substep("hop.retry.ms: no response")
+        return None
+    if cli_unknown_reply(raw):
+        log.substep("hop.retry.ms: unsupported")
+        return None
+    if cli_error_reply(raw) or not cli_set_ok(raw):
+        log.substep(f"hop.retry.ms: set failed ({raw.strip()[:40]})")
+        return None
+    log.substep(f"hop.retry.ms set OK ({want})")
+    return want
+
+
 async def set_fem_rxgain_policy(
     client: MeshCore,
     target: RouterTarget,
@@ -2166,6 +2248,32 @@ async def prepare_direct_route(
     pin_contact_route(contact, flood=False)
 
 
+async def prepare_pinned_path(
+    client: MeshCore,
+    target: RouterTarget,
+    *,
+    forced: ForcedPath,
+    log: PollLog | None = None,
+) -> None:
+    """Pin companion out_path to an operator-supplied hop list."""
+    log = log or PollLog()
+    prefix = target.pubkey_hex[:12]
+    contact = client.get_contact_by_key_prefix(prefix)
+    if not isinstance(contact, dict):
+        contact = contact_stub_for_target(target)
+        contacts = getattr(client, "contacts", None)
+        if isinstance(contacts, dict):
+            contacts[contact["public_key"]] = contact
+        log.detail("prepare_route: no cached contact, using stub")
+    res = await client.commands.update_contact(
+        contact,
+        path=forced.path_hex,
+        path_hash_mode=forced.hash_mode,
+    )
+    if res.type == EventType.ERROR:
+        log.detail(f"prepare_route pinned warning: {res.payload}")
+
+
 async def prepare_route(
     client: MeshCore,
     target: RouterTarget,
@@ -2175,6 +2283,11 @@ async def prepare_route(
 ) -> None:
     """Prepare companion route before login or send."""
     log = log or PollLog()
+    forced = forced_path_from_extra(route_extra)
+    if forced is not None:
+        await prepare_pinned_path(client, target, forced=forced, log=log)
+        publish_live_route(client, target, route_extra)
+        return
     policy = target.routing
     if policy is RoutingMode.DIRECT:
         await prepare_direct_route(client, target, log=log)
@@ -2197,6 +2310,8 @@ async def handle_path_timeout(
     log: PollLog | None = None,
 ) -> None:
     """Path policy: count failures on cached route; discard at threshold."""
+    if forced_path_from_extra(route_extra) is not None:
+        return
     if target.routing is not RoutingMode.PATH or route_extra is None:
         return
     log = log or PollLog()
@@ -2435,6 +2550,7 @@ async def admin_login_attempt(
     attempt_cap: int | None = None,
     cancel_check: Any | None = None,
     route_extra: dict[str, Any] | None = None,
+    compact: bool = False,
 ) -> tuple[bool, str | None, int | None]:
     """Single login send+wait."""
     log = log or PollLog()
@@ -2446,8 +2562,13 @@ async def admin_login_attempt(
     async with client.commands._mesh_request_lock:
         await ensure_contact_on_device(client, target, log=log)
         await prepare_login_route(client, target, log=log, route_extra=route_extra)
-        log_contact_path(client, target, log=log)
         path = audit_path_at_send(client, target)
+        if not compact:
+            log_contact_path(client, target, log=log)
+        elif route_extra is not None and route_extra.get("last_login_log_path") != path:
+            log_contact_path(client, target, log=log)
+        if route_extra is not None:
+            route_extra["last_login_log_path"] = path
         sent = await send_login_frame(client, dst, target.admin_password)
         if sent is None or sent.type == EventType.ERROR:
             err = sent.payload if sent else "no response"
@@ -2467,7 +2588,8 @@ async def admin_login_attempt(
                 outcome="send_error",
                 error=err,
             )
-            log.substep(f"login {attempt_num}: send error ({err})")
+            if not compact:
+                log.substep(f"login {attempt_num}: send error ({err})")
             return False, str(err), None
         suggested_ms = sent.payload.get("suggested_timeout", 60000)
 
@@ -2485,7 +2607,8 @@ async def admin_login_attempt(
         path=path,
         wait_s=wait_s,
     )
-    log.substep(f"send login 0x1a {n_of} (≤{wait_s:.0f}s, no echo id) …")
+    if not compact:
+        log.substep(f"send login 0x1a {n_of} (≤{wait_s:.0f}s, no echo id) …")
 
     exp = None
     if session is not None:
@@ -2532,7 +2655,8 @@ async def admin_login_attempt(
         return False, "login rejected (bad password?)", None
     _audit_finish(session, audit_id, ok=False, outcome="timeout")
     await handle_path_timeout(client, target, route_extra, log=log)
-    log.substep(f"login {n_of}: timeout after {wait_s:.0f}s")
+    if not compact:
+        log.substep(f"login {n_of}: timeout after {wait_s:.0f}s")
     return False, f"login timeout after {wait_s:.0f}s", None
 
 

@@ -216,9 +216,11 @@ rolled and written back to the book. `public: true` pushes site name (or
 
 Always also SETs `path.hash.mode` (default 1 = 2-byte), `dutycycle`
 (default 50, stock MeshCore), `ota config autofetch` (default `off`; missing CLI stamps
-done), optional `powersaving` when set in the book. RF sensitivity SETs run first after
-login: `radio.fem.rxgain` (default on), `agc.reset.interval` (default 4), then optional
-`radio.rxgain` when the book sets it (`board: heltec-t096`). Missing CLI stamps done.
+done), optional `powersaving`, `hop_retry`, and `hop_retry_ms` when set in the book.
+RF sensitivity SETs run first after login: `radio.fem.rxgain` (default on),
+`agc.reset.interval` (default 4), optional `radio.rxgain` when the book sets it
+(`board: heltec-t096`), then optional `powersaving off/on`, `set hop.retry`, and
+`set hop.retry.ms` before identity or OTA SETs. Missing CLI stamps done.
 Temporary off is firmware `try`. Also SETs a strong book admin
 via `password`, and clock if unset
 or behind (`time` uses the same `--attempts` lane as other SETs; a clock
@@ -229,8 +231,8 @@ the login timestamp or `clock` CLI afterward.
 
 Apply is due when any SET field stamp misses the book desired value
 (stored in sqlite `applies` per field: name, lat, lon, advert, flood,
-guest, admin, path_hash, dutycycle, ota_autofetch, powersaving, fem_rxgain,
-agc_reset_interval, rxgain, acl, identity). A successful
+guest, admin, path_hash, dutycycle, ota_autofetch, powersaving, hop_retry,
+hop_retry_ms, fem_rxgain, agc_reset_interval, rxgain, acl, identity). A successful
 [`onboard`](onboard.md) stamps those fields so a new private unit is not
 due for a first mesh apply. `--full-sync` or **Deploy** clears field
 stamps and re-SETs everything (full-sync skips audit GETs on that pass).
@@ -246,7 +248,8 @@ gets no response, apply aborts for that unit (no lat/lon/guest/…). Clock
 is the exception: retries, then continues to the identity advert.
 
 Hashed: public/name/gps/adverts, guest + admin (tokens), identity pubkey,
-path.hash, dutycycle, ota_autofetch, powersaving, fem_rxgain, rxgain, resolved ACL (pubkey + perm). Not hashed / not pushed here:
+path.hash, dutycycle, ota_autofetch, powersaving, hop_retry, hop_retry_ms, fem_rxgain,
+rxgain, resolved ACL (pubkey + perm). Not hashed / not pushed here:
 identity secret (`roll`), radio preset (onboard), clock.
 
 `trust ben` (admin) updates the book and radio ACL, then stamps the new hash
@@ -272,6 +275,7 @@ list warns that fleet may not get out. Requires companion firmware with
 | `--unit KEY` | One unit (repeatable) |
 | `--full-sync` | Deploy profile plus periodic/inventory GETs (no audit GETs on same pass) |
 | `--refresh-paths` | Clear companion cached hop paths for all poll targets before work (operator moved; next login floods to rediscover) |
+| `--force-path HOPS` | Pin companion `out_path` to comma-separated hop hashes (e.g. `EA6E,E9BD,C458`). Overrides flood/path discovery for this run; stale-cache discard is disabled while pinned |
 | `--live` | Periodic GET only (status/telemetry/neighbors) |
 | `--no-discover` | GET neighbor table without remote `discover.neighbors` |
 | `--discover-wait SEC` | Listen after discover (default 12; timer job, radio idle) |

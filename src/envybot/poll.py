@@ -91,6 +91,8 @@ _STAGE_LABELS = {
     "apply:dutycycle": "Setting duty cycle",
     "apply:ota_autofetch": "Setting OTA autofetch",
     "apply:powersaving": "Setting powersaving",
+    "apply:hop_retry": "Setting hop retry",
+    "apply:hop_retry_ms": "Setting hop retry ms",
     "apply:fem_rxgain": "Setting FEM RX gain",
     "apply:agc_reset_interval": "Setting AGC reset interval",
     "apply:rxgain": "Setting radio RX gain",

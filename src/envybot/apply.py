@@ -85,6 +85,9 @@ APPLY_FIELDS = (
     "fem_rxgain",
     "agc_reset_interval",
     "rxgain",
+    "powersaving",
+    "hop_retry",
+    "hop_retry_ms",
     "name",
     "lat",
     "lon",
@@ -97,10 +100,14 @@ APPLY_FIELDS = (
     "path_hash",
     "dutycycle",
     "ota_autofetch",
-    "powersaving",
     "acl",
     "identity",
 )
+
+HOP_RETRY_MIN = 0
+HOP_RETRY_MAX = 5
+HOP_RETRY_MS_MIN = 200
+HOP_RETRY_MS_MAX = 10000
 
 def desired_path_hash_mode(node: dict[str, Any]) -> int:
     val = node.get("path_hash_mode")
@@ -146,6 +153,26 @@ def desired_powersaving(node: dict[str, Any]) -> bool | None:
     if "powersaving" not in node:
         return None
     return _parse_optional_bool(node.get("powersaving"))
+
+
+def desired_hop_retry(node: dict[str, Any]) -> int | None:
+    """None unless the book sets ``hop_retry`` (0-5)."""
+    if "hop_retry" not in node:
+        return None
+    val = _opt_int(node.get("hop_retry"))
+    if val is None:
+        return None
+    return max(HOP_RETRY_MIN, min(HOP_RETRY_MAX, val))
+
+
+def desired_hop_retry_ms(node: dict[str, Any]) -> int | None:
+    """None unless the book sets ``hop_retry_ms`` (200-10000)."""
+    if "hop_retry_ms" not in node:
+        return None
+    val = _opt_int(node.get("hop_retry_ms"))
+    if val is None:
+        return None
+    return max(HOP_RETRY_MS_MIN, min(HOP_RETRY_MS_MAX, val))
 
 
 def desired_fem_rxgain(node: dict[str, Any]) -> bool:
@@ -295,6 +322,12 @@ def profile_parts(
     powersaving = desired_powersaving(node)
     if powersaving is not None:
         parts["powersaving"] = powersaving
+    hop_retry = desired_hop_retry(node)
+    if hop_retry is not None:
+        parts["hop_retry"] = hop_retry
+    hop_retry_ms = desired_hop_retry_ms(node)
+    if hop_retry_ms is not None:
+        parts["hop_retry_ms"] = hop_retry_ms
     rxgain = rxgain_apply_enabled(node)
     if rxgain is not None:
         parts["rxgain"] = rxgain

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from envybot.routing import ForcedPath
 from envybot.apply import (
     applicable_field_desireds,
     apply_due_fields,
@@ -17,6 +18,8 @@ from envybot.apply import (
     desired_agc_reset_interval,
     desired_dutycycle,
     desired_fem_rxgain,
+    desired_hop_retry,
+    desired_hop_retry_ms,
     desired_ota_autofetch,
     desired_path_hash_mode,
     desired_powersaving,
@@ -87,6 +90,7 @@ from envybot.radio import (
     PollResult,
     RouterTarget,
     admin_login_attempt,
+    attempt_label,
     binary_req_once,
     cli_error_reply,
     cli_suggests_auth_failure,
@@ -110,6 +114,8 @@ from envybot.radio import (
     OtaAutofetchUnsupported,
     set_agc_reset_interval_policy,
     set_fem_rxgain_policy,
+    set_hop_retry_ms_policy,
+    set_hop_retry_policy,
     set_ota_autofetch_policy,
     set_path_hash_policy,
     push_flood_advert,
@@ -124,11 +130,14 @@ except ImportError:  # pragma: no cover
     MeshCore = Any  # type: ignore[misc,assignment]
 
 
-# RF sensitivity first so multihop apply hears replies before identity SETs.
+# RF sensitivity first; powersaving + hop.retry early so multihop apply hears replies.
 APPLY_FIELD_ORDER = (
     "fem_rxgain",
     "agc_reset_interval",
     "rxgain",
+    "powersaving",
+    "hop_retry",
+    "hop_retry_ms",
     "name",
     "lat",
     "lon",
@@ -141,7 +150,6 @@ APPLY_FIELD_ORDER = (
     "path_hash",
     "dutycycle",
     "ota_autofetch",
-    "powersaving",
     "acl",
 )
 
@@ -167,6 +175,7 @@ class WorkerContext:
     do_poll: bool
     do_apply: bool
     max_attempts: int = 10
+    force_path: ForcedPath | None = None
 
 
 @dataclass
@@ -841,7 +850,9 @@ async def execute_job(
     route_extra = uq.session_extra
 
     if job.kind == "login":
-        with ctx.log.phase("login"):
+        compact = attempt_num > 1
+        if compact:
+            ctx.log.step(f"login {attempt_label(attempt_num, attempt_cap)}")
             ok, err, clock = await admin_login_attempt(
                 ctx.client,
                 target,
@@ -851,7 +862,20 @@ async def execute_job(
                 attempt_num=attempt_num,
                 attempt_cap=attempt_cap,
                 route_extra=route_extra,
+                compact=True,
             )
+        else:
+            with ctx.log.phase("login"):
+                ok, err, clock = await admin_login_attempt(
+                    ctx.client,
+                    target,
+                    login_timeout=ctx.login_timeout,
+                    session=ctx.session,
+                    log=ctx.log,
+                    attempt_num=attempt_num,
+                    attempt_cap=attempt_cap,
+                    route_extra=route_extra,
+                )
         if ok:
             acc.node_clock = clock
             uq.session_extra["login_clock"] = clock
@@ -1465,6 +1489,20 @@ async def _execute_apply(
             ctx.client, target, cmd_timeout=ctx.cmd_timeout, attempts=1,
             log=ctx.log, session=ctx.session,
             enabled=desired_powersaving(node),
+            attempt_num=attempt_num, attempt_cap=attempt_cap,
+        ) is not None else "timeout"
+    elif field == "hop_retry":
+        send = "ok" if await set_hop_retry_policy(
+            ctx.client, target, cmd_timeout=ctx.cmd_timeout, attempts=1,
+            log=ctx.log, session=ctx.session,
+            count=desired_hop_retry(node),
+            attempt_num=attempt_num, attempt_cap=attempt_cap,
+        ) is not None else "timeout"
+    elif field == "hop_retry_ms":
+        send = "ok" if await set_hop_retry_ms_policy(
+            ctx.client, target, cmd_timeout=ctx.cmd_timeout, attempts=1,
+            log=ctx.log, session=ctx.session,
+            ms=desired_hop_retry_ms(node),
             attempt_num=attempt_num, attempt_cap=attempt_cap,
         ) is not None else "timeout"
     elif field == "fem_rxgain":

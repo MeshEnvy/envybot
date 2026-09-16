@@ -41,7 +41,7 @@ from envybot.nodes_doc import (
     load_sites_for_book,
     sync_book,
 )
-from envybot.routing import resolve_routing, routing_explicit
+from envybot.routing import parse_force_path, resolve_routing, routing_explicit
 from envybot.poll import (
     PollPolicy,
     due_groups,
@@ -359,6 +359,14 @@ async def run(args: argparse.Namespace) -> int:
     session.attach_orphan_watch(client, log)
     session.enable_companion_recovery(client, all_targets)
 
+    force_path = None
+    if args.force_path:
+        try:
+            force_path = parse_force_path(args.force_path)
+        except ValueError as exc:
+            print(f"error: invalid --force-path: {exc}", file=sys.stderr)
+            return 2
+
     worker_ctx = WorkerContext(
         client=client,
         conn=conn,
@@ -375,7 +383,8 @@ async def run(args: argparse.Namespace) -> int:
         skip_discover=args.no_discover,
         do_poll=do_poll,
         do_apply=do_apply,
-        max_attempts=args.attempts or 10,
+        max_attempts=args.attempts,
+        force_path=force_path,
     )
     worker_ctx.skip_discover = args.no_discover
 
@@ -617,7 +626,9 @@ async def run(args: argparse.Namespace) -> int:
             if not args.quiet and outcome == JobOutcome.TIMEOUT:
                 still = job_still_queued(uq, job)
                 if still and uq.jobs[0].kind == job.kind:
-                    if payload:
+                    if is_login_job(job):
+                        pass
+                    elif payload:
                         print(f"  retrying: {payload}")
                     elif scheduler.max_attempts:
                         print(
@@ -695,6 +706,8 @@ async def run(args: argparse.Namespace) -> int:
                 session_states[uq.target.key] = {"state": "paused"}
             return JobOutcome.HARD_FAIL, "paused"
         uq.session_extra["force_apply"] = args.full_sync or uq.manual_job == "deploy"
+        if worker_ctx.force_path is not None:
+            uq.session_extra["forced_path"] = worker_ctx.force_path.to_extra()
         return await execute_job(job, uq, worker_ctx)
 
     async def pause_watch() -> None:
@@ -911,6 +924,12 @@ def main(argv: list[str] | None = None) -> int:
         "--refresh-paths",
         action="store_true",
         help="Clear stale companion hop cache before poll/apply (use after moving)",
+    )
+    parser.add_argument(
+        "--force-path",
+        metavar="HOPS",
+        help="Pin companion out_path to comma-separated hop hashes "
+        "(e.g. EA6E,E9BD,C458,D709,04E2,1FD6). Overrides flood/path discovery for this run.",
     )
     parser.add_argument("--live", action="store_true", help="Periodic GET groups only")
     parser.add_argument(

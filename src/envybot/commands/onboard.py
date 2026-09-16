@@ -37,6 +37,8 @@ from envybot.apply import (
     desired_agc_reset_interval,
     desired_fem_rxgain,
     desired_ota_autofetch,
+    desired_hop_retry,
+    desired_hop_retry_ms,
     desired_powersaving,
     desired_rxgain,
     stamp_profile_after_onboard,
@@ -770,6 +772,50 @@ def apply_powersaving_policy(
     return True
 
 
+def apply_hop_retry_policy(
+    cli: RepeaterSerial,
+    node: dict[str, Any] | None,
+    *,
+    force: bool,
+) -> bool:
+    """``set hop.retry`` when the book sets it."""
+    want = desired_hop_retry(node or {})
+    if want is None:
+        return False
+    got = parse_int_get_value(cli.cmd("get hop.retry"))
+    return apply_if_needed(
+        cli,
+        step="set hop.retry",
+        already=got == want,
+        setter=f"set hop.retry {want}",
+        verify=lambda: parse_int_get_value(cli.cmd("get hop.retry")) == want,
+        ok_label=str(want),
+        force=force,
+    )
+
+
+def apply_hop_retry_ms_policy(
+    cli: RepeaterSerial,
+    node: dict[str, Any] | None,
+    *,
+    force: bool,
+) -> bool:
+    """``set hop.retry.ms`` when the book sets it."""
+    want = desired_hop_retry_ms(node or {})
+    if want is None:
+        return False
+    got = parse_int_get_value(cli.cmd("get hop.retry.ms"))
+    return apply_if_needed(
+        cli,
+        step="set hop.retry.ms",
+        already=got == want,
+        setter=f"set hop.retry.ms {want}",
+        verify=lambda: parse_int_get_value(cli.cmd("get hop.retry.ms")) == want,
+        ok_label=f"{want} ms",
+        force=force,
+    )
+
+
 def apply_fem_rxgain_policy(
     cli: RepeaterSerial,
     node: dict[str, Any] | None,
@@ -920,6 +966,12 @@ def onboard(
 
     print("4b. powersaving …")
     apply_powersaving_policy(cli, node, force=force)
+
+    print("4b1. hop.retry …")
+    apply_hop_retry_policy(cli, node, force=force)
+
+    print("4b2. hop.retry.ms …")
+    apply_hop_retry_ms_policy(cli, node, force=force)
 
     print("4c. fem.rxgain …")
     apply_fem_rxgain_policy(cli, node, force=force)

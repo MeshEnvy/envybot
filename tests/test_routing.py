@@ -7,9 +7,11 @@ import unittest
 from envybot.routing import (
     RouteSession,
     RoutingMode,
+    forced_path_from_extra,
     has_cached_route,
     live_route_from_audit_path,
     live_route_from_contact,
+    parse_force_path,
     resolve_routing,
     routing_explicit,
 )
@@ -73,6 +75,27 @@ class LiveRouteTests(unittest.TestCase):
         assert live is not None
         self.assertEqual(live["kind"], "hops")
         self.assertEqual(live["label"], "514e fe3b")
+
+
+class ForcePathTests(unittest.TestCase):
+    def test_parse_comma_separated(self) -> None:
+        forced = parse_force_path("EA6E,E9BD,C458,D709,04E2,1FD6")
+        assert forced is not None
+        self.assertEqual(forced.hops, ("ea6e", "e9bd", "c458", "d709", "04e2", "1fd6"))
+        self.assertEqual(forced.path_hex, "ea6ee9bdc458d70904e21fd6")
+        self.assertEqual(forced.hash_mode, 1)
+
+    def test_round_trip_extra(self) -> None:
+        forced = parse_force_path("a1b2 c3d4")
+        assert forced is not None
+        extra = {"forced_path": forced.to_extra()}
+        restored = forced_path_from_extra(extra)
+        assert restored is not None
+        self.assertEqual(restored, forced)
+
+    def test_invalid_hop_length(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_force_path("ea6,e9bd")
 
 
 class RouteSessionTests(unittest.TestCase):

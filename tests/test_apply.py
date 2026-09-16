@@ -13,6 +13,8 @@ from envybot.apply import (
     desired_agc_reset_interval,
     desired_fem_rxgain,
     desired_ota_autofetch,
+    desired_hop_retry,
+    desired_hop_retry_ms,
     desired_powersaving,
     desired_rxgain,
     format_apply_plan,
@@ -160,11 +162,15 @@ class ProfileTests(unittest.TestCase):
     def test_optional_power_prefs_omitted_until_set(self) -> None:
         parts = profile_parts(_STRONG, None)
         self.assertNotIn("powersaving", parts)
+        self.assertNotIn("hop_retry", parts)
+        self.assertNotIn("hop_retry_ms", parts)
         self.assertNotIn("rxgain", parts)
         self.assertTrue(parts["fem_rxgain"])
         self.assertEqual(parts["agc_reset_interval"], 4)
         self.assertEqual(_id(_STRONG), _id({**_STRONG}))
         self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "powersaving": True}))
+        self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "hop_retry": 2}))
+        self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "hop_retry_ms": 1500}))
         self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "fem_rxgain": False}))
         self.assertNotEqual(_id(_STRONG), _id({**_STRONG, "agc_reset_interval": 8}))
         self.assertEqual(_id(_STRONG), _id({**_STRONG, "rxgain": False}))
@@ -185,6 +191,27 @@ class ProfileTests(unittest.TestCase):
         self.assertTrue(desired_powersaving({**_STRONG, "powersaving": True}))
         self.assertTrue(desired_powersaving({**_STRONG, "powersaving": "on"}))
         self.assertFalse(desired_powersaving({**_STRONG, "powersaving": "off"}))
+
+    def test_desired_hop_retry_optional(self) -> None:
+        self.assertIsNone(desired_hop_retry({}))
+        self.assertEqual(desired_hop_retry({**_STRONG, "hop_retry": 2}), 2)
+        self.assertEqual(desired_hop_retry({**_STRONG, "hop_retry": 9}), 5)
+        self.assertIsNone(desired_hop_retry({**_STRONG, "hop_retry": "bogus"}))
+
+    def test_desired_hop_retry_ms_optional(self) -> None:
+        self.assertIsNone(desired_hop_retry_ms({}))
+        self.assertEqual(desired_hop_retry_ms({**_STRONG, "hop_retry_ms": 1500}), 1500)
+        self.assertEqual(desired_hop_retry_ms({**_STRONG, "hop_retry_ms": 50}), 200)
+        self.assertIsNone(desired_hop_retry_ms({**_STRONG, "hop_retry_ms": "bogus"}))
+
+    def test_hop_retry_in_parts(self) -> None:
+        parts = profile_parts(
+            {**_STRONG, "hop_retry": 2, "hop_retry_ms": 1500, "powersaving": False},
+            None,
+        )
+        self.assertFalse(parts["powersaving"])
+        self.assertEqual(parts["hop_retry"], 2)
+        self.assertEqual(parts["hop_retry_ms"], 1500)
 
     def test_desired_fem_rxgain_alias(self) -> None:
         self.assertTrue(desired_fem_rxgain({}))

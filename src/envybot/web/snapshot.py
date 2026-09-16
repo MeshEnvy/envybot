@@ -69,6 +69,8 @@ SessionState = str  # idle | queued | refreshing | pulling | deploying | polling
 
 RADIO_PREF_FIELDS = (
     ("powersaving", "Power saving"),
+    ("hop_retry", "Hop retry"),
+    ("hop_retry_ms", "Hop retry ms"),
     ("fem_rxgain", "FEM LNA"),
     ("agc_reset_interval", "AGC reset"),
     ("rxgain", "SX1262 boost"),
