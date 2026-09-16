@@ -841,16 +841,17 @@ async def execute_job(
     route_extra = uq.session_extra
 
     if job.kind == "login":
-        ok, err, clock = await admin_login_attempt(
-            ctx.client,
-            target,
-            login_timeout=ctx.login_timeout,
-            session=ctx.session,
-            log=ctx.log,
-            attempt_num=attempt_num,
-            attempt_cap=attempt_cap,
-            route_extra=route_extra,
-        )
+        with ctx.log.phase("login"):
+            ok, err, clock = await admin_login_attempt(
+                ctx.client,
+                target,
+                login_timeout=ctx.login_timeout,
+                session=ctx.session,
+                log=ctx.log,
+                attempt_num=attempt_num,
+                attempt_cap=attempt_cap,
+                route_extra=route_extra,
+            )
         if ok:
             acc.node_clock = clock
             uq.session_extra["login_clock"] = clock
@@ -1077,7 +1078,9 @@ async def execute_job(
         return await _execute_get_cli(job, uq, ctx, group, attempt_num, attempt_cap)
 
     if job.kind.startswith("apply:"):
-        return await _execute_apply(job, uq, ctx, node, attempt_num)
+        field = job.kind.split(":", 1)[1]
+        with ctx.log.phase(f"apply {field}"):
+            return await _execute_apply(job, uq, ctx, node, attempt_num)
 
     return JobOutcome.HARD_FAIL, f"unknown job {job.kind}"
 
@@ -1296,7 +1299,7 @@ async def _execute_apply(
 
     if field == "push_advert":
         if not uq.session_extra.pop("apply_identity_changed", False):
-            ctx.log.step("push_advert: skip (identity unchanged)")
+            ctx.log.substep("push_advert: skip (identity unchanged)")
             return JobOutcome.HEARD, "skip"
         attempt_cap = _attempt_cap(ctx, job)
         sent = await push_flood_advert(
@@ -1315,7 +1318,7 @@ async def _execute_apply(
 
     due = due_fields()
     if field not in due and field != "clock":
-        ctx.log.step(f"{field}: skip (synced)")
+        ctx.log.substep(f"{field}: skip (synced)")
         return JobOutcome.HEARD, "skip"
 
     if field == "clock":
@@ -1350,7 +1353,7 @@ async def _execute_apply(
         if bind:
             name_log = format_apply_name_log(target.key, node, ctx.sites, doc=ctx.doc)
             if name_log:
-                ctx.log.step(name_log)
+                ctx.log.substep(name_log)
         send = await _set_cli(
             ctx.client, target, f"set name {name}",
             cmd_timeout=ctx.cmd_timeout, attempts=1, log=ctx.log, session=ctx.session,
@@ -1362,7 +1365,7 @@ async def _execute_apply(
                 node, ctx.sites, key=target.key, doc=ctx.doc
             )
             if audit:
-                ctx.log.step(format_apply_position_log(audit))
+                ctx.log.substep(format_apply_position_log(audit))
         pos = resolve_public_apply_position(node, ctx.sites, key=target.key, doc=ctx.doc) if bind else None
         val = float(pos["lat"]) if pos else 0.0
         send = "ok" if await set_book_coord(
@@ -1453,7 +1456,7 @@ async def _execute_apply(
                 attempt_num=attempt_num, attempt_cap=attempt_cap,
             )
         except OtaAutofetchUnsupported:
-            ctx.log.step("ota autofetch: skip (unsupported)")
+            ctx.log.substep("ota autofetch: skip (unsupported)")
             send = "ok"
         else:
             send = "ok" if applied is not None else "timeout"
@@ -1473,7 +1476,7 @@ async def _execute_apply(
                 attempt_num=attempt_num, attempt_cap=attempt_cap,
             )
         except FemRxgainUnsupported:
-            ctx.log.step("fem.rxgain: skip (unsupported)")
+            ctx.log.substep("fem.rxgain: skip (unsupported)")
             send = "ok"
         else:
             send = "ok" if applied is not None else "timeout"
@@ -1486,7 +1489,7 @@ async def _execute_apply(
                 attempt_num=attempt_num, attempt_cap=attempt_cap,
             )
         except AgcResetUnsupported:
-            ctx.log.step("agc.reset: skip (unsupported)")
+            ctx.log.substep("agc.reset: skip (unsupported)")
             send = "ok"
         else:
             send = "ok" if applied is not None else "timeout"
@@ -1499,7 +1502,7 @@ async def _execute_apply(
                 attempt_num=attempt_num, attempt_cap=attempt_cap,
             )
         except FemRxgainUnsupported:
-            ctx.log.step("radio.rxgain: skip (unsupported)")
+            ctx.log.substep("radio.rxgain: skip (unsupported)")
             send = "ok"
         else:
             send = "ok" if applied is not None else "timeout"
@@ -1507,7 +1510,7 @@ async def _execute_apply(
         try:
             want = resolve_node_acl(ctx.doc, node, ctx.keys or {})
         except UnknownPerson as exc:
-            ctx.log.step(f"acl: unknown person {exc}")
+            ctx.log.substep(f"acl: unknown person {exc}")
             want = []
         if not want:
             return JobOutcome.HEARD, None
@@ -1556,7 +1559,7 @@ async def _execute_apply(
     if send == "timeout":
         return JobOutcome.TIMEOUT, field
 
-    ctx.log.step(f"apply aborted: {field}")
+    ctx.log.substep(f"apply aborted: {field}")
     return JobOutcome.HARD_FAIL, field
 
 

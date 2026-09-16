@@ -5,11 +5,27 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from envybot.radio import CompanionCandidate, companion_candidate_display, pick_companion
+from envybot.radio import (
+    CompanionCandidate,
+    companion_candidate_display,
+    pick_companion,
+    select_companion_by_hint,
+)
 
 
-def _cand(label: str) -> CompanionCandidate:
-    return CompanionCandidate(transport="ble", label=label, ble_address=label)
+def _cand(
+    label: str,
+    *,
+    pubkey_hex: str | None = None,
+    keys_person: str | None = None,
+) -> CompanionCandidate:
+    return CompanionCandidate(
+        transport="ble",
+        label=label,
+        ble_address=label,
+        pubkey_hex=pubkey_hex,
+        keys_person=keys_person,
+    )
 
 
 class CompanionDisplayTests(unittest.TestCase):
@@ -42,6 +58,29 @@ class PickCompanionTests(unittest.TestCase):
         with patch("sys.stdin.isatty", return_value=False):
             with self.assertRaises(SystemExit) as ctx:
                 pick_companion([a, b])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_hint_pubkey_prefix(self) -> None:
+        a = _cand("BLE a", pubkey_hex="3355e0fc" + "0" * 56)
+        b = _cand("BLE b", pubkey_hex="aabbccdd" + "0" * 56)
+        self.assertIs(pick_companion([a, b], hint="3355"), a)
+
+    def test_hint_keys_person_slug(self) -> None:
+        a = _cand("BLE a", pubkey_hex="3355" + "0" * 60, keys_person="ben")
+        b = _cand("BLE b", pubkey_hex="aabb" + "0" * 60, keys_person="yuki")
+        self.assertIs(pick_companion([a, b], hint="ben"), a)
+
+    def test_hint_ambiguous_pubkey_exits(self) -> None:
+        a = _cand("BLE a", pubkey_hex="3355aa" + "0" * 58)
+        b = _cand("BLE b", pubkey_hex="3355bb" + "0" * 58)
+        with self.assertRaises(SystemExit) as ctx:
+            select_companion_by_hint([a, b], "3355")
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_hint_unknown_pubkey_exits(self) -> None:
+        a = _cand("BLE a", pubkey_hex="3355" + "0" * 60)
+        with self.assertRaises(SystemExit) as ctx:
+            select_companion_by_hint([a], "dead")
         self.assertEqual(ctx.exception.code, 2)
 
 

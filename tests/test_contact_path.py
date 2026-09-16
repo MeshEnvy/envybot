@@ -13,7 +13,7 @@ from envybot.radio import (
     RouterTarget,
     contact_out_path_label,
     contact_route_audit_label,
-    contact_route_display_label,
+    contact_route_hop_labels,
     log_contact_path,
     PollLog,
     prepare_login_route,
@@ -76,8 +76,11 @@ class ContactOutPathTests(unittest.TestCase):
             def step(self, msg: str) -> None:
                 lines.append(msg)
 
+            def substep(self, msg: str) -> None:
+                lines.append(f"    {msg}")
+
         log_contact_path(client, _target(), log=CaptureLog())
-        self.assertEqual(lines, ["path: 266a → b3b3"])
+        self.assertEqual(lines, ["path:", "    266a", "    → b3b3"])
 
     def test_log_flood_when_no_path(self) -> None:
         client = MagicMock()
@@ -112,8 +115,8 @@ class ContactOutPathTests(unittest.TestCase):
             return known.get(token)
 
         client.get_contact_by_key_prefix.side_effect = lookup
-        label = contact_route_display_label(client, contact)
-        self.assertEqual(label, "Alpha (266a) → Bravo (b3b3)")
+        labels = contact_route_hop_labels(client, contact)
+        self.assertEqual(labels, ["Alpha (266a)", "Bravo (b3b3)"])
 
 
 class PrepareRouteTests(unittest.IsolatedAsyncioTestCase):

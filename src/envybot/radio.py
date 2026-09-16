@@ -9,8 +9,9 @@ import re
 import sqlite3
 import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Awaitable, Callable, Iterator, Literal
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1059,14 +1060,14 @@ async def sync_repeater_clock(
     kind = classify_clock_sync(text)
     if kind:
         if kind == "set":
-            log.step(f"clock set OK (time {now})")
+            log.substep(f"clock set OK (time {now})")
         else:
-            log.step("clock set: refused (valid; firmware will not go backwards)")
+            log.substep("clock set: refused (valid; firmware will not go backwards)")
         return kind
     if text:
-        log.step(f"clock set failed: {text.strip()[:80]}")
+        log.substep(f"clock set failed: {text.strip()[:80]}")
         return "error"
-    log.step("clock set failed: no response")
+    log.substep("clock set failed: no response")
     return "timeout"
 
 
@@ -1096,15 +1097,15 @@ async def set_path_hash_policy(
         attempt_cap=attempt_cap,
     )
     if raw is None:
-        log.step("path.hash: no response")
+        log.substep("path.hash: no response")
         return None
     if cli_unknown_reply(raw):
-        log.step("path.hash: unsupported")
+        log.substep("path.hash: unsupported")
         return None
     if cli_error_reply(raw) or not cli_set_ok(raw):
-        log.step(f"path.hash: set failed ({raw.strip()[:40]})")
+        log.substep(f"path.hash: set failed ({raw.strip()[:40]})")
         return None
-    log.step(f"path.hash set OK ({want} = {want + 1}-byte)")
+    log.substep(f"path.hash set OK ({want} = {want + 1}-byte)")
     return want
 
 
@@ -1164,12 +1165,12 @@ async def set_powersaving_policy(
         attempt_cap=attempt_cap,
     )
     if raw is None:
-        log.step("powersaving: no response")
+        log.substep("powersaving: no response")
         return None
     if not _cli_on_off_ok(raw, enabled):
-        log.step(f"powersaving: set failed ({raw.strip()[:40]})")
+        log.substep(f"powersaving: set failed ({raw.strip()[:40]})")
         return None
-    log.step(f"powersaving set OK ({word})")
+    log.substep(f"powersaving set OK ({word})")
     return enabled
 
 
@@ -1201,14 +1202,14 @@ async def set_fem_rxgain_policy(
         attempt_cap=attempt_cap,
     )
     if raw is None:
-        log.step("fem.rxgain: no response")
+        log.substep("fem.rxgain: no response")
         return None
     if fem_rxgain_cli_missing(raw):
         raise FemRxgainUnsupported()
     if cli_error_reply(raw) or not cli_set_ok(raw):
-        log.step(f"fem.rxgain: set failed ({raw.strip()[:40]})")
+        log.substep(f"fem.rxgain: set failed ({raw.strip()[:40]})")
         return None
-    log.step(f"fem.rxgain set OK ({word})")
+    log.substep(f"fem.rxgain set OK ({word})")
     return enabled
 
 
@@ -1240,14 +1241,14 @@ async def set_rxgain_policy(
         attempt_cap=attempt_cap,
     )
     if raw is None:
-        log.step("radio.rxgain: no response")
+        log.substep("radio.rxgain: no response")
         return None
     if fem_rxgain_cli_missing(raw):
         raise FemRxgainUnsupported()
     if cli_error_reply(raw) or not cli_set_ok(raw):
-        log.step(f"radio.rxgain: set failed ({raw.strip()[:40]})")
+        log.substep(f"radio.rxgain: set failed ({raw.strip()[:40]})")
         return None
-    log.step(f"radio.rxgain set OK ({word})")
+    log.substep(f"radio.rxgain set OK ({word})")
     return enabled
 
 
@@ -1275,12 +1276,12 @@ async def push_flood_advert(
         attempt_cap=attempt_cap,
     )
     if raw is None:
-        log.step("push_advert: no response")
+        log.substep("push_advert: no response")
         return None
     if cli_error_reply(raw):
-        log.step(f"push_advert: failed ({raw.strip()[:40]})")
+        log.substep(f"push_advert: failed ({raw.strip()[:40]})")
         return False
-    log.step("push_advert: flood advert sent")
+    log.substep("push_advert: flood advert sent")
     return True
 
 
@@ -1312,15 +1313,15 @@ async def set_agc_reset_interval_policy(
         attempt_cap=attempt_cap,
     )
     if raw is None:
-        log.step("agc.reset: no response")
+        log.substep("agc.reset: no response")
         return None
     if cli_unknown_reply(raw) or fem_rxgain_cli_missing(raw):
-        log.step("agc.reset: unsupported")
+        log.substep("agc.reset: unsupported")
         raise AgcResetUnsupported()
     if cli_error_reply(raw) or not cli_set_ok(raw):
-        log.step(f"agc.reset: set failed ({raw.strip()[:40]})")
+        log.substep(f"agc.reset: set failed ({raw.strip()[:40]})")
         return None
-    log.step(f"agc.reset set OK ({want})")
+    log.substep(f"agc.reset set OK ({want})")
     return want
 
 
@@ -1353,15 +1354,15 @@ async def set_ota_autofetch_policy(
         attempt_cap=attempt_cap,
     )
     if raw is None:
-        log.step("ota autofetch: no response")
+        log.substep("ota autofetch: no response")
         return None
     if cli_unknown_reply(raw):
-        log.step("ota autofetch: unsupported")
+        log.substep("ota autofetch: unsupported")
         raise OtaAutofetchUnsupported()
     if cli_error_reply(raw) or not cli_set_ok(raw):
-        log.step(f"ota autofetch: set failed ({raw.strip()[:40]})")
+        log.substep(f"ota autofetch: set failed ({raw.strip()[:40]})")
         return None
-    log.step(f"ota autofetch set OK ({want})")
+    log.substep(f"ota autofetch set OK ({want})")
     return want
 
 
@@ -1396,21 +1397,21 @@ async def set_dutycycle_policy(
             attempt_cap=attempt_cap,
         )
         if raw is None:
-            log.step("dutycycle: no response")
+            log.substep("dutycycle: no response")
             return None
         if not cli_unknown_reply(raw):
             if cli_error_reply(raw) or not cli_set_ok(raw):
-                log.step(f"dutycycle: set failed ({raw.strip()[:40]})")
+                log.substep(f"dutycycle: set failed ({raw.strip()[:40]})")
                 return None
             confirmed = parse_dutycycle(raw)
             if confirmed is not None:
-                log.step(f"dutycycle set OK ({confirmed:g}%)")
+                log.substep(f"dutycycle set OK ({confirmed:g}%)")
                 return confirmed
-            log.step(f"dutycycle set OK ({want}%)")
+            log.substep(f"dutycycle set OK ({want}%)")
             return float(want)
-        log.step("dutycycle: unsupported, using af")
+        log.substep("dutycycle: unsupported, using af")
     else:
-        log.step("dutycycle: pre-1.15, using af")
+        log.substep("dutycycle: pre-1.15, using af")
     raw = await send_cmd_sync(
         client,
         target,
@@ -1423,15 +1424,15 @@ async def set_dutycycle_policy(
         attempt_cap=attempt_cap,
     )
     if raw is None:
-        log.step("dutycycle af: no response")
+        log.substep("dutycycle af: no response")
         return None
     if cli_unknown_reply(raw):
-        log.step("dutycycle af: unsupported")
+        log.substep("dutycycle af: unsupported")
         return None
     if cli_error_reply(raw) or not cli_set_ok(raw):
-        log.step(f"dutycycle af: set failed ({raw.strip()[:40]})")
+        log.substep(f"dutycycle af: set failed ({raw.strip()[:40]})")
         return None
-    log.step(f"dutycycle set OK ({want}% via af {af:g})")
+    log.substep(f"dutycycle set OK ({want}% via af {af:g})")
     return float(want)
 
 
@@ -1465,15 +1466,15 @@ async def set_book_coord(
         attempt_cap=attempt_cap,
     )
     if raw is None:
-        log.step(f"{axis}: no response")
+        log.substep(f"{axis}: no response")
         return None
     if cli_unknown_reply(raw):
-        log.step(f"{axis}: unsupported")
+        log.substep(f"{axis}: unsupported")
         return None
     if cli_error_reply(raw) or not cli_set_ok(raw):
-        log.step(f"{axis}: set failed ({raw.strip()[:40]})")
+        log.substep(f"{axis}: set failed ({raw.strip()[:40]})")
         return None
-    log.step(f"{axis} set OK ({want:.5f})")
+    log.substep(f"{axis} set OK ({want:.5f})")
     return want
 
 
@@ -1543,14 +1544,14 @@ async def maybe_sync_repeater_clock(
 
     if login_clock is not None:
         if node_clock_is_unset(login_clock):
-            log.step(f"clock unset ({login_clock}), syncing …")
+            log.substep(f"clock unset ({login_clock}), syncing …")
         else:
             drift = login_clock - now_ts
             if abs(drift) <= CLOCK_SKEW_MAX:
                 return login_clock, "skip"
-            log.step(f"clock drift {format_clock_drift(login_clock, now=now_ts)} (login vs host)")
+            log.substep(f"clock drift {format_clock_drift(login_clock, now=now_ts)} (login vs host)")
             if drift > 0:
-                log.step("clock: node ahead, skip sync (firmware will not go backwards)")
+                log.substep("clock: node ahead, skip sync (firmware will not go backwards)")
                 return login_clock, "skip"
         kind = await sync_repeater_clock(
             client,
@@ -1564,7 +1565,7 @@ async def maybe_sync_repeater_clock(
         )
         return _from_kind(kind, login_clock)
     if stored_clock is not None and node_clock_is_unset(stored_clock):
-        log.step(f"clock unset (stored {stored_clock}), syncing …")
+        log.substep(f"clock unset (stored {stored_clock}), syncing …")
         kind = await sync_repeater_clock(
             client,
             target,
@@ -1591,14 +1592,36 @@ class PollLog:
 
     progress: bool = True
     verbose: bool = False
+    depth: int = 1
+
+    def _pad(self, *, extra: int = 0) -> str:
+        return "  " * (self.depth + extra)
 
     def step(self, msg: str) -> None:
         if self.progress:
-            print(f"  {msg}", flush=True)
+            print(f"{self._pad()}{msg}", flush=True)
+
+    def substep(self, msg: str) -> None:
+        if self.progress:
+            print(f"{self._pad(extra=1)}{msg}", flush=True)
+
+    def indent(self, msg: str, *, spaces: int = 4) -> None:
+        """Fixed-column indent (e.g. path hops under ``path:``)."""
+        if self.progress:
+            print(f"{' ' * spaces}{msg}", flush=True)
+
+    @contextmanager
+    def phase(self, label: str) -> Iterator[PollLog]:
+        self.step(label)
+        self.depth += 1
+        try:
+            yield self
+        finally:
+            self.depth -= 1
 
     def detail(self, msg: str) -> None:
         if self.verbose:
-            print(f"  {msg}", flush=True)
+            print(f"{self._pad()}{msg}", flush=True)
 
 
 def contact_display_name(target: RouterTarget) -> str:
@@ -1630,12 +1653,12 @@ def resolve_hop_label(client: MeshCore, hop: str) -> str:
     return token
 
 
-def contact_route_display_label(client: MeshCore, contact: dict[str, Any] | None) -> str:
-    """Human path for logs: repeater names when companion knows them, else hop hashes."""
+def contact_route_hop_labels(client: MeshCore, contact: dict[str, Any] | None) -> list[str] | None:
+    """Named hop labels for logs. None when route is direct or flood."""
     audit = contact_route_audit_label(contact)
     if audit in ("direct", "flood"):
-        return audit
-    return " → ".join(resolve_hop_label(client, hop) for hop in audit.split())
+        return None
+    return [resolve_hop_label(client, hop) for hop in audit.split()]
 
 
 def log_contact_path(
@@ -1649,7 +1672,14 @@ def log_contact_path(
     """
     log = log or PollLog()
     contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])
-    log.step(f"path: {contact_route_display_label(client, contact)}")
+    hops = contact_route_hop_labels(client, contact)
+    if hops is None:
+        log.step(f"path: {contact_route_audit_label(contact)}")
+        return
+    log.step("path:")
+    for i, label in enumerate(hops):
+        mark = "" if i == 0 else "→ "
+        log.substep(f"{mark}{label}")
 
 
 def _audit_redact(text: str | None, *, max_len: int = 500) -> str | None:
@@ -2175,7 +2205,7 @@ async def handle_path_timeout(
         return
     rs = route_session_from_extra(route_extra)
     if rs.record_timeout(had_cached_route=True):
-        log.step("path stale, discarding cache")
+        log.substep("path stale, discarding cache")
         await reset_to_flood(client, target, log=log)
         rs.reset_failures()
     persist_route_session(route_extra, rs)
@@ -2322,7 +2352,7 @@ async def admin_login(
                     outcome="send_error",
                     error=err,
                 )
-                log.step(f"login {attempt_label(attempt, attempts)}: send error ({err}), retrying …")
+                log.substep(f"login {attempt_label(attempt, attempts)}: send error ({err}), retrying …")
                 continue
             suggested_ms = sent.payload.get("suggested_timeout", 60000)
 
@@ -2339,7 +2369,7 @@ async def admin_login(
             path=path,
             wait_s=wait_s,
         )
-        log.step(f"send login 0x1a {n_of} (≤{wait_s:.0f}s, no echo id) …")
+        log.substep(f"send login 0x1a {n_of} (≤{wait_s:.0f}s, no echo id) …")
         log.detail(
             f"login {n_of}: dst={prefix}…, "
             f"wait={wait_s:.0f}s (suggested={suggested_ms}ms)"
@@ -2368,9 +2398,9 @@ async def admin_login(
             reply = f"clock={node_clock}" if node_clock is not None else "ok"
             _audit_finish(session, audit_id, ok=True, outcome="ok", reply=reply)
             if node_clock is not None:
-                log.step(f"login OK (clock={node_clock})")
+                log.substep(f"login OK (clock={node_clock})")
             else:
-                log.step("login OK")
+                log.substep("login OK")
             log.detail(f"LOGIN_SUCCESS {event.payload if event else ''}")
             if session is not None:
                 session.mark_authed(target.key)
@@ -2379,7 +2409,7 @@ async def admin_login(
             return True, None, node_clock
         if status == "failed":
             _audit_finish(session, audit_id, ok=False, outcome="rejected", reply="rejected")
-            log.step("login rejected")
+            log.substep("login rejected")
             log.detail(f"LOGIN_FAILED {event.payload if event else ''}")
             if session is not None:
                 session.clear_auth(target.key)
@@ -2387,9 +2417,9 @@ async def admin_login(
         _audit_finish(session, audit_id, ok=False, outcome="timeout")
         await handle_path_timeout(client, target, route_extra, log=log)
         if attempts and attempt >= attempts:
-            log.step(f"login {n_of}: timeout after {wait_s:.0f}s")
+            log.substep(f"login {n_of}: timeout after {wait_s:.0f}s")
             break
-        log.step(f"login {n_of}: timeout after {wait_s:.0f}s, retrying …")
+        log.substep(f"login {n_of}: timeout after {wait_s:.0f}s, retrying …")
 
     return False, f"login failed after {attempts} attempts", None
 
@@ -2437,7 +2467,7 @@ async def admin_login_attempt(
                 outcome="send_error",
                 error=err,
             )
-            log.step(f"login {attempt_num}: send error ({err})")
+            log.substep(f"login {attempt_num}: send error ({err})")
             return False, str(err), None
         suggested_ms = sent.payload.get("suggested_timeout", 60000)
 
@@ -2455,7 +2485,7 @@ async def admin_login_attempt(
         path=path,
         wait_s=wait_s,
     )
-    log.step(f"send login 0x1a {n_of} (≤{wait_s:.0f}s, no echo id) …")
+    log.substep(f"send login 0x1a {n_of} (≤{wait_s:.0f}s, no echo id) …")
 
     exp = None
     if session is not None:
@@ -2475,7 +2505,7 @@ async def admin_login_attempt(
         session.resolve_expect(exp)
     if status == "cancelled":
         _audit_finish(session, audit_id, ok=False, outcome="cancelled", error="cancelled")
-        log.step(f"login {n_of}: cancelled")
+        log.substep(f"login {n_of}: cancelled")
         return False, "cancelled", None
     if status == "success":
         node_clock: int | None = None
@@ -2486,9 +2516,9 @@ async def admin_login_attempt(
         reply = f"clock={node_clock}" if node_clock is not None else "ok"
         _audit_finish(session, audit_id, ok=True, outcome="ok", reply=reply)
         if node_clock is not None:
-            log.step(f"login OK (clock={node_clock})")
+            log.substep(f"login OK (clock={node_clock})")
         else:
-            log.step("login OK")
+            log.substep("login OK")
         if session is not None:
             session.mark_authed(target.key)
         await refresh_path_after_login(client, target, log=log, route_extra=route_extra)
@@ -2496,13 +2526,13 @@ async def admin_login_attempt(
         return True, None, node_clock
     if status == "failed":
         _audit_finish(session, audit_id, ok=False, outcome="rejected", reply="rejected")
-        log.step("login rejected")
+        log.substep("login rejected")
         if session is not None:
             session.clear_auth(target.key)
         return False, "login rejected (bad password?)", None
     _audit_finish(session, audit_id, ok=False, outcome="timeout")
     await handle_path_timeout(client, target, route_extra, log=log)
-    log.step(f"login {n_of}: timeout after {wait_s:.0f}s")
+    log.substep(f"login {n_of}: timeout after {wait_s:.0f}s")
     return False, f"login timeout after {wait_s:.0f}s", None
 
 
@@ -2608,7 +2638,7 @@ async def send_cmd_sync(
         attempt = attempt_num if single else attempt + 1
         audit_id: int | None = None
         if session is not None and not await session.ensure_companion_connected(log=log):
-            log.step("send aborted: companion not connected")
+            log.substep("send aborted: companion not connected")
             return None
         prefix_token = next_cli_prefix()
         framed = f"{prefix_token}{cmd}"
@@ -2638,9 +2668,9 @@ async def send_cmd_sync(
                 if session is not None and not client.is_connected:
                     if await session.ensure_companion_connected(log=log):
                         continue
-                    log.step("send aborted: companion not connected")
+                    log.substep("send aborted: companion not connected")
                     return None
-                log.step(
+                log.substep(
                     f"send {framed!r} {attempt_label(attempt, label_cap)}: "
                     f"send error ({err}), retrying …"
                 )
@@ -2662,7 +2692,7 @@ async def send_cmd_sync(
             path=path,
             wait_s=wait_s,
         )
-        log.step(f"send {framed!r} {n_of} (≤{wait_s:.0f}s) …")
+        log.substep(f"send {framed!r} {n_of} (≤{wait_s:.0f}s) …")
         log.detail(f"cli {framed!r} {n_of}: wait {wait_s:.0f}s")
 
         exp = None
@@ -2699,17 +2729,17 @@ async def send_cmd_sync(
             _audit_finish(session, audit_id, ok=True, outcome="ok", reply=text)
             log.detail(f"cli reply {prefix_token}{text[:120]}")
             if not (cli_error_reply(text) or cli_suggests_auth_failure(text)):
-                log.step(format_cli_ok(cmd, text))
+                log.substep(format_cli_ok(cmd, text))
             await handle_path_success(client, target, route_extra)
             return text
         _audit_finish(session, audit_id, ok=False, outcome="timeout")
         if single or (attempts and attempt >= attempts):
-            log.step(f"send {framed!r} {n_of}: timeout after {wait_s:.0f}s")
+            log.substep(f"send {framed!r} {n_of}: timeout after {wait_s:.0f}s")
             break
         await handle_path_timeout(client, target, route_extra, log=log)
         if target.routing is RoutingMode.FLOOD:
             await reset_to_flood(client, target, log=log)
-        log.step(f"send {framed!r} {n_of}: timeout after {wait_s:.0f}s, retrying …")
+        log.substep(f"send {framed!r} {n_of}: timeout after {wait_s:.0f}s, retrying …")
 
     return None
 
@@ -3271,16 +3301,68 @@ def _print_companion_candidates(candidates: list[CompanionCandidate], header: st
         print(f"  {i}. {companion_candidate_display(cand)}", file=sys.stderr)
 
 
-def pick_companion(candidates: list[CompanionCandidate]) -> CompanionCandidate:
+def select_companion_by_hint(
+    candidates: list[CompanionCandidate], hint: str
+) -> CompanionCandidate:
+    """Pick one probed companion by pubkey prefix or keys.yaml person slug."""
+    text = hint.strip()
+    if not text:
+        raise SystemExit("Companion hint is empty")
+    token = text.lower().removeprefix("0x")
+    is_hex = bool(token) and all(ch in "0123456789abcdef" for ch in token)
+    if is_hex:
+        matches = [
+            c
+            for c in candidates
+            if c.pubkey_hex and c.pubkey_hex.lower().startswith(token)
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            _print_companion_candidates(
+                matches,
+                f"Companion hint {token!r} matches multiple devices — use a longer prefix:",
+            )
+            raise SystemExit(2)
+        probed = [c for c in candidates if c.pubkey_hex]
+        _print_companion_candidates(
+            probed or candidates,
+            f"No companion pubkey starts with {token!r}:",
+        )
+        raise SystemExit(2)
+    slug = token
+    matches = [
+        c for c in candidates if c.keys_person and c.keys_person.lower() == slug
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        _print_companion_candidates(
+            matches,
+            f"Companion hint {slug!r} matches multiple devices:",
+        )
+        raise SystemExit(2)
+    raise SystemExit(
+        f"No companion matches keys.yaml person {slug!r}. "
+        "Use a pubkey prefix from the probe list (e.g. 3355 or 3355e0fc8bc8)."
+    )
+
+
+def pick_companion(
+    candidates: list[CompanionCandidate], *, hint: str | None = None
+) -> CompanionCandidate:
     """Return the sole candidate, or prompt on a TTY when several are found."""
     if not candidates:
         raise SystemExit("No companion candidates to pick from")
+    if hint:
+        return select_companion_by_hint(candidates, hint)
     if len(candidates) == 1:
         return candidates[0]
     if not sys.stdin.isatty():
         _print_companion_candidates(
             candidates,
-            "Multiple companions — pass --ble ADDRESS, --serial PORT, or --tcp host:port:",
+            "Multiple companions — pass --companion PUBKEY_PREFIX, --ble ADDRESS, "
+            "--serial PORT, or --tcp host:port:",
         )
         raise SystemExit(2)
     _print_companion_candidates(candidates, "Multiple companions — pick one:")
@@ -3474,7 +3556,7 @@ async def connect_candidate(args: argparse.Namespace, cand: CompanionCandidate) 
         if not ble_list:
             raise SystemExit("No BLE MeshCore companions found (NUS service scan)")
         ble_list = await probe_companion_candidates(args, ble_list)
-        cand = pick_companion(ble_list)
+        cand = pick_companion(ble_list, hint=getattr(args, "companion", None))
 
     print(f"Connecting via {companion_candidate_display(cand)} …")
     client, err = await try_open_companion(
@@ -3548,7 +3630,7 @@ async def connect(args: argparse.Namespace) -> MeshCore:
         )
 
     candidates = await probe_companion_candidates(args, candidates)
-    cand = pick_companion(candidates)
+    cand = pick_companion(candidates, hint=getattr(args, "companion", None))
     print(f"Connecting via {companion_candidate_display(cand)} …")
     client, err = await try_open_companion(
         transport=cand.transport,
@@ -3637,6 +3719,11 @@ def target_label(target: RouterTarget) -> str:
 
 def add_companion_args(parser: argparse.ArgumentParser) -> None:
     """Companion transport + mesh wait flags shared by monitor and cmd."""
+    parser.add_argument(
+        "--companion",
+        metavar="HINT",
+        help="Auto-pick BLE companion by pubkey prefix (e.g. 3355) or keys.yaml person (e.g. ben)",
+    )
     parser.add_argument("--serial", help="Force USB serial companion port (must pass appstart probe)")
     parser.add_argument("--tcp", help="Companion TCP host:port")
     parser.add_argument(

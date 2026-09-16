@@ -46,14 +46,17 @@ Examples:
 
 ## Companion flags
 
-Same as [`fleet`](fleet.md): `--transport`, `--ble`, `--serial`, `--tcp`,
-`--scan-timeout`, `--baud`, `--timeout`, `--login-timeout`, `--attempts`, `-v`.
+Same as [`fleet`](fleet.md): `--companion`, `--transport`, `--ble`, `--serial`,
+`--tcp`, `--scan-timeout`, `--baud`, `--timeout`, `--login-timeout`,
+`--attempts`, `-v`.
 
 When auto-discovery finds more than one companion and stdin is a TTY, envybot
 briefly connects to each tag, lists them with **pubkey prefix** (and `keys.yaml`
-person when known), then prompts `Pick companion [1-N]:`. `./envybot fleet
---probe` shows the same identity lines. Non-interactive runs must pass `--ble
-ADDRESS`, `--serial PORT`, or `--tcp host:port`.
+person when known), then prompts `Pick companion [1-N]:`. Pass
+`--companion HINT` to skip the picker: pubkey hex prefix (e.g. `3355`) or
+`keys.yaml` person slug (e.g. `ben`). `./envybot fleet --probe` shows the same
+identity lines. Non-interactive runs must pass `--companion`, `--ble ADDRESS`,
+`--serial PORT`, or `--tcp host:port`.
 
 | Flag | Default | Meaning |
 |------|---------|---------|

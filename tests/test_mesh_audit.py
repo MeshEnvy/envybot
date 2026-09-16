@@ -200,8 +200,11 @@ class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
             def step(self, msg: str) -> None:
                 lines.append(msg)
 
+            def substep(self, msg: str) -> None:
+                lines.append(f"    {msg}")
+
         log_contact_path(client, target, log=CaptureLog())
-        self.assertEqual(lines, ["path: 266a → b3b3"])
+        self.assertEqual(lines, ["path:", "    266a", "    → b3b3"])
         self.assertEqual(audit_path_at_send(client, target), "266a b3b3")
 
 

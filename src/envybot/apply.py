@@ -498,16 +498,16 @@ async def _set_cli(
         attempt_cap=attempt_cap,
     )
     if raw is None:
-        log.step(f"{field}: no response")
+        log.substep(f"{field}: no response")
         return "timeout"
     if field == "admin":
         ok_reply = cli_admin_password_ok(raw, expected)
     else:
         ok_reply = cli_set_ok(raw)
     if cli_error_reply(raw) or not ok_reply:
-        log.step(f"{field}: set failed ({raw.strip()[:40]})")
+        log.substep(f"{field}: set failed ({raw.strip()[:40]})")
         return "error"
-    log.step(f"{field} set OK")
+    log.substep(f"{field} set OK")
     return "ok"
 
 
@@ -635,6 +635,6 @@ def reconcile_heard(
         return False
     clear_apply_stamps(conn, unit, fields=[field])
     if log is not None:
-        log.step(f"{field}: device != book, re-apply queued")
+        log.substep(f"{field}: device != book, re-apply queued")
     return True
 

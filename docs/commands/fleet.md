@@ -254,8 +254,10 @@ on units that were already profile-synced so fleet does not re-push.
 
 ## Flags
 
-Same companion flags as `cmd` (`--ble`, `--serial`, `--tcp`, `--timeout`,
-`--attempts`, …).
+Same companion flags as `cmd` (`--companion`, `--ble`, `--serial`, `--tcp`,
+`--timeout`, `--attempts`, …). With several BLE devices visible, pass
+`--companion HINT` to skip the interactive picker: a pubkey hex prefix
+(e.g. `3355` or `3355e0fc8bc8`) or a `keys.yaml` person slug (e.g. `ben`).
 
 On companion connect (not `--web-only`), fleet sends a zero-hop repeater
 discover ping (MeshCore app Tools-style `NODE_DISCOVER_REQ`), listens 10s,

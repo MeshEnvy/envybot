@@ -214,7 +214,7 @@ class ApplyTimeoutTests(unittest.IsolatedAsyncioTestCase):
             outcome, payload = await _execute_apply(job, uq, ctx, node, 1)
         self.assertEqual(outcome, JobOutcome.HEARD)
         self.assertEqual(payload, "skip")
-        log.step.assert_called_once_with("advert: skip (synced)")
+        log.substep.assert_called_once_with("advert: skip (synced)")
 
     async def test_fem_rxgain_unsupported_stamps_done(self) -> None:
         target = RouterTarget(
