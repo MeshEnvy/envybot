@@ -54,7 +54,6 @@ from envybot.radio import (
     cli_error_reply,
     cli_set_ok,
     cli_admin_password_ok,
-    maybe_sync_repeater_clock,
     mesh_wait_seconds,
     normalize_acl_payload,
     normalize_ota_autofetch,

@@ -143,6 +143,77 @@ class ApplyFailFastTests(unittest.IsolatedAsyncioTestCase):
             last_ok_apply(conn, "me0001", "identity"), applicable["identity"]
         )
 
+    async def test_clock_timeout_is_retryable(self) -> None:
+        target = RouterTarget(
+            key="me0001",
+            unit_id="ME0001",
+            name="Test",
+            site=None,
+            pubkey_hex="bb" * 32,
+            admin_password="x",
+        )
+        node = {"name": "Test"}
+        job = RadioJob(kind="apply:clock", unit_key="me0001")
+        uq = UnitQueue(target=target, jobs=deque([job]))
+        uq.session_extra["login_clock"] = 1_700_000_000
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = MagicMock(
+                client=MagicMock(),
+                conn=open_history(Path(tmp)),
+                nodes_path=Path(tmp) / "nodes.yaml",
+                nodes={"me0001": node},
+                sites={},
+                doc={"nodes": {"me0001": node}},
+                keys={},
+                session=MagicMock(),
+                log=PollLog(progress=False),
+                cmd_timeout=9.0,
+                max_attempts=10,
+            )
+            with patch(
+                "envybot.fleet_worker.maybe_sync_repeater_clock",
+                new=AsyncMock(return_value=(1_700_000_000, "timeout")),
+            ) as sync:
+                outcome, payload = await _execute_apply(job, uq, ctx, node, 3)
+
+        self.assertEqual(outcome, JobOutcome.TIMEOUT)
+        self.assertEqual(payload, "clock")
+        sync.assert_awaited_once()
+        self.assertEqual(sync.await_args.kwargs["attempt_num"], 3)
+        self.assertEqual(sync.await_args.kwargs["attempt_cap"], 10)
+
+    async def test_scheduler_retries_clock_then_keeps_advert(self) -> None:
+        target = RouterTarget(
+            key="me0001",
+            unit_id="ME0001",
+            name="Test",
+            site=None,
+            pubkey_hex="bb" * 32,
+            admin_password="x",
+        )
+        sched = FleetScheduler(max_attempts=2, retry_delay=0.0)
+        sched.enqueue_jobs(
+            target,
+            [
+                RadioJob(kind="apply:clock", unit_key="me0001"),
+                RadioJob(kind="apply:push_advert", unit_key="me0001"),
+            ],
+        )
+        kinds: list[str] = []
+
+        async def execute(job: RadioJob, uq: UnitQueue) -> tuple[JobOutcome, object | None]:
+            kinds.append(job.kind)
+            if job.kind == "apply:clock":
+                return JobOutcome.TIMEOUT, "clock"
+            return JobOutcome.HEARD, None
+
+        await sched.run(execute, once=True)
+        uq = sched.units["me0001"]
+        self.assertFalse(uq.apply_aborted)
+        self.assertEqual(kinds, ["apply:clock", "apply:clock", "apply:push_advert"])
+        self.assertEqual([j.kind for j in uq.jobs], [])
+
 
 if __name__ == "__main__":
     unittest.main()

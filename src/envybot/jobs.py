@@ -376,7 +376,8 @@ class FleetScheduler:
                 job.future.set_exception(RuntimeError(str(payload or "hard fail")))
             if job.kind.startswith("apply:"):
                 uq.jobs.popleft()
-                drop_remaining_apply(uq)
+                if job.kind != "apply:clock":
+                    drop_remaining_apply(uq)
             elif is_console_job(job):
                 drop_console_jobs(uq, job.extra.get("tab_id"))
             else:
@@ -398,7 +399,7 @@ class FleetScheduler:
                     uq.jobs.clear()
                 elif job.kind == "console:login":
                     drop_console_jobs(uq, job.extra.get("tab_id"))
-                elif job.kind.startswith("apply:"):
+                elif job.kind.startswith("apply:") and job.kind != "apply:clock":
                     extra = drop_remaining_apply(uq)
                     if isinstance(dropped, list):
                         dropped.extend(extra)

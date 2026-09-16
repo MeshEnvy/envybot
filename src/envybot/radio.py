@@ -10,7 +10,7 @@ import sqlite3
 import sys
 import time
 from dataclasses import dataclass, field, replace
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Literal
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1029,6 +1029,9 @@ def classify_clock_sync(text: str | None) -> str | None:
     return None
 
 
+ClockSyncSend = Literal["ok", "skip", "timeout", "error"]
+
+
 async def sync_repeater_clock(
     client: MeshCore,
     target: RouterTarget,
@@ -1037,8 +1040,10 @@ async def sync_repeater_clock(
     attempts: int,
     log: PollLog,
     session: FleetSession | None = None,
-) -> str | None:
-    """Set repeater RTC to host time. Returns ``set``, ``unchanged``, or None."""
+    attempt_num: int | None = None,
+    attempt_cap: int | None = None,
+) -> str:
+    """Set repeater RTC to host time. Returns ``set``, ``unchanged``, ``timeout``, or ``error``."""
     now = int(time.time()) + 1
     text = await send_cmd_sync(
         client,
@@ -1048,6 +1053,8 @@ async def sync_repeater_clock(
         attempts=attempts,
         log=log,
         session=session,
+        attempt_num=attempt_num,
+        attempt_cap=attempt_cap,
     )
     kind = classify_clock_sync(text)
     if kind:
@@ -1058,9 +1065,9 @@ async def sync_repeater_clock(
         return kind
     if text:
         log.step(f"clock set failed: {text.strip()[:80]}")
-    else:
-        log.step("clock set failed: no response")
-    return None
+        return "error"
+    log.step("clock set failed: no response")
+    return "timeout"
 
 
 async def set_path_hash_policy(
@@ -1515,24 +1522,36 @@ async def maybe_sync_repeater_clock(
     attempts: int,
     log: PollLog,
     session: FleetSession | None = None,
-) -> int | None:
+    attempt_num: int | None = None,
+    attempt_cap: int | None = None,
+) -> tuple[int | None, ClockSyncSend]:
     """Sync from a live clock (login timestamp or ``clock`` CLI), or unset stored RTC.
 
     STATUS has uptime only. Stored ``node_clock`` is a last-pull snapshot:
     do not treat its age vs host as skew.
     """
     now_ts = int(time.time())
+
+    def _from_kind(kind: str, fallback: int | None) -> tuple[int | None, ClockSyncSend]:
+        if kind == "set":
+            return now_ts + 1, "ok"
+        if kind == "unchanged":
+            return fallback, "ok"
+        if kind == "timeout":
+            return fallback, "timeout"
+        return fallback, "error"
+
     if login_clock is not None:
         if node_clock_is_unset(login_clock):
             log.step(f"clock unset ({login_clock}), syncing …")
         else:
             drift = login_clock - now_ts
             if abs(drift) <= CLOCK_SKEW_MAX:
-                return login_clock
+                return login_clock, "skip"
             log.step(f"clock drift {format_clock_drift(login_clock, now=now_ts)} (login vs host)")
             if drift > 0:
                 log.step("clock: node ahead, skip sync (firmware will not go backwards)")
-                return login_clock
+                return login_clock, "skip"
         kind = await sync_repeater_clock(
             client,
             target,
@@ -1540,10 +1559,10 @@ async def maybe_sync_repeater_clock(
             attempts=attempts,
             log=log,
             session=session,
+            attempt_num=attempt_num,
+            attempt_cap=attempt_cap,
         )
-        if kind == "set":
-            return now_ts + 1
-        return login_clock
+        return _from_kind(kind, login_clock)
     if stored_clock is not None and node_clock_is_unset(stored_clock):
         log.step(f"clock unset (stored {stored_clock}), syncing …")
         kind = await sync_repeater_clock(
@@ -1553,10 +1572,11 @@ async def maybe_sync_repeater_clock(
             attempts=attempts,
             log=log,
             session=session,
+            attempt_num=attempt_num,
+            attempt_cap=attempt_cap,
         )
-        if kind == "set":
-            return now_ts + 1
-    return None
+        return _from_kind(kind, stored_clock)
+    return None, "skip"
 
 
 CONTACT_FLAG_FAVORITE = 0x01

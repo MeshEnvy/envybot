@@ -1322,7 +1322,8 @@ async def _execute_apply(
         login_clock = uq.session_extra.get("login_clock")
         seen = get_last_seen(ctx.conn, target.key)
         stored = int(seen["node_clock"]) if seen and seen.get("node_clock") is not None else None
-        clock = await maybe_sync_repeater_clock(
+        attempt_cap = _attempt_cap(ctx, job)
+        clock, send = await maybe_sync_repeater_clock(
             ctx.client,
             target,
             login_clock=login_clock,
@@ -1331,7 +1332,13 @@ async def _execute_apply(
             attempts=1,
             log=ctx.log,
             session=ctx.session,
+            attempt_num=attempt_num,
+            attempt_cap=attempt_cap,
         )
+        if send == "timeout":
+            return JobOutcome.TIMEOUT, "clock"
+        if send == "error":
+            return JobOutcome.HARD_FAIL, "clock"
         return JobOutcome.HEARD, clock
 
     bind = site_binding(target.key, node, ctx.sites)

@@ -5,7 +5,13 @@ from __future__ import annotations
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from envybot.radio import PollLog, RouterTarget, fetch_repeater_clock, maybe_admin_access
+from envybot.radio import (
+    PollLog,
+    RouterTarget,
+    fetch_repeater_clock,
+    maybe_admin_access,
+    maybe_sync_repeater_clock,
+)
 
 
 def _target() -> RouterTarget:
@@ -43,6 +49,49 @@ class FetchRepeaterClockTests(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIsNone(ts)
         self.assertTrue(heard)
+
+
+class MaybeSyncRepeaterClockTests(unittest.IsolatedAsyncioTestCase):
+    async def test_timeout_is_not_heard(self) -> None:
+        with (
+            patch("envybot.radio.time.time", return_value=1_789_568_474),
+            patch("envybot.radio.send_cmd_sync", new=AsyncMock(return_value=None)) as send,
+        ):
+            clock, send_kind = await maybe_sync_repeater_clock(
+                MagicMock(),
+                _target(),
+                login_clock=1_789_568_049,
+                stored_clock=None,
+                cmd_timeout=8,
+                attempts=1,
+                log=PollLog(progress=False),
+                attempt_num=1,
+                attempt_cap=10,
+            )
+        send.assert_awaited_once()
+        self.assertEqual(send.await_args.kwargs["attempt_num"], 1)
+        self.assertEqual(send.await_args.kwargs["attempt_cap"], 10)
+        self.assertEqual(clock, 1_789_568_049)
+        self.assertEqual(send_kind, "timeout")
+
+    async def test_in_skew_skips_send(self) -> None:
+        now = 1_789_568_474
+        with (
+            patch("envybot.radio.time.time", return_value=now),
+            patch("envybot.radio.send_cmd_sync", new=AsyncMock()) as send,
+        ):
+            clock, send_kind = await maybe_sync_repeater_clock(
+                MagicMock(),
+                _target(),
+                login_clock=now - 10,
+                stored_clock=None,
+                cmd_timeout=8,
+                attempts=1,
+                log=PollLog(progress=False),
+            )
+        send.assert_not_awaited()
+        self.assertEqual(clock, now - 10)
+        self.assertEqual(send_kind, "skip")
 
 
 class AdminAccessTests(unittest.IsolatedAsyncioTestCase):

@@ -58,6 +58,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- Clock SET (`time`) now retries with `--attempts` like other apply
+  fields. A give-up still runs the identity advert.
+
 - Trust and fleet contact sync drop the old companion record when a
   unit's pubkey changes (same `unit_id` or site name). Bare `Repeater`
   contacts stay. A replaced chip used to leave two ME0051-style rows.

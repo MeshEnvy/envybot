@@ -221,7 +221,8 @@ login: `radio.fem.rxgain` (default on), `agc.reset.interval` (default 4), then o
 `radio.rxgain` when the book sets it (`board: heltec-t096`). Missing CLI stamps done.
 Temporary off is firmware `try`. Also SETs a strong book admin
 via `password`, and clock if unset
-or behind. After apply finishes, if name or GPS changed this pass, fleet sends
+or behind (`time` uses the same `--attempts` lane as other SETs; a clock
+give-up still sends the identity advert). After apply finishes, if name or GPS changed this pass, fleet sends
 `advert` (flood) so the mesh hears the new identity. Password-login every unit before GET or SET (login establishes
 the repeater session and refreshes mesh paths). Live clock comes from
 the login timestamp or `clock` CLI afterward.
@@ -241,7 +242,8 @@ assign. Heard name/GPS/adverts do **not** trigger apply. Edit a hashed field in 
 
 When apply runs, GET ACL once to drop keys not in the book allowlist.
 Each SET is one queued command. Login is the reachability check. If a SET
-gets no response, apply aborts for that unit (no lat/lon/guest/…).
+gets no response, apply aborts for that unit (no lat/lon/guest/…). Clock
+is the exception: retries, then continues to the identity advert.
 
 Hashed: public/name/gps/adverts, guest + admin (tokens), identity pubkey,
 path.hash, dutycycle, ota_autofetch, powersaving, fem_rxgain, rxgain, resolved ACL (pubkey + perm). Not hashed / not pushed here:

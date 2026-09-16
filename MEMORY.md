@@ -146,8 +146,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Manual Refresh/Pull/Deploy replace that unit's remaining jobs except a
   queued console send (stays in front). A click mid-GET supersedes the
   in-flight result (does not pop the new head). Sqlite stamps incrementally per successful GET/SET. Apply GETs ACL when
-  due to drop extras. A SET timeout parks and retries. A SET CLI error or
-  exhausted `--attempts` abort remaining SET jobs this pass (GET stays).
+  due to drop extras. A SET timeout parks and retries (including clock
+  `time`). A SET CLI error or exhausted `--attempts` abort remaining SET
+  jobs this pass (GET stays). Clock give-up still runs `push_advert`.
   Poll and apply password-login every MeshCore unit. Live RTC from login
   timestamp or ``clock`` CLI.
 - Duty-cycle default is 50% (stock MeshCore). `nodes.yaml` `dutycycle`
