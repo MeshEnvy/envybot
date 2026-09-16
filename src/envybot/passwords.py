@@ -1,11 +1,10 @@
-"""Per-unit unique strong passwords. Shared fleet defaults are retired."""
+"""Per-unit admin passwords (unique+strong). Guest login is open (blank) by default."""
 
 from __future__ import annotations
 
 import hashlib
 import secrets
 import string
-import time
 from typing import Any
 
 from envybot.nodes_doc import PLACEHOLDER_PW
@@ -76,11 +75,14 @@ def password_collides(
     return pw in book_passwords(doc, exclude={(key, field)})
 
 
+def desired_guest_password(node: dict[str, Any]) -> str:
+    if "guest_password" not in node:
+        return ""
+    return normalize_password(node.get("guest_password"))
+
+
 def guest_needs_assign(node: dict[str, Any], doc: dict[str, Any], key: str) -> bool:
-    guest = node.get("guest_password")
-    if not password_is_strong(guest):
-        return True
-    return password_collides(guest, doc, key, field="guest_password")
+    return False
 
 
 def gen_password(length: int = PW_LEN) -> str:
@@ -104,17 +106,16 @@ def gen_unique_password(
     raise RuntimeError("could not generate a unique password")
 
 
-def assign_guest_password(node: dict[str, Any], doc: dict[str, Any], key: str) -> str:
-    """Keep a strong unique guest; otherwise generate one and stamp last_guest_roll."""
-    existing = node.get("guest_password")
-    if password_is_strong(existing) and not password_collides(
-        existing, doc, key, field="guest_password"
+def resolve_guest_password(node: dict[str, Any], doc: dict[str, Any], key: str) -> str:
+    """Book desired guest password. Blank = open login."""
+    desired = desired_guest_password(node)
+    if desired == "":
+        return ""
+    if password_is_strong(desired) and not password_collides(
+        desired, doc, key, field="guest_password"
     ):
-        return normalize_password(existing)
-    pw = gen_unique_password(doc, key, field="guest_password")
-    node["guest_password"] = pw
-    node["last_guest_roll"] = int(time.time())
-    return pw
+        return desired
+    return ""
 
 
 def password_token(value: Any) -> str:

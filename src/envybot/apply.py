@@ -26,11 +26,11 @@ from envybot.nodes_doc import (
     write_nodes_doc,
 )
 from envybot.passwords import (
-    assign_guest_password,
     guest_needs_assign,
     normalize_password,
     password_is_strong,
     password_token,
+    resolve_guest_password,
 )
 from envybot.position import public_radio_name, site_binding
 from envybot.public_advert import (
@@ -513,7 +513,7 @@ async def _set_cli(
 
 
 def _ensure_guest_password(node: dict[str, Any], doc: dict[str, Any], key: str) -> str:
-    return assign_guest_password(node, doc, key)
+    return resolve_guest_password(node, doc, key)
 
 
 async def _apply_acl(
@@ -550,9 +550,11 @@ async def _apply_acl(
 
 
 def persist_guest_password(nodes_path: Path, unit: str, node: dict[str, Any]) -> None:
-    """Write rolled guest password to disk immediately after assign."""
+    """Write guest password to disk when apply changed it in memory."""
+    if "guest_password" not in node:
+        return
     pw = node.get("guest_password")
-    if not pw:
+    if pw is None:
         return
     disk_doc = load_nodes_doc(nodes_path)
     disk_nodes = disk_doc.get("nodes") or {}
@@ -561,14 +563,10 @@ def persist_guest_password(nodes_path: Path, unit: str, node: dict[str, Any]) ->
     disk_node = disk_nodes.get(unit)
     if not isinstance(disk_node, dict):
         return
-    if (
-        disk_node.get("guest_password") == pw
-        and disk_node.get("last_guest_roll") == node.get("last_guest_roll")
-    ):
+    if disk_node.get("guest_password") == pw:
         return
     disk_node["guest_password"] = pw
-    if "last_guest_roll" in node:
-        disk_node["last_guest_roll"] = node["last_guest_roll"]
+    disk_node.pop("last_guest_roll", None)
     write_nodes_doc(nodes_path, disk_doc)
 
 

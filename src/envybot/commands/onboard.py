@@ -624,22 +624,10 @@ def resolve_passwords(
     stored_guest = stored_guest_password(node)
     if guest_pw is not None:
         guest, guest_src = guest_pw, "cli"
-    elif (
-        stored_guest
-        and password_is_strong(stored_guest)
-        and not password_collides(stored_guest, book, key, field="guest_password")
-    ):
-        guest, guest_src = stored_guest.strip(), "yaml"
+    elif stored_guest is not None:
+        guest, guest_src = stored_guest, "yaml"
     else:
-        device_guest = parse_get_value(cli.cmd("get guest.password"))
-        if (
-            device_guest
-            and password_is_strong(device_guest)
-            and not password_collides(device_guest, book, key, field="guest_password")
-        ):
-            guest, guest_src = device_guest, "device"
-        else:
-            guest, guest_src = gen_unique_password(book, key, field="guest_password"), "new"
+        guest, guest_src = "", "default"
     return admin, guest, admin_src, guest_src
 
 

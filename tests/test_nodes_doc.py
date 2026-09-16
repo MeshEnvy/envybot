@@ -114,6 +114,12 @@ class SyncBookTests(unittest.TestCase):
             disk = load_nodes_doc(path)
             self.assertTrue(is_paused(disk["nodes"]["me0001"]))
             self.assertEqual(disk["nodes"]["me0001"]["guest_password"], "rolled")
+            self.assertNotIn("last_guest_roll", disk["nodes"]["me0001"])
+
+            node_blank = {"unit_id": "ME0001", "guest_password": ""}
+            persist_guest_password(path, "me0001", node_blank)
+            disk = load_nodes_doc(path)
+            self.assertEqual(disk["nodes"]["me0001"]["guest_password"], "")
 
 
 class RoutingBookTests(unittest.TestCase):

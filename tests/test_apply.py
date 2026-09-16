@@ -51,6 +51,12 @@ _STRONG = {
     "identity_pubkey": "aa" * 32,
 }
 
+_OPEN = {
+    "guest_password": "",
+    "admin_password": "AdminOneStrong1",
+    "identity_pubkey": "aa" * 32,
+}
+
 
 def _id(node, sites=None, doc=None, keys=None):
     return profile_id(node, sites, doc=doc, keys=keys)
@@ -219,16 +225,21 @@ class DueTests(unittest.TestCase):
             conn = open_history(Path(tmp))
             self.assertTrue(apply_is_due(conn, "me0001", _STRONG, None))
 
-    def test_weak_guest_is_due_after_ok_fields(self) -> None:
+    def test_blank_guest_due_when_stamped_strong(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            node = {**_STRONG, "guest_password": "m35h3nvy"}
-            applicable = applicable_field_desireds(_STRONG, None, key="me0001")
-            for field, des in applicable.items():
-                if field == "guest":
-                    continue
+            applicable_strong = applicable_field_desireds(_STRONG, None, key="me0001")
+            for field, des in applicable_strong.items():
                 insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
-            self.assertTrue(apply_is_due(conn, "me0001", node, None))
+            self.assertTrue(apply_is_due(conn, "me0001", _OPEN, None))
+
+    def test_blank_guest_not_due_when_synced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            applicable = applicable_field_desireds(_OPEN, None, key="me0001")
+            for field, des in applicable.items():
+                insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
+            self.assertFalse(apply_is_due(conn, "me0001", _OPEN, None))
 
     def test_after_ok_private_not_due_after_leak_heard(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
