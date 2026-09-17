@@ -26,7 +26,7 @@ from envybot.nodes_doc import (
     normalize_fleet_node,
 )
 from envybot.position import book_coord, display_name, load_sites, site_binding
-from envybot.history import begin_mesh_audit, finish_mesh_audit, mark_mesh_audit_late
+from envybot.history import begin_mesh_audit, finish_mesh_audit, mark_mesh_audit_late, mesh_audit_row
 from envybot.routing import (
     FLEET_PATH_HASH_MODE,
     ForcedPath,
@@ -116,7 +116,7 @@ ADMIN_PASSWORD_NOW_RE = re.compile(r"^password now:\s*(.*)\s*$", re.I)
 #   and GPS from the book. SET only; stamp on OK. Never GET lat/lon into
 #   nodes.yaml. MeshCore <1.15 has no set dutycycle; use set af 1
 #   (50% = af 1.0) and stamp. Seeder stays at SEEDER_DUTYCYCLE_PCT (10).
-# - --unit filters targets only; it does not imply --full-sync.
+# - --only filters targets only; it does not imply --full-sync.
 # - Log a one-line result as soon as GET_STATUS, GET_TELEMETRY, or a CLI
 #   command succeeds (same beat as login OK). Failures stay on the send line.
 
@@ -193,6 +193,7 @@ class FleetSession:
     _recovery_client: MeshCore | None = field(default=None, repr=False)
     _recovery_targets: list[Any] = field(default_factory=list, repr=False)
     audit_source: str | None = None
+    audit_push: Any = field(default=None, repr=False)
 
     def enable_companion_recovery(self, client: MeshCore, targets: list[Any]) -> None:
         """After BLE/USB drop, reconnect transport + re-sync fleet contacts."""
@@ -439,6 +440,7 @@ class FleetSession:
             )
             if self.conn is not None and exp.audit_id is not None:
                 mark_mesh_audit_late(self.conn, exp.audit_id, reply=audit_reply)
+                _push_audit_row(self, exp.audit_id)
             exp.resolved = True
             self._raise_dest_wait(exp.unit, late, log)
             return
@@ -452,6 +454,7 @@ class FleetSession:
         for exp in stale:
             if self.conn is not None and exp.audit_id is not None:
                 mark_mesh_audit_late(self.conn, exp.audit_id, reply="login")
+                _push_audit_row(self, exp.audit_id)
             exp.resolved = True
         self._raise_dest_wait(newest.unit, late, log)
 
@@ -1744,7 +1747,11 @@ def contact_route_hop_labels(client: MeshCore, contact: dict[str, Any] | None) -
 
 
 def log_contact_path(
-    client: MeshCore, target: RouterTarget, *, log: PollLog | None = None
+    client: MeshCore,
+    target: RouterTarget,
+    *,
+    log: PollLog | None = None,
+    heading: str = "path:",
 ) -> None:
     """Log the companion's cached route for this target before a mesh send.
 
@@ -1756,9 +1763,17 @@ def log_contact_path(
     contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])
     hops = contact_route_hop_labels(client, contact)
     if hops is None:
-        log.step(f"path: {contact_route_audit_label(contact)}")
+        label = contact_route_audit_label(contact)
+        if heading == "path:":
+            log.step(f"{heading} {label}")
+        elif heading:
+            log.step(heading)
+            log.substep(label)
+        else:
+            log.substep(label)
         return
-    log.step("path:")
+    if heading:
+        log.step(heading)
     for i, label in enumerate(hops):
         mark = "" if i == 0 else "→ "
         log.substep(f"{mark}{label}")
@@ -1787,6 +1802,19 @@ def _audit_binary_reply(val: Any) -> str | None:
     return _audit_redact(text, max_len=500)
 
 
+def _push_audit_row(session: FleetSession | None, audit_id: int | None) -> None:
+    if session is None or session.conn is None or audit_id is None:
+        return
+    push = session.audit_push
+    if not callable(push):
+        return
+    loaded = mesh_audit_row(session.conn, audit_id)
+    if loaded is None:
+        return
+    unit, row = loaded
+    push({"unit": unit, "row": row})
+
+
 def _audit_begin(
     session: FleetSession | None,
     *,
@@ -1799,7 +1827,7 @@ def _audit_begin(
 ) -> int | None:
     if session is None or session.conn is None:
         return None
-    return begin_mesh_audit(
+    audit_id = begin_mesh_audit(
         session.conn,
         unit=unit,
         kind=kind,
@@ -1809,6 +1837,8 @@ def _audit_begin(
         wait_s=wait_s,
         source=session.audit_source,
     )
+    _push_audit_row(session, audit_id)
+    return audit_id
 
 
 def _audit_finish(
@@ -1830,6 +1860,7 @@ def _audit_finish(
         reply=_audit_redact(reply) if reply else None,
         error=str(error) if error is not None else None,
     )
+    _push_audit_row(session, audit_id)
 
 
 def route_path_fields(*, flood: bool) -> dict[str, Any]:
@@ -2008,6 +2039,10 @@ async def refresh_fleet_paths(
     async with client.commands._mesh_request_lock:
         await client.ensure_contacts(follow=True)
         for target in targets:
+            contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])
+            if has_cached_route(contact):
+                log.step(f"{contact_display_name(target)} path was:")
+                log_contact_path(client, target, log=log, heading="")
             await reset_to_flood(client, target, log=log)
             cleared += 1
     print(

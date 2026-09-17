@@ -253,6 +253,40 @@ body {
   background: rgba(42, 40, 61, 0.35);
 }
 
+.dash-card.on-air {
+  border-color: #2a7a6a;
+  box-shadow: 0 0 0 1px rgba(78, 196, 168, 0.25);
+}
+
+.dash-card.on-air.selected {
+  box-shadow:
+    inset 0 0 0 1px #4ea1ff,
+    0 0 0 1px rgba(78, 196, 168, 0.35);
+}
+
+.dash-on-air-badge {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  color: #4ec4a8;
+  background: rgba(78, 196, 168, 0.12);
+  animation: dash-on-air-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes dash-on-air-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
 .dash-card.paused {
   opacity: 0.55;
 }
@@ -1524,6 +1558,43 @@ body {
 
 .load-more:hover {
   color: #7ab8ff;
+}
+
+.load-more:disabled {
+  color: #5a6a7a;
+  cursor: default;
+}
+
+.audit-empty {
+  margin: 6px 0 0;
+  color: #7a8794;
+  font-size: 0.72rem;
+}
+
+.audit-outcome.audit-ok {
+  color: #6ee7a0;
+}
+
+.audit-outcome.audit-warn {
+  color: #f0b86e;
+}
+
+.audit-outcome.audit-bad {
+  color: #f06e6e;
+}
+
+.audit-path,
+.audit-label,
+.audit-reply {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
 }
 
 .poll-table {

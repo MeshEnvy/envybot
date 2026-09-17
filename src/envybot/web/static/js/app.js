@@ -10,6 +10,7 @@ import {
 } from "vue";
 import {
   connectEvents,
+  fetchAudit,
   fetchFleet,
   fetchPolls,
   installUnit,
@@ -154,10 +155,17 @@ const App = {
     const notesEditing = ref(false);
     const historyHours = 72;
     const LOG_PAGE = 10;
+    const AUDIT_PAGE = 40;
     const logShown = reactive({
       polls: LOG_PAGE,
       acl: LOG_PAGE,
     });
+    /** @type {import('vue').Ref<import('./api.js').AuditRow[]>} */
+    const auditRows = ref([]);
+    const auditHasMore = ref(false);
+    const auditLoading = ref(false);
+    /** @type {import('vue').Ref<string | null>} */
+    const auditKey = ref(null);
     const CONSOLE_STORE_KEY = "envybot.console.v1";
     const CMD_HISTORY_CAP = 100;
     const consoleOpen = ref(false);
@@ -227,7 +235,90 @@ const App = {
       patchSession(poll);
     }
 
+    /** @param {Record<string, unknown>} event */
+    function applyAudit(event) {
+      const unit = event?.unit;
+      const row = event?.row;
+      if (typeof unit !== "string" || !row || typeof row !== "object") return;
+      if (unit !== selectedKey.value || auditKey.value !== unit) return;
+      auditRows.value = mergeAuditRows(auditRows.value, [/** @type {import('./api.js').AuditRow} */ (row)]);
+    }
+
+    function resetAudit() {
+      auditRows.value = [];
+      auditHasMore.value = false;
+      auditKey.value = null;
+    }
+
+    /** @param {import('./api.js').AuditRow[]} existing @param {import('./api.js').AuditRow[]} incoming */
+    function mergeAuditRows(existing, incoming) {
+      const byId = new Map(existing.map((row) => [row.id, row]));
+      for (const row of incoming) byId.set(row.id, row);
+      return [...byId.values()].sort((a, b) => b.id - a.id);
+    }
+
+    /** @param {string} key */
+    async function loadAuditFirstPage(key) {
+      auditLoading.value = true;
+      try {
+        const res = await fetchAudit(key, { limit: AUDIT_PAGE });
+        auditRows.value = Array.isArray(res.rows) ? res.rows : [];
+        auditHasMore.value = !!res.has_more;
+        auditKey.value = key;
+      } catch {
+        resetAudit();
+        auditKey.value = key;
+      } finally {
+        auditLoading.value = false;
+      }
+    }
+
+    async function loadOlderAudit() {
+      const key = selectedKey.value;
+      if (!key || !auditHasMore.value || auditLoading.value) return;
+      const tail = auditRows.value[auditRows.value.length - 1];
+      if (!tail) return;
+      auditLoading.value = true;
+      try {
+        const res = await fetchAudit(key, {
+          limit: AUDIT_PAGE,
+          beforeId: tail.id,
+        });
+        auditRows.value = [
+          ...auditRows.value,
+          ...(Array.isArray(res.rows) ? res.rows : []),
+        ];
+        auditHasMore.value = !!res.has_more;
+      } finally {
+        auditLoading.value = false;
+      }
+    }
+
+    /** @param {string | null | undefined} outcome */
+    function auditOutcomeClass(outcome) {
+      if (outcome === "ok" || outcome === "late") return "audit-ok";
+      if (outcome === "timeout" || outcome === "pending") return "audit-warn";
+      return "audit-bad";
+    }
+
+    /** @param {string | null | undefined} reply @param {number} [max] */
+    function auditReplySnippet(reply, max = 80) {
+      if (!reply) return "—";
+      const text = String(reply);
+      return text.length > max ? `${text.slice(0, max)}…` : text;
+    }
+
+    /** @param {import('./api.js').AuditRow} row */
+    function auditAttemptLabel(row) {
+      return row.attempt == null ? "—" : String(row.attempt);
+    }
+
     const manualAccepting = computed(() => !!fleet.poll?.accepting);
+
+    const radioActiveKey = computed(() => {
+      const key = fleet.poll?.unit;
+      return typeof key === "string" && key ? key : null;
+    });
 
     const consoleActive = computed(
       () => consoleTabs.find((t) => t.tab_id === consoleActiveId.value) || null,
@@ -294,6 +385,16 @@ const App = {
       const s = unit?.session;
       const state = s && typeof s === "object" && "state" in s ? s.state : null;
       return MANUAL_BUSY.has(state);
+    }
+
+    /** @param {Record<string, unknown> | undefined} unit */
+    function isOnAir(unit) {
+      const active = radioActiveKey.value;
+      if (!active || unit?.key !== active) return false;
+      const s = unit?.session;
+      const state = s && typeof s === "object" && "state" in s ? s.state : null;
+      if (state === "queued") return false;
+      return isInFlight(unit) || state === "console";
     }
 
     /** @param {Record<string, unknown> | undefined} unit @param {'refresh' | 'pull' | 'deploy'} [job] */
@@ -1373,7 +1474,9 @@ const App = {
       syncLocation(key);
       if (fly && mapCtrl) mapCtrl.flyTo(key, fleet);
       pushMap();
+      resetAudit();
       loadHistoriesFor(key);
+      loadAuditFirstPage(key);
     }
 
     function selectFromDashboard(key) {
@@ -1847,6 +1950,9 @@ const App = {
         onSession: (poll) => {
           applySession(poll);
         },
+        onAudit: (event) => {
+          applyAudit(event);
+        },
         onConsole: (event) => {
           applyConsoleEvent(event);
         },
@@ -1890,6 +1996,7 @@ const App = {
       unitStatus,
       unitStage,
       isInFlight,
+      isOnAir,
       sessionBadgeTitle,
       healthHeadline,
       healthMark,
@@ -1957,6 +2064,13 @@ const App = {
       logSlice,
       logHasMore,
       loadMoreLog,
+      auditRows,
+      auditHasMore,
+      auditLoading,
+      loadOlderAudit,
+      auditOutcomeClass,
+      auditReplySnippet,
+      auditAttemptLabel,
       sunEmoji,
       sunElev,
       sunTitle,
@@ -2141,10 +2255,23 @@ const App = {
           v-for="unit in sortedUnits"
           :key="unit.key"
           class="dash-card"
-          :class="{ selected: unit.key === selectedKey, paused: !!unit.paused, busy: isInFlight(unit) }"
+          :class="{ selected: unit.key === selectedKey, paused: !!unit.paused, busy: isInFlight(unit), 'on-air': isOnAir(unit) }"
           @click="selectFromDashboard(unit.key)"
         >
           <div class="dash-head">
+            <span
+              v-if="isOnAir(unit)"
+              class="dash-on-air-badge"
+              title="Using companion radio"
+              aria-label="Using companion radio"
+            >
+              <svg viewBox="0 0 20 20" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <circle cx="10" cy="14" r="1.4" fill="currentColor" stroke="none" />
+                <path d="M6.5 11.2a4.5 4.5 0 0 1 7 0" stroke-linecap="round" />
+                <path d="M4.2 8.8a8 8 0 0 1 11.6 0" stroke-linecap="round" />
+                <path d="M2 6.4a11.5 11.5 0 0 1 16 0" stroke-linecap="round" />
+              </svg>
+            </span>
             <span class="dash-title" :title="healthTooltip(unit.health)">
               <span
                 v-if="showHealthMark(unit)"
@@ -2660,6 +2787,61 @@ const App = {
               <template v-if="nb.miles != null"> · ~{{ formatMiles(nb.miles) }}</template>
               · {{ nb.snr ?? '?' }} dB
               · {{ formatAgo(nb.secs_ago) }}
+            </div>
+          </section>
+          <section class="poll-log-section">
+            <div class="poll-log">
+              <h3>
+                Audit · {{ auditRows.length }}<template v-if="auditHasMore">+</template>
+              </h3>
+              <p v-if="!auditRows.length && !auditLoading" class="audit-empty">
+                No mesh sends logged yet.
+              </p>
+              <table v-if="auditRows.length" class="poll-table poll-table-wide audit-table">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Kind</th>
+                    <th>Label</th>
+                    <th>Path</th>
+                    <th>Try</th>
+                    <th>Outcome</th>
+                    <th>Reply</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in auditRows" :key="'au-' + row.id">
+                    <td>{{ formatRelative(row.ts, fleet.now) }}</td>
+                    <td>{{ row.kind || "—" }}</td>
+                    <td class="audit-label" :title="row.label || ''">
+                      {{ row.label || "—" }}
+                    </td>
+                    <td class="audit-path" :title="row.path || ''">{{ row.path || "—" }}</td>
+                    <td>{{ auditAttemptLabel(row) }}</td>
+                    <td>
+                      <span
+                        class="audit-outcome"
+                        :class="auditOutcomeClass(row.outcome)"
+                        :title="row.error || row.outcome"
+                      >
+                        {{ row.outcome }}
+                      </span>
+                    </td>
+                    <td class="audit-reply" :title="row.reply || ''">
+                      {{ auditReplySnippet(row.reply) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <button
+                v-if="auditHasMore"
+                type="button"
+                class="load-more"
+                :disabled="auditLoading"
+                @click="loadOlderAudit"
+              >
+                Load older
+              </button>
             </div>
           </section>
           <section v-if="unitHistory?.polls?.length" class="poll-log-section">

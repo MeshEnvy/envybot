@@ -91,5 +91,5 @@ are stored as `[redacted]`.
 After a GET that should update last-seen, run fleet:
 
 ```bash
-./envybot fleet --unit me0016 --group name --poll-only
+./envybot fleet --only me0016 --group name --poll-only
 ```

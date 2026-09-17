@@ -41,6 +41,7 @@ from envybot.nodes_doc import (
     load_nodes_doc,
     normalize_fleet_node,
 )
+from envybot.unit_filter import key_in_unit_filter
 from envybot.routing import (
     abbrev_live_route_label,
     live_route_from_audit_path,
@@ -691,6 +692,8 @@ def build_fleet_snapshot(
     poll: dict[str, Any] | None = None,
     last_seen: dict[str, dict[str, Any]] | None = None,
     reported_locs: dict[str, tuple[float, float]] | None = None,
+    include: set[str] | None = None,
+    skip: set[str] | None = None,
 ) -> dict[str, Any]:
     """Full public fleet snapshot: YAML desired + sqlite last_seen."""
     doc = load_nodes_doc(nodes_path)
@@ -723,6 +726,8 @@ def build_fleet_snapshot(
         apply_at_map = last_ok_apply_times(conn)
         apply_desired_map = last_ok_apply_desireds(conn)
         for key in nodes:
+            if not key_in_unit_filter(key, include=include, skip=skip):
+                continue
             nbs = latest_neighbors(conn, key)
             if nbs is not None:
                 neighbors_map[key] = nbs
@@ -753,6 +758,8 @@ def build_fleet_snapshot(
     try:
         units: dict[str, dict[str, Any]] = {}
         for key, node in nodes.items():
+            if not key_in_unit_filter(key, include=include, skip=skip):
+                continue
             if not isinstance(node, dict) or is_decommissioned(node):
                 continue
             if not is_meshcore_platform(node):

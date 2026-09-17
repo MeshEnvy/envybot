@@ -1995,6 +1995,68 @@ def latest_mesh_audit_path(conn: sqlite3.Connection, unit_key: str) -> str | Non
     return str(row[0]) if row else None
 
 
+def _mesh_audit_row_payload(row: sqlite3.Row) -> dict[str, Any]:
+    ts_sent = float(row["ts_sent"])
+    ts_reply = row["ts_reply"]
+    duration_s: float | None = None
+    if ts_reply is not None:
+        duration_s = round(float(ts_reply) - ts_sent, 2)
+    return {
+        "id": int(row["id"]),
+        "ts": ts_sent,
+        "kind": row["kind"],
+        "label": row["label"],
+        "attempt": row["attempt"],
+        "path": row["path"],
+        "wait_s": row["wait_s"],
+        "ok": bool(row["ok"]),
+        "outcome": row["outcome"],
+        "reply": row["reply"],
+        "error": row["error"],
+        "source": row["source"],
+        "duration_s": duration_s,
+    }
+
+
+def mesh_audit_row(conn: sqlite3.Connection, audit_id: int) -> tuple[str, dict[str, Any]] | None:
+    """Single mesh_audit row for SSE push. Returns (unit, payload)."""
+    row = conn.execute(
+        "SELECT id, unit, ts_sent, ts_reply, kind, label, attempt, path, wait_s, ok, "
+        "outcome, reply, error, source FROM mesh_audit WHERE id = ?",
+        (int(audit_id),),
+    ).fetchone()
+    if row is None:
+        return None
+    return str(row["unit"]).lower(), _mesh_audit_row_payload(row)
+
+
+def list_mesh_audit(
+    conn: sqlite3.Connection,
+    unit: str,
+    *,
+    limit: int = 40,
+    before_id: int | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Newest-first mesh send log for a unit. ``before_id`` pages older rows."""
+    unit = unit.lower()
+    cap = max(1, min(int(limit), 200))
+    sql = (
+        "SELECT id, unit, ts_sent, ts_reply, kind, label, attempt, path, wait_s, ok, "
+        "outcome, reply, error, source FROM mesh_audit WHERE unit = ?"
+    )
+    args: list[Any] = [unit]
+    if before_id is not None:
+        sql += " AND id < ?"
+        args.append(int(before_id))
+    sql += " ORDER BY id DESC LIMIT ?"
+    args.append(cap + 1)
+    rows = conn.execute(sql, args).fetchall()
+    has_more = len(rows) > cap
+    if has_more:
+        rows = rows[:cap]
+    return [_mesh_audit_row_payload(row) for row in rows], has_more
+
+
 def mark_mesh_audit_late(
     conn: sqlite3.Connection | None,
     audit_id: int | None,

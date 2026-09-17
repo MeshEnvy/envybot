@@ -16,6 +16,9 @@ export ENVYBOT_HOME=/path/to/book
 Book is a private directory with `nodes.yaml`. Point with `--book` or
 `ENVYBOT_HOME`. Never commit secrets.
 
-Command manuals: [`docs/commands/`](docs/commands/).
+Command manuals: [`docs/commands/`](docs/commands/). Index: [`docs/README.md`](docs/README.md).
+
+**Fleet** (poll/apply, routing, `--only`, idle vs Deploy): read
+[`.cursor/skills/fleet/SKILL.md`](.cursor/skills/fleet/SKILL.md) before grepping code.
 
 New commands: add `src/envybot/commands/<name>.py` with `main(argv)` and register it in `cli.py` `COMMANDS`. Add `docs/commands/<name>.md` and a README row in the same change set.

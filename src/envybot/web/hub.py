@@ -42,6 +42,9 @@ class FleetHub:
             poll.update(session)
         await self._broadcast("session", session)
 
+    async def publish_audit(self, event: dict[str, Any]) -> None:
+        await self._broadcast("audit", event)
+
     async def publish_console(self, event: dict[str, Any]) -> None:
         if self._snapshot is not None:
             poll = self._snapshot.setdefault("poll", {})

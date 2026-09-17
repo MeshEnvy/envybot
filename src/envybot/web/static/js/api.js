@@ -7,7 +7,7 @@ export async function fetchFleet() {
   return /** @type {FleetSnapshot} */ (await res.json())
 }
 
-/** @param {{ onHello: (s: FleetSnapshot) => void, onUnit: (u: Record<string, unknown>) => void, onSession: (p: Record<string, unknown>) => void, onConsole?: (c: Record<string, unknown>) => void }} handlers */
+/** @param {{ onHello: (s: FleetSnapshot) => void, onUnit: (u: Record<string, unknown>) => void, onSession: (p: Record<string, unknown>) => void, onAudit?: (a: Record<string, unknown>) => void, onConsole?: (c: Record<string, unknown>) => void }} handlers */
 export function connectEvents(handlers) {
   const es = new EventSource('/events')
   es.addEventListener('hello', (ev) => {
@@ -19,6 +19,11 @@ export function connectEvents(handlers) {
   es.addEventListener('session', (ev) => {
     handlers.onSession(JSON.parse(/** @type {MessageEvent} */ (ev).data))
   })
+  if (handlers.onAudit) {
+    es.addEventListener('audit', (ev) => {
+      handlers.onAudit(JSON.parse(/** @type {MessageEvent} */ (ev).data))
+    })
+  }
   if (handlers.onConsole) {
     es.addEventListener('console', (ev) => {
       handlers.onConsole(JSON.parse(/** @type {MessageEvent} */ (ev).data))
@@ -240,5 +245,16 @@ export async function fetchPolls(unit, hours = 72, limit = 80) {
   const q = new URLSearchParams({ hours: String(hours), limit: String(limit) })
   const res = await fetch(`/api/polls/${encodeURIComponent(unit)}?${q}`)
   if (!res.ok) throw new Error(`polls ${res.status}`)
+  return res.json()
+}
+
+/** @typedef {{ id: number, ts: number, kind: string, label?: string | null, attempt?: number | null, path: string, wait_s?: number | null, ok: boolean, outcome: string, reply?: string | null, error?: string | null, source?: string | null, duration_s?: number | null }} AuditRow */
+
+/** @param {string} unit @param {{ limit?: number, beforeId?: number }} [opts] @returns {Promise<{ unit: string, rows: AuditRow[], has_more: boolean }>} */
+export async function fetchAudit(unit, opts = {}) {
+  const q = new URLSearchParams({ limit: String(opts.limit ?? 40) })
+  if (opts.beforeId != null) q.set('before_id', String(opts.beforeId))
+  const res = await fetch(`/api/audit/${encodeURIComponent(unit)}?${q}`)
+  if (!res.ok) throw new Error(`audit ${res.status}`)
   return res.json()
 }

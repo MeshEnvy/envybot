@@ -106,13 +106,15 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
   `--retry-delay` (default 60s) parks auto poll/apply units after a timeout
   before retry; `--miss-cooldown` (default 3600s) skips re-seed after max
   attempts. Console and manual Refresh/Pull/Deploy are exempt; manual UI also
-  clears cooldown. `--full-sync` or `--unit` bypass cooldown on startup seed.
+  clears cooldown. `--full-sync` or `--only` bypass cooldown on startup seed.
   `--round-delay` pauses between scheduler retry rounds. On drop: `gave up after N,
   continuing` (actual attempts, and only when that job was dropped). A
   displaced in-flight login is not a give-up. Failed login drops remaining
   console CLI (`stopping`, not `continuing`). On unit done with gaps: `partial OK`.
 - Per-attempt mesh audit rows land in sqlite `mesh_audit` (unit, kind, label,
-  path, wait, outcome, reply snippet). Query the book DB; no UI yet.
+  path, wait, outcome, reply snippet). Detail card **Audit** table,
+  `GET /api/audit/{unit}?limit=40&before_id=` (newest first, **Load older**),
+  and live `audit` SSE events on each send begin/finish.
 - UI Refresh/Pull/Deploy always enqueue, even while that unit is polling.
   The click replaces remaining jobs for that unit and runs next.
 - Sqlite updates incrementally after each successful GET group or SET field.
@@ -121,7 +123,9 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
 
 Status, telemetry, neighbors, and ACL are stored in orthogonal sqlite tables.
 `/api/polls/{unit}` returns `{ histories: { status, telemetry, polls,
-neighbors, acl, sun } }`. The detail card shows a single **Polls** table
+neighbors, acl, sun } }`. `/api/audit/{unit}` returns `{ rows, has_more }`
+from `mesh_audit` (cursor `before_id`, default limit 40). The detail card
+shows **Audit** (mesh sends) and a single **Polls** table
 from `polls` (`poll_snapshots`: status spine with nearest/interpolated
 telemetry, deltas, reboot detection). Status and telemetry arrays remain
 for sparkline fallback. Samples store display GPS (bound site, else node
@@ -272,15 +276,16 @@ list warns that fleet may not get out. Requires companion firmware with
 |------|---------|
 | `--web-only` | Browse the book. No radio. |
 | `--no-web` | Headless poll/apply |
-| `--unit KEY` | One unit (repeatable) |
+| `--only SPEC` | Include only matching units (comma list or glob; repeatable). Matches book key, `unit_id`, alias, site slug, site name, or identity pubkey prefix (4+ hex chars, e.g. `3d35`). Filters the dashboard and auto poll/apply. |
+| `--skip SPEC` | Exclude matching units (same matcher as `--only`; repeatable). Filters the dashboard and auto poll/apply. |
 | `--full-sync` | Deploy profile plus periodic/inventory GETs (no audit GETs on same pass) |
-| `--refresh-paths` | Clear companion cached hop paths for all poll targets before work (operator moved; next login floods to rediscover) |
+| `--refresh-paths` | Dump each target's stale cached hops, clear companion `out_path`, then flood on next login (use when preset route is wrong) |
 | `--force-path HOPS` | Pin companion `out_path` to comma-separated hop hashes (e.g. `EA6E,E9BD,C458`). Overrides flood/path discovery for this run; stale-cache discard is disabled while pinned |
 | `--live` | Periodic GET only (status/telemetry/neighbors) |
 | `--no-discover` | GET neighbor table without remote `discover.neighbors` |
 | `--discover-wait SEC` | Listen after discover (default 12; timer job, radio idle) |
 | `--retry-delay SEC` | Auto only: park unit after timeout before retry (default 60). Console and manual UI exempt. |
-| `--miss-cooldown SEC` | Auto only: after max attempts, skip re-seed until cooldown (default 3600). `--full-sync`, `--unit`, or manual UI bypass. |
+| `--miss-cooldown SEC` | Auto only: after max attempts, skip re-seed until cooldown (default 3600). `--full-sync`, `--only`, or manual UI bypass. |
 | `--round-delay SEC` | Pause between scheduler retry rounds |
 | `--poll-only` | GET only |
 | `--apply-only` | SET only |
@@ -299,8 +304,8 @@ that still shows advert on (`leak`). Leftover name or GPS is not an advert.
 List cards show the same primary label with unit id
 as secondary when it differs. While the companion worker is live, **Refresh** on a
 unit pulls live telemetry now; **Pull** also GETs fw/name/GPS/advert/acl;
-**Deploy** re-SETs the book profile (overrides `--skip`, `paused`, and
-up-to-date skips). Pause is a checkbox on the detail card
+**Deploy** re-SETs the book profile (overrides `paused` and up-to-date skips).
+CLI `--skip` hides units from the dashboard. Pause is a checkbox on the detail card
 (`paused: true`). Routing policy is Path (default) / Direct / Flood on the
 detail card; list cards show live route and a danger badge when policy is flood.
 Sidebar rows fade and badge as paused. Rows with

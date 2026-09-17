@@ -12,8 +12,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   is **`--full-sync`** (Pull every GET group plus Deploy profile). Session
   state is `deploying`.
 
+### Removed
+
+- Fleet **`--unit`** — use **`--only`** (`trust` / `onboard` `--unit` unchanged).
+
 ### Added
 
+- Fleet detail **Audit** log — per-send `mesh_audit` rows (login/CLI/binary,
+  path, outcome, reply snippet), newest first with **Load older**;
+  `GET /api/audit/{unit}`; live `audit` SSE on send begin/finish.
+- Fleet **`--only SPEC`** — include matching units only (comma list or glob;
+  book key, `unit_id`, alias, site slug, or site name). **`--skip`** uses the
+  same matcher. Both filter the dashboard and auto poll/apply. Replaces fleet
+  **`--unit`**.
 - **Companion neighbor ping** on connect (`fleet` / `trust` / `cmd`): zero-hop
   `NODE_DISCOVER_REQ`, 10s listen, lists nearby repeaters (name, pubkey prefix,
   SNR). Warns when none answered. Skips on unsupported companion firmware.

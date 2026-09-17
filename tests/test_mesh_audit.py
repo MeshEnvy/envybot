@@ -8,14 +8,21 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+from aiohttp.test_utils import TestClient, TestServer
 from meshcore import EventType
+from ruamel.yaml import YAML
 
 from envybot.history import (
     begin_mesh_audit,
     finish_mesh_audit,
+    list_mesh_audit,
     mark_mesh_audit_late,
+    mesh_audit_row,
     open_history,
 )
+from envybot.jobs import FleetScheduler
+from envybot.web.hub import FleetHub
+from envybot.web.server import MonitorWeb, make_app
 from envybot.radio import (
     FleetSession,
     PollLog,
@@ -172,6 +179,90 @@ class MeshAuditTests(unittest.TestCase):
             self.assertEqual(row["label"], "[redacted]")
 
 
+class MeshAuditRowTests(unittest.TestCase):
+    def test_mesh_audit_row_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            aid = begin_mesh_audit(
+                conn,
+                unit="me0045",
+                kind="cli",
+                label="get name",
+                attempt=2,
+                path="flood",
+                wait_s=12.0,
+            )
+            assert aid is not None
+            finish_mesh_audit(conn, aid, ok=True, outcome="ok", reply="ME0045")
+            loaded = mesh_audit_row(conn, aid)
+            assert loaded is not None
+            unit, row = loaded
+            self.assertEqual(unit, "me0045")
+            self.assertEqual(row["label"], "get name")
+            self.assertEqual(row["outcome"], "ok")
+            self.assertIsNotNone(row["duration_s"])
+
+
+class ListMeshAuditTests(unittest.TestCase):
+    def test_newest_first_with_before_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            ids: list[int] = []
+            for idx in range(5):
+                aid = begin_mesh_audit(
+                    conn,
+                    unit="ME0045",
+                    kind="cli",
+                    label=f"cmd-{idx}",
+                    attempt=idx + 1,
+                    path="flood",
+                    wait_s=8.0,
+                )
+                assert aid is not None
+                finish_mesh_audit(conn, aid, ok=True, outcome="ok", reply=f"ok-{idx}")
+                ids.append(aid)
+
+            page1, more1 = list_mesh_audit(conn, "me0045", limit=2)
+            self.assertTrue(more1)
+            self.assertEqual([row["label"] for row in page1], ["cmd-4", "cmd-3"])
+            self.assertEqual(page1[0]["id"], ids[-1])
+
+            page2, more2 = list_mesh_audit(
+                conn, "me0045", limit=2, before_id=page1[-1]["id"]
+            )
+            self.assertTrue(more2)
+            self.assertEqual([row["label"] for row in page2], ["cmd-2", "cmd-1"])
+
+            page3, more3 = list_mesh_audit(
+                conn, "me0045", limit=2, before_id=page2[-1]["id"]
+            )
+            self.assertFalse(more3)
+            self.assertEqual([row["label"] for row in page3], ["cmd-0"])
+
+    def test_timeout_has_null_duration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            aid = begin_mesh_audit(
+                conn,
+                unit="me0001",
+                kind="login",
+                label="login",
+                attempt=3,
+                path="266a b3b3",
+                wait_s=11.0,
+                source="console",
+            )
+            assert aid is not None
+            finish_mesh_audit(conn, aid, ok=False, outcome="timeout")
+            rows, has_more = list_mesh_audit(conn, "me0001", limit=10)
+            self.assertFalse(has_more)
+            self.assertEqual(len(rows), 1)
+            row = rows[0]
+            self.assertEqual(row["outcome"], "timeout")
+            self.assertIsNone(row["duration_s"])
+            self.assertEqual(row["source"], "console")
+
+
 class PrepareSendRouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_path_mode_rides_cached_route(self) -> None:
         contact = {
@@ -212,6 +303,96 @@ class LoginErrCoercionTests(unittest.TestCase):
     def test_dict_err_does_not_crash_rejected_check(self) -> None:
         err: object = {"reason": "no_event_received"}
         self.assertFalse(err and "rejected" in str(err).lower())
+
+
+def _write_book(book: Path) -> tuple[Path, Path]:
+    nodes = book / "nodes.yaml"
+    sites = book / "sites.yaml"
+    yaml = YAML()
+    with nodes.open("w") as fh:
+        yaml.dump(
+            {
+                "nodes": {
+                    "me0003": {
+                        "unit_id": "ME0003",
+                        "firmware_platform": "meshcore",
+                        "identity_pubkey": "b" * 64,
+                        "admin_password": "AdminTwoStrong2",
+                    },
+                }
+            },
+            fh,
+        )
+    with sites.open("w") as fh:
+        yaml.dump({"sites": {"ophir": {"node": "me0003", "loc": [39.3, -119.6]}}}, fh)
+    return nodes, sites
+
+
+class AuditApiTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        book = Path(self.tmp.name)
+        nodes_path, sites_path = _write_book(book)
+        self.conn = open_history(book)
+        aid = begin_mesh_audit(
+            self.conn,
+            unit="me0003",
+            kind="cli",
+            label="get name",
+            attempt=1,
+            path="flood",
+            wait_s=12.0,
+        )
+        assert aid is not None
+        finish_mesh_audit(self.conn, aid, ok=True, outcome="ok", reply="ME0003")
+        self.web_ctx = MonitorWeb(
+            hub=FleetHub(),
+            nodes_path=nodes_path,
+            sites_path=sites_path,
+            stale_secs=86400.0,
+            url="http://127.0.0.1:8787/",
+        )
+        self.web_ctx.bind_scheduler(
+            FleetScheduler(),
+            manual_keys=set(),
+            conn=self.conn,
+            nodes={"me0003": {}},
+            sites={},
+            doc={"nodes": {"me0003": {}}},
+            keys={},
+            do_poll=True,
+            do_apply=True,
+            skip_discover=False,
+            discover_wait=12.0,
+        )
+        await self.web_ctx.refresh_snapshot()
+        app = make_app(self.web_ctx)
+        self.client = TestClient(TestServer(app))
+        await self.client.start_server()
+
+    async def asyncTearDown(self) -> None:
+        await self.client.close()
+        self.conn.close()
+        self.tmp.cleanup()
+
+    async def test_get_audit_returns_rows(self) -> None:
+        resp = await self.client.get("/api/audit/me0003")
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertEqual(body.get("unit"), "me0003")
+        rows = body.get("rows")
+        self.assertIsInstance(rows, list)
+        assert isinstance(rows, list)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].get("label"), "get name")
+        self.assertFalse(body.get("has_more"))
+
+    async def test_get_audit_unknown_unit_empty(self) -> None:
+        resp = await self.client.get("/api/audit/me9999")
+        self.assertEqual(resp.status, 200)
+        body = await resp.json()
+        self.assertEqual(body.get("rows"), [])
+        self.assertFalse(body.get("has_more"))
 
 
 if __name__ == "__main__":

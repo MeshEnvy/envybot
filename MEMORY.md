@@ -21,7 +21,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/keys_doc.py` | `keys.yaml` people + `trust` role resolve |
 | `src/envybot/channels_doc.py` | `channels.yaml` catalog + companion slot planner |
 | `src/envybot/nodes_doc.py` | Desired `nodes.yaml` load/write |
-| `src/envybot/history.py` | `data/fleet/history.sqlite` (+ `mesh_audit` per send) |
+| `src/envybot/history.py` | `data/fleet/history.sqlite` (+ `mesh_audit` per send; `list_mesh_audit`) |
 | `src/envybot/health.py` | Per-node health checks (snapshot + UI grade) |
 | `src/envybot/position.py` | Display GPS: site → node `loc` → `bench_loc`; apply uses site only |
 | `src/envybot/sun.py` | Clear-sky elev: ☀️/🌙 + 72h elevation sparkline |
@@ -65,8 +65,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   omitted). Path uses cached route (including learned zero-hop direct),
   flood-logins when cache is empty, and discards stale cache after 3 timeouts.
   `direct` forces zero-hop every send. `flood` always floods (danger).
-  **`--refresh-paths`:** startup clears companion hop cache for all poll
-  targets (operator moved; next login floods to rediscover). Detail
+  **`--refresh-paths`:** startup logs stale cached hops per target, clears
+  companion hop cache, then next login floods to rediscover. Detail
   **Routing policy** control; list/detail show **live route** from
   companion cache.
 - `decommissioned:` (epoch) rows stay in `nodes.yaml` for the number
@@ -134,7 +134,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Auto poll/apply only: `--retry-delay` (default 60s) parks a unit after timeout
   before retry; `--miss-cooldown` (default 3600s) skips cadence re-seed after
   max attempts. Console and manual Refresh/Pull/Deploy are exempt; manual UI
-  clears backoff and cooldown. `--full-sync` or `--unit` bypass cooldown on startup.
+  clears backoff and cooldown. `--full-sync` or `--only` bypass cooldown on startup.
+  `--only` / `--skip` are the earliest node filter (dashboard + poll/apply).
   Successful GET_STATUS / GET_TELEMETRY / CLI log a one-line result as soon
   as they land (same beat as `login OK`). An apply field whose stamp
   already matches logs `field: skip (synced)` (no radio).
@@ -215,15 +216,21 @@ companions skip. Not re-run on BLE recover.
   Deploy. Auto-apply queues when `apply_is_due` even if the fleet is mid-sync.
   **Pause** (detail checkbox) writes `paused: true` and drops the unit from
   auto poll/apply on the next job boundary (in-flight exchange finishes).
-  Map sidebar and dashboard cards fade paused rows.
+  Map sidebar and dashboard cards fade paused rows. Dashboard **on-air**
+  badge (pulsing radio icon + teal border) marks the unit holding the
+  companion radio (`poll.unit` via session SSE); queued units stay busy
+  purple only.
   **Routing policy** (detail segmented control) writes `routing: direct|flood`
   or clears the key for default path. **Live route** badge shows companion
   cache (direct, hops, or flood). Policy flood shows a danger badge on list cards.
   Units carry `health` (worst-of component checks) and interval traffic
   deltas. Hello snapshot includes compact 72h `sparks` (battery V, temp,
   in/h, unreadable %) per unit; SSE status/telemetry samples extend them
-  live. Detail sparklines prefer merged `polls` from `/api/polls/{unit}`
-  (`poll_snapshots`); ACL poll log only (no neighbor count history). **Heard**
+  live.   Detail sparklines prefer merged `polls` from `/api/polls/{unit}`
+  (`poll_snapshots`); ACL poll log only (no neighbor count history).
+  **Audit** table from `/api/audit/{unit}` (`mesh_audit`, newest first,
+  **Load older** via `before_id`; live `audit` SSE rows while card open).
+  **Heard**
   list is live snapshot from latest neighbors GET (book + off-book by pubkey).
   Rows show approximate miles from the unit: book display loc for fleet
   peers, companion advert GPS (`adv_lat`/`adv_lon`) for community nodes.
@@ -252,4 +259,4 @@ companions skip. Not re-run on BLE recover.
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-14 (companion neighbor ping on connect)
+Last updated: 2026-09-16 (detail audit log UI)

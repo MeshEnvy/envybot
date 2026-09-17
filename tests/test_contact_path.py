@@ -244,11 +244,23 @@ class PrepareRouteTests(unittest.IsolatedAsyncioTestCase):
                 "out_path": "aabbccdd",
             }
 
-        cleared = await refresh_fleet_paths(client, targets, log=PollLog())
+        lines: list[str] = []
+
+        class CaptureLog(PollLog):
+            def step(self, msg: str) -> None:
+                lines.append(msg)
+
+            def substep(self, msg: str) -> None:
+                lines.append(f"  {msg}")
+
+        cleared = await refresh_fleet_paths(client, targets, log=CaptureLog())
         self.assertEqual(cleared, 2)
         self.assertEqual(client.commands.reset_path.await_count, 2)
         for c in contacts.values():
             self.assertEqual(c["out_path_len"], -1)
+        self.assertTrue(any("path was:" in line for line in lines))
+        self.assertIn("  aabb", lines)
+        self.assertIn("  → ccdd", lines)
 
 
 if __name__ == "__main__":

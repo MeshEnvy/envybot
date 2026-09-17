@@ -889,6 +889,44 @@ class RadioPrefTests(unittest.TestCase):
             self.assertEqual(prefs["path_hash"]["value"], "2-byte")
             self.assertEqual(prefs["ota_autofetch"]["value"], "off")
 
+    def test_only_skip_filter_dashboard_units(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            yaml = YAML()
+            yaml.dump({"sites": {}}, sites_path.open("w", encoding="utf-8"))
+            yaml.dump(
+                {
+                    "next_unit": 50,
+                    "nodes": {
+                        "me0048": {
+                            "unit_id": "ME0048",
+                            "identity_pubkey": "a" * 64,
+                            "admin_password": "AdminOneStrong1",
+                        },
+                        "me0049": {
+                            "unit_id": "ME0049",
+                            "identity_pubkey": "b" * 64,
+                            "admin_password": "AdminTwoStrong2",
+                        },
+                    },
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            only_snap = build_fleet_snapshot(
+                nodes_path=nodes_path,
+                sites_path=sites_path,
+                include={"me0048"},
+            )
+            self.assertEqual(set(only_snap["units"]), {"me0048"})
+            skip_snap = build_fleet_snapshot(
+                nodes_path=nodes_path,
+                sites_path=sites_path,
+                skip={"me0048"},
+            )
+            self.assertEqual(set(skip_snap["units"]), {"me0049"})
+
 
 if __name__ == "__main__":
     unittest.main()

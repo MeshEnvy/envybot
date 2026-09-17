@@ -42,6 +42,7 @@ from envybot.nodes_doc import (
     sync_book,
 )
 from envybot.routing import parse_force_path, resolve_routing, routing_explicit
+from envybot.unit_filter import UnitFilterError, parse_unit_specs, resolve_unit_specs
 from envybot.poll import (
     PollPolicy,
     due_groups,
@@ -204,6 +205,28 @@ async def run(args: argparse.Namespace) -> int:
     sites = load_sites_for_book(nodes_path)
     keys = load_keys(keys_path(nodes_path))
 
+    try:
+        include = (
+            resolve_unit_specs(doc, sites, parse_unit_specs(args.only))
+            if args.only
+            else None
+        )
+        skip = (
+            resolve_unit_specs(
+                doc, sites, parse_unit_specs(args.skip), flag="--skip"
+            )
+            if args.skip
+            else None
+        )
+    except UnitFilterError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    if include and not args.quiet:
+        print(f"Including {len(include)} unit(s): {', '.join(sorted(include))}")
+    if skip and not args.quiet:
+        print(f"Excluding {len(skip)} unit(s): {', '.join(sorted(skip))}")
+
     web_ctx: Any | None = None
     session_states: dict[str, dict[str, Any]] = {}
     use_web = not args.no_web
@@ -225,6 +248,8 @@ async def run(args: argparse.Namespace) -> int:
             port=args.port,
             stale_secs=DEFAULT_STALE_SECS,
             open_browser=args.open,
+            include=include,
+            skip=skip,
         )
         web_ctx.bind_scheduler(
             scheduler,
@@ -247,15 +272,11 @@ async def run(args: argparse.Namespace) -> int:
         print("Web-only mode — watching nodes.yaml. Ctrl+C to exit.")
         return await _serve_web_until_stop(web_ctx, 0)
 
-    include = {u.lower() for u in args.unit} if args.unit else None
-    skip = {u.lower() for u in args.skip} if args.skip else None
     bypass_cooldown = bool(args.full_sync or include)
     all_targets = load_targets(
         nodes_path, deployed_only=args.deployed_only, include=include, skip=skip
     )
     auto_targets, paused_targets = partition_paused(all_targets, nodes)
-    if skip and not args.quiet:
-        print(f"Excluding {len(skip)} unit(s): {', '.join(sorted(skip))}")
     if paused_targets and not args.quiet:
         print(
             f"Paused {len(paused_targets)} unit(s): "
@@ -390,6 +411,14 @@ async def run(args: argparse.Namespace) -> int:
 
     if web_ctx:
         web_ctx._fleet_session = session
+
+        def audit_push(payload: dict) -> None:
+            try:
+                asyncio.get_running_loop().create_task(web_ctx.publish_audit(payload))
+            except RuntimeError:
+                pass
+
+        session.audit_push = audit_push
     if args.refresh_paths:
         await sync_fleet_contacts(client, all_targets, log=log)
         await refresh_fleet_paths(client, all_targets, log=log)
@@ -895,7 +924,7 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_MISS_COOLDOWN_S,
         metavar="SEC",
         help="Auto poll/apply only: after max attempts, skip re-seed until cooldown (default 3600). "
-        "Use --full-sync, --unit, or manual UI to bypass.",
+        "Use --full-sync, --only, or manual UI to bypass.",
     )
     parser.add_argument("--round-delay", type=float, default=0.0)
     parser.add_argument("--max-rounds", type=int, default=0)
@@ -906,8 +935,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Poll only site-bound units (skip bag/bench)",
     )
-    parser.add_argument("--unit", action="append", metavar="me0003")
-    parser.add_argument("--skip", action="append", metavar="me0001")
+    parser.add_argument(
+        "--only",
+        action="append",
+        dest="only",
+        metavar="SPEC",
+        help="Include only matching units (comma list or glob; repeatable)",
+    )
+    parser.add_argument(
+        "--skip",
+        action="append",
+        metavar="SPEC",
+        help="Exclude matching units (comma list or glob; repeatable)",
+    )
     parser.add_argument(
         "--min-interval",
         type=float,

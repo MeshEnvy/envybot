@@ -18,6 +18,9 @@ export ENVYBOT_HOME=/path/to/book
 ./envybot seed build/otatest --only 'from-0.1.0-to-0.1.1*'
 ```
 
+Docs index and fleet quick reference: [`docs/README.md`](docs/README.md).
+Agents: [`.cursor/skills/fleet/SKILL.md`](.cursor/skills/fleet/SKILL.md).
+
 ## Commands
 
 | Command | Manual | What it does |

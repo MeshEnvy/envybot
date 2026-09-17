@@ -182,6 +182,12 @@ export function patchUnit(unit) {
 /** @param {Record<string, unknown>} poll */
 export function patchSession(poll) {
   Object.assign(fleetStore.poll, poll)
+  if (
+    !('unit' in poll) &&
+    (poll.phase === 'idle' || poll.phase === 'done')
+  ) {
+    delete fleetStore.poll.unit
+  }
   if (poll.companion != null) fleetStore.companion = poll.companion
 }
 

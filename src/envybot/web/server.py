@@ -14,7 +14,13 @@ from aiohttp import web
 
 from envybot.apply import apply_is_due
 from envybot.fleet_worker import build_manual_jobs
-from envybot.history import get_last_seen, history_series, open_history, source_histories
+from envybot.history import (
+    get_last_seen,
+    history_series,
+    list_mesh_audit,
+    open_history,
+    source_histories,
+)
 from envybot.jobs import FleetScheduler
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
@@ -84,6 +90,13 @@ class MonitorWeb:
     _companion: str | None = field(default=None, repr=False)
     console: ConsoleManager = field(default_factory=ConsoleManager, repr=False)
     _reported_locs: dict[str, tuple[float, float]] = field(default_factory=dict, repr=False)
+    _include: set[str] | None = field(default=None, repr=False)
+    _skip: set[str] | None = field(default=None, repr=False)
+
+    def unit_visible(self, key: str) -> bool:
+        from envybot.unit_filter import key_in_unit_filter
+
+        return key_in_unit_filter(key, include=self._include, skip=self._skip)
 
     def bind_scheduler(
         self,
@@ -146,6 +159,8 @@ class MonitorWeb:
         job = job.lower()
         if job not in MANUAL_JOBS:
             return 400, f"unknown job {job}"
+        if not self.unit_visible(key):
+            return 404, "unknown unit"
         if not self._accepting:
             return 409, "fleet worker not accepting manual jobs"
         doc = load_nodes_doc(self.nodes_path)
@@ -164,7 +179,10 @@ class MonitorWeb:
         if job == "stage" and not (stage_selector or "").strip():
             return 400, "missing catalog index or mid for stage"
         targets = load_targets(
-            self.nodes_path, deployed_only=False, include={key}, skip=None
+            self.nodes_path,
+            deployed_only=False,
+            include={key},
+            skip=self._skip,
         )
         if not targets:
             return 404, "unknown unit"
@@ -206,6 +224,8 @@ class MonitorWeb:
         from envybot.nodes_doc import is_decommissioned, is_meshcore_platform
 
         key = key.lower()
+        if not self.unit_visible(key):
+            return 404, "unknown unit", None
         if require_worker:
             if not self._accepting:
                 return 409, "fleet worker not accepting manual jobs", None
@@ -217,7 +237,10 @@ class MonitorWeb:
         if not isinstance(node, dict) or is_decommissioned(node) or not is_meshcore_platform(node):
             return 404, "unknown unit", None
         targets = load_targets(
-            self.nodes_path, deployed_only=False, include={key}, skip=None
+            self.nodes_path,
+            deployed_only=False,
+            include={key},
+            skip=self._skip,
         )
         if not targets:
             return 404, "unknown unit", None
@@ -420,6 +443,8 @@ class MonitorWeb:
             companion=self._companion,
             poll=self._poll_state or poll or {"phase": "idle"},
             reported_locs=self._live_reported_locs(),
+            include=self._include,
+            skip=self._skip,
         )
         snap["edges"] = build_neighbor_edges(snap["units"])
         snap.setdefault("poll", {})["console"] = self.console.poll_console()
@@ -450,6 +475,8 @@ class MonitorWeb:
             companion=self._companion,
             poll=self._poll_state or poll or {"phase": "idle"},
             reported_locs=self._live_reported_locs(),
+            include=self._include,
+            skip=self._skip,
         )
         snap["edges"] = build_neighbor_edges(snap["units"])
         snap.setdefault("poll", {})["console"] = self.console.poll_console()
@@ -471,10 +498,16 @@ class MonitorWeb:
         snap["units"][key] = unit
         await self.hub.replace_snapshot(snap)
         await self.hub.publish_unit(unit)
+        if poll is not None:
+            await self.hub.publish_session(self._poll_state)
 
     async def publish_session(self, poll: dict[str, Any]) -> None:
         self._poll_state = dict(poll)
         await self.hub.publish_session(poll)
+
+    async def publish_audit(self, event: dict[str, Any]) -> None:
+        assert_no_secrets(event)
+        await self.hub.publish_audit(event)
 
     async def start_yaml_watch(self, interval: float = 1.0) -> None:
         if self._watch_task is not None:
@@ -577,6 +610,8 @@ async def _handle_history(request: web.Request) -> web.Response:
     hours_raw = request.query.get("hours")
     hours = int(hours_raw) if hours_raw and hours_raw.isdigit() else 72
     web_ctx: MonitorWeb = request.app["web_ctx"]
+    if not web_ctx.unit_visible(unit):
+        return web.json_response({"error": "unknown unit"}, status=404)
     conn = open_history(web_ctx.nodes_path.parent)
     try:
         series = history_series(conn, unit, metric, hours=hours)
@@ -616,6 +651,8 @@ async def _handle_polls(request: web.Request) -> web.Response:
     hours = int(hours_raw) if hours_raw and hours_raw.isdigit() else 72
     limit = int(limit_raw) if limit_raw and limit_raw.isdigit() else 80
     web_ctx: MonitorWeb = request.app["web_ctx"]
+    if not web_ctx.unit_visible(unit):
+        return web.json_response({"error": "unknown unit"}, status=404)
     conn = open_history(web_ctx.nodes_path.parent)
     try:
         histories = source_histories(conn, unit, hours=hours, limit=limit)
@@ -633,6 +670,25 @@ async def _handle_polls(request: web.Request) -> web.Response:
     finally:
         conn.close()
     payload = {"unit": unit, "hours": hours, "histories": histories}
+    assert_no_secrets(payload)
+    return web.json_response(payload)
+
+
+async def _handle_audit(request: web.Request) -> web.Response:
+    unit = request.match_info["unit"]
+    limit_raw = request.query.get("limit")
+    before_raw = request.query.get("before_id")
+    limit = int(limit_raw) if limit_raw and limit_raw.isdigit() else 40
+    before_id = int(before_raw) if before_raw and before_raw.isdigit() else None
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    if not web_ctx.unit_visible(unit):
+        return web.json_response({"error": "unknown unit"}, status=404)
+    conn = open_history(web_ctx.nodes_path.parent)
+    try:
+        rows, has_more = list_mesh_audit(conn, unit, limit=limit, before_id=before_id)
+    finally:
+        conn.close()
+    payload = {"unit": unit, "rows": rows, "has_more": has_more}
     assert_no_secrets(payload)
     return web.json_response(payload)
 
@@ -733,6 +789,8 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid json"}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": "object required"}, status=400)
+    if not web_ctx.unit_visible(key):
+        return web.json_response({"error": "unknown unit"}, status=404)
     doc = load_nodes_doc(web_ctx.nodes_path)
     nodes = doc.get("nodes") or {}
     node = nodes.get(key)
@@ -988,6 +1046,7 @@ def make_app(web_ctx: MonitorWeb) -> web.Application:
     app.router.add_delete("/api/console/{tab_id}/pending", _handle_console_pending_delete)
     app.router.add_get("/api/history/{unit}", _handle_history)
     app.router.add_get("/api/polls/{unit}", _handle_polls)
+    app.router.add_get("/api/audit/{unit}", _handle_audit)
     app.router.add_get("/events", _handle_events)
     app.router.add_get("/", _handle_index)
     app.router.add_get("/index.html", _handle_index)
@@ -1003,6 +1062,8 @@ async def create_monitor_web(
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
     stale_secs: float = 86400.0,
+    include: set[str] | None = None,
+    skip: set[str] | None = None,
 ) -> MonitorWeb:
     book_dir = nodes_path.parent
     if sites_path is None:
@@ -1014,6 +1075,8 @@ async def create_monitor_web(
         sites_path=sites_path,
         stale_secs=stale_secs,
         url=f"http://{host}:{port}/",
+        _include=include,
+        _skip=skip,
     )
     web_ctx.console.bind_publish(hub.publish_console)
     runner = web.AppRunner(make_app(web_ctx))
@@ -1033,6 +1096,8 @@ async def start_monitor_web(
     port: int = DEFAULT_PORT,
     stale_secs: float = 86400.0,
     open_browser: bool = False,
+    include: set[str] | None = None,
+    skip: set[str] | None = None,
 ) -> MonitorWeb:
     web_ctx = await create_monitor_web(
         nodes_path=nodes_path,
@@ -1040,6 +1105,8 @@ async def start_monitor_web(
         host=host,
         port=port,
         stale_secs=stale_secs,
+        include=include,
+        skip=skip,
     )
     await web_ctx.refresh_snapshot()
     print(f"Fleet UI: {web_ctx.url}")
