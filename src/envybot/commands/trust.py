@@ -37,6 +37,7 @@ from envybot.keys_doc import (
 )
 from envybot.apply import profile_id, stamp_profile_after_trust
 from envybot.history import migrate_legacy
+from envybot.book_dal import load_book
 from envybot.nodes_doc import UNIT_NUM_RE, load_nodes_doc, load_sites_for_book, write_nodes_doc
 from envybot.position import lookup_site_name, public_radio_name, resolve_book_position, site_binding
 from envybot.public_advert import resolve_public_apply_position
@@ -123,13 +124,14 @@ def build_trust_rows(
     include: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """All pollable MeshCore units, including bag/bench (no site)."""
-    doc = load_nodes_doc(nodes_path)
-    nodes = doc.get("nodes") or {}
-    sites = load_sites_for_book(nodes_path)
+    book = load_book(nodes_path)
     targets = load_targets(
         nodes_path, deployed_only=False, include=include, skip=None
     )
-    return [contact_payload(t, nodes.get(t.key) or {}, sites, doc=doc) for t in targets]
+    return [
+        contact_payload(t, book.nodes.get(t.key) or {}, book.sites, doc=book.doc)
+        for t in targets
+    ]
 
 
 def write_export(path: Path, rows: list[dict[str, Any]]) -> None:

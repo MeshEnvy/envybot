@@ -58,7 +58,8 @@ NODES_YAML_HEADER = (
     "# public_advert: book-level suffix, owner_info, location_accuracy_mi,\n"
     "#   location_salt (required when location_accuracy_mi > 0; offsets are\n"
     "#   stable per node). 0 = exact stake coords on the air.\n"
-    "#   Per-site advert_name (≤16 chars + suffix) in sites.yaml.\n"
+    "#   Per-site advert_name: ≤13 chars base + suffix when GPS is advertised\n"
+    "#   (23 chars total on-air; MeshCore advert payload is 32 bytes).\n"
     "# repeat: optional on|off. Default on when site-bound, off when bench.\n"
     "# bench_loc: book HQ for unbound units (map/sun/history). Fleet UI may update it.\n"
     "# Per-node loc: [lat, lon] overrides bench_loc when unbound. Not pushed to radio.\n"
@@ -209,14 +210,18 @@ def sync_book(
         fresh = load_nodes_doc(nodes_path)
     except OSError:
         return False
+    disk_sites = load_sites(nodes_path.parent / "sites.yaml")
+    disk_nodes = fresh.get("nodes") or {}
+    if not isinstance(disk_nodes, dict):
+        disk_nodes = {}
+    from envybot.book_dal import raise_on_book_errors, validate_book
+
+    raise_on_book_errors(validate_book(fresh, disk_nodes, disk_sites))
     _book_mtime = mtime
     for key, val in fresh.items():
         if key == "nodes":
             continue
         doc[key] = val
-    disk_nodes = fresh.get("nodes") or {}
-    if not isinstance(disk_nodes, dict):
-        disk_nodes = {}
     for key, mem in list(nodes.items()):
         if not isinstance(mem, dict):
             continue

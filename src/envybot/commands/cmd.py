@@ -32,7 +32,7 @@ except ImportError as exc:  # pragma: no cover
 
 from envybot.history import insert_command, open_history
 from envybot.keys_doc import keys_path, load_keys
-from envybot.nodes_doc import load_nodes_doc, load_sites_for_book
+from envybot.book_dal import load_book
 from envybot.radio import (
     FleetSession,
     RouterTarget,
@@ -182,9 +182,9 @@ async def run_repl(
 
 
 async def run(args: argparse.Namespace) -> int:
-    doc = load_nodes_doc(args.nodes)
-    keys = load_keys(keys_path(args.nodes))
-    resolved = resolve_selector(doc, args.selector, load_sites_for_book(args.nodes))
+    book = load_book(args.nodes)
+    doc, keys, sites = book.doc, book.keys, book.sites
+    resolved = resolve_selector(doc, args.selector, sites)
     if resolved.error or resolved.target is None:
         print(resolved.error or "unknown selector", file=sys.stderr)
         if resolved.candidates:

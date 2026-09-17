@@ -10,7 +10,10 @@ from typing import Any
 
 from envybot.position import EARTH_MI, haversine_miles, site_binding
 
-MAX_RADIO_NAME = 32
+MAX_RADIO_NAME = 32  # CLI prefs node_name[32]; not the on-air advert budget
+MAX_ADVERT_DATA_SIZE = 32  # firmware MeshCore.h MAX_ADVERT_DATA_SIZE
+MAX_ADVERT_NAME_WITH_GPS = MAX_ADVERT_DATA_SIZE - 1 - 8  # flags + lat/lon → 23
+MAX_ADVERT_NAME_NO_GPS = MAX_ADVERT_DATA_SIZE - 1  # flags only → 31
 MAX_OWNER_INFO = 120
 DEFAULT_PUBLIC_NAME_SUFFIX = " {lora.sh}"
 
@@ -89,6 +92,70 @@ def site_advert_suffix(
     if config:
         return config.name_suffix
     return ""
+
+
+def advert_name_includes_gps(
+    node: dict[str, Any] | None,
+    sites: dict[str, dict[str, Any]] | None,
+    *,
+    key: str | None = None,
+    doc: dict[str, Any] | None = None,
+) -> bool:
+    """True when apply pushes stake GPS (lat/lon bytes go in on-air adverts)."""
+    from envybot.position import site_binding
+
+    if site_binding(key, node, sites) is None:
+        return False
+    return resolve_public_apply_position(node, sites, key=key, doc=doc) is not None
+
+
+def max_on_air_advert_name_len(
+    node: dict[str, Any] | None,
+    sites: dict[str, dict[str, Any]] | None,
+    *,
+    key: str | None = None,
+    doc: dict[str, Any] | None = None,
+) -> int:
+    if advert_name_includes_gps(node, sites, key=key, doc=doc):
+        return MAX_ADVERT_NAME_WITH_GPS
+    return MAX_ADVERT_NAME_NO_GPS
+
+
+def collect_advert_name_violations(
+    doc: dict[str, Any] | None,
+    nodes: dict[str, Any] | None,
+    sites: dict[str, dict[str, Any]] | None,
+) -> list[str]:
+    """Site-bound MeshCore units: full on-air name must fit advert payload."""
+    from envybot.nodes_doc import is_decommissioned, is_meshcore_platform
+    from envybot.position import site_binding
+
+    out: list[str] = []
+    for key, node in sorted((nodes or {}).items()):
+        if not isinstance(node, dict) or not is_meshcore_platform(node):
+            continue
+        if is_decommissioned(node):
+            continue
+        bind = site_binding(key, node, sites)
+        if bind is None:
+            continue
+        slug, _site = bind
+        includes_gps = advert_name_includes_gps(node, sites, key=key, doc=doc)
+        max_len = MAX_ADVERT_NAME_WITH_GPS if includes_gps else MAX_ADVERT_NAME_NO_GPS
+        radio_name = public_radio_name(key, node, sites, doc=doc, max_len=MAX_RADIO_NAME)
+        if len(radio_name) <= max_len:
+            continue
+        unit_id = str(node.get("unit_id") or key.upper())
+        gps_note = (
+            f"max {max_len} with GPS in advert ({MAX_ADVERT_DATA_SIZE}-byte payload)"
+            if includes_gps
+            else f"max {max_len} without GPS in advert"
+        )
+        out.append(
+            f"{unit_id} / {slug}: on-air name {radio_name!r} is {len(radio_name)} chars; "
+            f"{gps_note}. Shorten sites.yaml advert_name or nodes.yaml public_advert.name_suffix"
+        )
+    return out
 
 
 def format_public_radio_name(

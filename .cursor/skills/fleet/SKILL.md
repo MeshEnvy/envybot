@@ -162,10 +162,46 @@ Companion flags match `cmd`: `--ble`, `--serial`, `--tcp`, `--timeout`, `--login
 
 Reachability: cite sqlite last-seen, not YAML.
 
+## Book validation (load gate)
+
+All fleet commands load the book through `book_dal.load_book()` (not raw
+`load_nodes_doc`). Invalid YAML **exits before radio work**.
+
+### On-air advert name limit (not CLI 32)
+
+MeshCore advert `app_data` is **32 bytes total** (`MAX_ADVERT_DATA_SIZE`).
+Site-bound units that advertise GPS consume 9 bytes before the name (flags +
+lat/lon), so the **on-air name is max 23 characters**.
+
+| Piece | Budget |
+|-------|--------|
+| Full on-air name with GPS | **23 chars** |
+| Default suffix ` {lora.sh}` | 10 chars |
+| Max base `advert_name` with GPS + default suffix | **13 chars** |
+| CLI `set name` / prefs | 32 chars (can be longer; advert truncates) |
+
+Companion path labels and neighbor names use **heard advert names**, not the
+full CLI name. Clipped names in `path:` lines (e.g. `Bare Mountain E {lora.s`)
+mean the book name exceeds the 23-byte advert budget.
+
+Validation checks every **site-bound MeshCore** unit:
+`advert_name` + `public_advert.name_suffix` (or per-site `advert_suffix`).
+Change the suffix and a formerly OK site can fail validation until you shorten
+names.
+
+```text
+book validation failed:
+  ME0048 / bare-mountain-east: on-air name 'Bare Mountain E {lora.sh}' is 25 chars; max 23 with GPS in advert (32-byte payload). ...
+fix nodes.yaml / sites.yaml before running fleet
+```
+
+Hot reload (`sync_book`) runs the same checks. Fix YAML before fleet continues.
+
 ## Code pointers (when skill is not enough)
 
 | Topic | File |
 |-------|------|
+| Book load + validation gate | `src/envybot/book_dal.py`, `public_advert.py` |
 | CLI flags, startup, refresh-paths | `src/envybot/commands/fleet.py` |
 | Job execution, login compact | `src/envybot/fleet_worker.py` |
 | Path log, reset_to_flood, login | `src/envybot/radio.py` |

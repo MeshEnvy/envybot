@@ -34,6 +34,23 @@ Observed last-seen lives in sqlite only. Do not put telemetry or
 `polls.jsonl` (then deletes it); that path is leftover, not a yaml
 migrator.
 
+## Book validation
+
+Fleet, cmd, trust, and onboard load the book through `book_dal.load_book()`.
+Invalid desired state exits before any radio work. Hot reload (`sync_book`)
+runs the same checks.
+
+Site-bound MeshCore units advertise GPS in the 32-byte MeshCore advert
+payload. Lat/lon uses 9 bytes, so the **on-air name is max 23 characters**
+(base `sites.yaml` `advert_name` + book `public_advert.name_suffix`). CLI
+`set name` allows 32 characters; firmware truncates what goes on-air.
+Path hop labels and neighbor names come from heard adverts, not the full CLI
+name.
+
+With default suffix ` {lora.sh}` (10 chars), keep `advert_name` at **13
+characters or fewer**. Changing `name_suffix` can invalidate previously OK
+sites until names are shortened.
+
 ## Poll cadence
 
 | Mode | Groups | When |

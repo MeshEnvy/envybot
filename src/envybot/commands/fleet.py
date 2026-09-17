@@ -21,7 +21,7 @@ from envybot.fleet_worker import (
     insert_apply_jobs,
     job_sample,
 )
-from envybot.history import migrate_legacy
+from envybot.book_dal import load_book
 from envybot.jobs import (
     TIMER_JOB_KINDS,
     FleetScheduler,
@@ -35,12 +35,7 @@ from envybot.jobs import (
     keep_console_jobs,
 )
 from envybot.keys_doc import keys_path, load_keys
-from envybot.nodes_doc import (
-    is_paused,
-    load_nodes_doc,
-    load_sites_for_book,
-    sync_book,
-)
+from envybot.nodes_doc import is_paused, sync_book
 from envybot.routing import parse_force_path, resolve_routing, routing_explicit
 from envybot.unit_filter import UnitFilterError, parse_unit_specs, resolve_unit_specs
 from envybot.poll import (
@@ -104,16 +99,6 @@ async def _serve_web_until_stop(web_ctx: Any, poll_exit: int) -> int:
     finally:
         await web_ctx.shutdown()
     return poll_exit
-
-
-def _load_book(nodes_path: Path) -> tuple[dict[str, Any], Any]:
-    doc = load_nodes_doc(nodes_path)
-    nodes = doc.get("nodes") or {}
-    if not isinstance(nodes, dict):
-        nodes = {}
-        doc["nodes"] = nodes
-    conn = migrate_legacy(nodes_path.parent, nodes)
-    return doc, conn
 
 
 def _seed_auto_work(
@@ -193,7 +178,8 @@ def _seed_auto_work(
 
 async def run(args: argparse.Namespace) -> int:
     nodes_path: Path = args.nodes
-    doc, conn = _load_book(nodes_path)
+    book = load_book(nodes_path)
+    doc, conn, nodes = book.doc, book.conn, book.nodes
     from envybot.weather import weather_backfill_pending
 
     if weather_backfill_pending(conn) and not args.quiet:
@@ -201,9 +187,7 @@ async def run(args: argparse.Namespace) -> int:
             "weather: run ./envybot weather backfill once to cache historical conditions",
             file=sys.stderr,
         )
-    nodes = doc.get("nodes") or {}
-    sites = load_sites_for_book(nodes_path)
-    keys = load_keys(keys_path(nodes_path))
+    sites, keys = book.sites, book.keys
 
     try:
         include = (

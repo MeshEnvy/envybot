@@ -552,6 +552,14 @@ def load_registry(nodes_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         raise SystemExit(f"nodes.yaml not found: {nodes_path}")
     doc = load_nodes_doc(nodes_path)
     nodes: dict[str, Any] = doc.setdefault("nodes", {})
+    if not isinstance(nodes, dict):
+        nodes = {}
+        doc["nodes"] = nodes
+    from envybot.book_dal import raise_on_book_errors, validate_book
+    from envybot.nodes_doc import load_sites_for_book
+
+    sites = load_sites_for_book(nodes_path)
+    raise_on_book_errors(validate_book(doc, nodes, sites))
     return doc, nodes
 
 

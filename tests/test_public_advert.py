@@ -7,7 +7,9 @@ import unittest
 from envybot.apply import desired_repeat, profile_parts
 from envybot.public_advert import (
     DEFAULT_PUBLIC_NAME_SUFFIX,
+    MAX_ADVERT_NAME_WITH_GPS,
     audit_apply_position,
+    collect_advert_name_violations,
     format_apply_name_log,
     format_apply_position_log,
     format_public_radio_name,
@@ -173,6 +175,21 @@ class PublicAdvertConfigTests(unittest.TestCase):
         sites = {"ophir": {"node": "me0003", "advert_name": "Ophir", "loc": [39.5, -119.8]}}
         text = format_apply_name_log("me0003", node, sites, doc=DOC)
         self.assertEqual(text, 'name: radio "Ophir {lora.sh}" (site ophir)')
+
+    def test_collect_advert_name_violations(self) -> None:
+        node = {"unit_id": "ME0048", "identity_pubkey": PUBKEY}
+        sites = {
+            "bare-mountain-east": {
+                "node": "me0048",
+                "advert_name": "Bare Mountain E",
+                "loc": [36.87, -116.68],
+            }
+        }
+        nodes = {"me0048": node}
+        errors = collect_advert_name_violations(DOC, nodes, sites)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("25 chars", errors[0])
+        self.assertEqual(MAX_ADVERT_NAME_WITH_GPS, 23)
 
 
 if __name__ == "__main__":
