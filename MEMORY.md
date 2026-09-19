@@ -69,6 +69,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   companion hop cache, then next login floods to rediscover. Detail
   **Routing policy** control; list/detail show **live route** from
   companion cache.
+  **Next (ops 09-19, not built):** favorite-route graph (official + community
+  guest hops). Launch neighbor-ask. Known path prefix. Traceroute. Do not
+  flood-discover when infra is mapped. — `ops/initiatives/envybot-radio-daemon.md`.
 - `decommissioned:` (epoch) rows stay in `nodes.yaml` for the number
   but envybot ignores them: no UI, poll, apply, trust, cmd, or onboard.
 - `fleet` and `trust` poll every pollable MeshCore unit, including
@@ -259,4 +262,4 @@ companions skip. Not re-run on BLE recover.
 - Long BLE apply can drop the companion link; fleet reconnects transport,
   re-syncs clock/contacts, and clears cached logins before retrying.
 
-Last updated: 2026-09-16 (detail audit log UI)
+Last updated: 2026-09-19 (favorite-route next; still path/flood/direct today)
