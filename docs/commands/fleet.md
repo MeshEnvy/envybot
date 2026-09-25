@@ -87,12 +87,12 @@ map modal. **Refresh**, **Pull**, and **Deploy** still work from the UI. Unpause
 (or delete the key) returns the unit to the next fleet run. Mid-run pause
 takes effect at the next job boundary. `trust` / `cmd` do not honor pause.
 
-`routing: direct | path | flood` is mesh send policy (default **path** when
-omitted). Path uses cached route (including learned zero-hop direct),
-flood-logins when cache is empty, and discards stale cache after 3 timeouts.
+`routing: auto | path | direct | flood` is mesh send policy (default **auto**
+when omitted). Auto uses companion hop cache, flood-logins when empty, and
+discards stale cache after 3 timeouts. **path** locks hops in book `route:`.
 `direct` forces zero-hop every send. `flood` always floods (danger). Mid-run
-change takes effect on the next login/send. Detail **Routing policy** control;
-list/detail show **live route**.
+change takes effect on the next login/send. Detail **Route** dropdown;
+auto shows live companion cache.
 
 ## Job queue
 
@@ -115,11 +115,12 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
   priority. Two manuals interleave with each other.
 - `--attempts` (default 10) caps retries **per command** at the scheduler.
   Logs show scheduler `N/max` (e.g. `8/10`), not inner one-shot `N/1`.
-  Login uses book routing policy (default path). Later GET/CLI/binary in that
-  session use the cached route when path mode has one
+  Login uses book routing policy (default auto). Later GET/CLI/binary in that
+  session use the cached route when auto mode has one
   (`mesh_audit.path` = hop string, `direct`, or `flood` on discover/retry).
-  Path mode flood-discovers when cache is empty. Three consecutive timeouts on
-  a cached path discard the cache and re-flood.
+  Auto flood-discovers when cache is empty. Three consecutive timeouts on
+  a cached path discard the cache and re-flood. Locked **path** re-applies
+  book `route:` every send.
   `--retry-delay` (default 60s) parks auto poll/apply units after a timeout
   before retry; `--miss-cooldown` (default 3600s) skips re-seed after max
   attempts. Console and manual Refresh/Pull/Deploy are exempt; manual UI also
@@ -317,8 +318,8 @@ device `0,0`. Pin color is last-heard age (green now, amber at 12h, red at
 24h+; never-heard is gray). Labels are `Site (3h)` when bound, else book
 alias, else unit id. Age ticks live from `last_heard`. Detail shows unit id and site name, editable **alias** and **notes**
 (when bag/bench, alias becomes the list title), `public` / `pause`,
-**routing policy** and **live route** (click Route to paste a log dump and
-session-pin hops), and drift
+**Route** dropdown (auto / path / direct / flood) and hop display (path mode:
+paste a log dump and save to book `route:`), and drift
 from the apply stamp (`due` when the profile is stale) or a later pull
 that still shows advert on (`leak`). Leftover name or GPS is not an advert.
 List cards show the same primary label with unit id
@@ -326,8 +327,9 @@ as secondary when it differs. While the companion worker is live, **Refresh** on
 unit pulls live telemetry now; **Pull** also GETs fw/name/GPS/advert/acl;
 **Deploy** re-SETs the book profile (overrides `paused` and up-to-date skips).
 CLI `--skip` hides units from the dashboard. **Active** on the detail card turns
-auto poll/apply on or off (`paused: true` in the book when off). Routing policy is Path (default) / Direct / Flood on the
-detail card; list cards show live route and a danger badge when policy is flood.
+auto poll/apply on or off (`paused: true` in the book when off). Route mode is
+Auto (default) / Path / Direct / Flood on the detail card; list cards show live
+route and a danger badge when mode is flood.
 Sidebar rows fade and badge as paused. Rows with
 `decommissioned:` or `firmware_platform: meshtastic` are omitted
 entirely.

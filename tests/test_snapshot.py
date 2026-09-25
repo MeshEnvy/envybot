@@ -284,9 +284,9 @@ class SnapshotTests(unittest.TestCase):
             snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
             self.assertFalse(snap["units"]["me0001"]["paused"])
             self.assertTrue(snap["units"]["me0002"]["paused"])
-            self.assertEqual(snap["units"]["me0001"]["routing"], "path")
+            self.assertEqual(snap["units"]["me0001"]["routing"], "auto")
             self.assertIsNone(snap["units"]["me0001"]["routing_explicit"])
-            self.assertEqual(snap["units"]["me0002"]["routing"], "path")
+            self.assertEqual(snap["units"]["me0002"]["routing"], "auto")
             self.assertIsNone(snap["units"]["me0002"]["routing_explicit"])
             self.assertEqual(snap["counts"]["paused"], 1)
             self.assertEqual(snap["counts"]["total"], 2)
@@ -320,7 +320,7 @@ class SnapshotTests(unittest.TestCase):
                 nodes_path.open("w", encoding="utf-8"),
             )
             snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
-            self.assertEqual(snap["units"]["me0001"]["routing"], "path")
+            self.assertEqual(snap["units"]["me0001"]["routing"], "auto")
             self.assertEqual(snap["units"]["me0002"]["routing"], "flood")
             self.assertEqual(snap["units"]["me0002"]["routing_explicit"], "flood")
 

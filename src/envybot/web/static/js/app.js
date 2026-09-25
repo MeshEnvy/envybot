@@ -16,7 +16,6 @@ import {
   installUnit,
   patchUnit,
   postUnitPath,
-  clearUnitPath,
   postBenchLoc,
   pullUnit,
   deployUnit,
@@ -84,7 +83,9 @@ import {
 import {
   buildNeighborEdges,
   createMapController,
+  formatStageWithAttempt,
   unitStage,
+  unitStageLine,
   unitStatus,
 } from "./map.js?v=33";
 import {
@@ -397,7 +398,26 @@ const App = {
     function isInFlight(unit) {
       const s = unit?.session;
       const state = s && typeof s === "object" && "state" in s ? s.state : null;
-      return MANUAL_BUSY.has(state);
+      if (MANUAL_BUSY.has(state)) return true;
+      const key = unit?.key;
+      return (
+        !!key &&
+        radioActiveKey.value === key &&
+        fleet.poll?.phase === "polling"
+      );
+    }
+
+    /** Live stage line; falls back when poll.unit is active but unit.session lags. */
+    function unitStageDisplay(unit) {
+      if (!unit) return "";
+      const s = unit.session;
+      const state =
+        s && typeof s === "object" && "state" in s ? s.state : null;
+      let stage = unitStage(unit);
+      if (isInFlight(unit) && !MANUAL_BUSY.has(state)) {
+        stage = "Polling";
+      }
+      return formatStageWithAttempt(stage, s);
     }
 
     /** @param {Record<string, unknown> | undefined} unit */
@@ -1497,7 +1517,7 @@ const App = {
       history.replaceState(null, "", next);
     }
 
-    function openDetail(key, { fly = false } = {}) {
+    async function openDetail(key, { fly = false } = {}) {
       hideConsole();
       selectedKey.value = key;
       mapHighlightKey.value = key;
@@ -1505,6 +1525,14 @@ const App = {
       if (fly && mapCtrl) mapCtrl.flyTo(key, fleet);
       pushMap();
       resetAudit();
+      try {
+        const snap = await fetchFleet();
+        if (snap.poll) patchSession(snap.poll);
+        const fresh = snap.units?.[key];
+        if (fresh) applyUnit(fresh);
+      } catch (err) {
+        console.error(err);
+      }
       loadHistoriesFor(key);
       loadAuditFirstPage(key);
     }
@@ -1514,7 +1542,7 @@ const App = {
         clearSelection();
         return;
       }
-      openDetail(key);
+      void openDetail(key);
     }
 
     function selectFromMapPin(key) {
@@ -1522,7 +1550,7 @@ const App = {
         clearSelection();
         return;
       }
-      openDetail(key);
+      void openDetail(key);
     }
 
     async function applyLocationUnit() {
@@ -1539,7 +1567,7 @@ const App = {
         pushMap();
         return;
       }
-      openDetail(key);
+      void openDetail(key);
     }
 
     async function selectUnit(key) {
@@ -1809,23 +1837,16 @@ const App = {
     }
 
     /** @param {Record<string, unknown>} unit */
-    function effectiveRoutingPolicy(unit) {
-      const explicit = unit.routing_explicit;
-      if (explicit === "direct" || explicit === "flood") return explicit;
-      return "path";
-    }
-
-    /** @param {Record<string, unknown>} unit */
-    function routingPolicyLabel(unit) {
-      const p = effectiveRoutingPolicy(unit);
-      return p === "path" ? "path (default)" : p;
+    function unitRoutingMode(unit) {
+      const r = unit.routing;
+      if (r === "auto" || r === "path" || r === "direct" || r === "flood") {
+        return r;
+      }
+      return "auto";
     }
 
     /** @param {Record<string, unknown>} unit */
     function liveRouteLabel(unit) {
-      if (unit.path_pinned && unit.forced_path_label) {
-        return String(unit.forced_path_label).trim();
-      }
       const lr = unit.live_route;
       if (!lr || typeof lr !== "object") return "unknown";
       return String(lr.label || "unknown");
@@ -1833,16 +1854,6 @@ const App = {
 
     /** Display mode: hop names + (hex), one per line; flood/direct stay short. */
     function liveRouteDisplay(unit) {
-      const pinnedHops = unit.path_pinned ? routeHopHashes(unit) : [];
-      if (pinnedHops.length) {
-        const byPrefix = routePrefixNameMap();
-        return pinnedHops
-          .map((h) => {
-            const name = byPrefix.get(h);
-            return name ? `${name} (${h})` : `(${h})`;
-          })
-          .join("\n");
-      }
       const lr = unit.live_route;
       if (!lr || typeof lr !== "object") return "unknown";
       if (lr.kind === "flood") {
@@ -1862,9 +1873,6 @@ const App = {
 
     function liveRouteDisplayClass(unit) {
       const base = liveRouteBadgeClass(unit);
-      if (unit.path_pinned && routeHopHashes(unit).length) {
-        return `${base} live-route-hops-display`;
-      }
       const lr = unit.live_route;
       if (lr && typeof lr === "object" && lr.kind === "hops" && routeHopHashes(unit).length) {
         return `${base} live-route-hops-display`;
@@ -1874,8 +1882,13 @@ const App = {
 
     /** @param {Record<string, unknown>} unit */
     function liveRouteTitle(unit) {
-      if (unit.path_pinned && unit.forced_path_label) {
-        return `Pinned route: ${String(unit.forced_path_label).trim()}`;
+      const mode = unitRoutingMode(unit);
+      if (mode === "path") return `Book path: ${unit.route || liveRouteLabel(unit)}`;
+      if (mode === "auto") {
+        const lr = unit.live_route;
+        if (lr && typeof lr === "object" && lr.kind === "flood" && lr.fallback) {
+          return "Companion cache empty; next send flood-discovers";
+        }
       }
       const lr = unit.live_route;
       if (!lr || typeof lr !== "object") return "Route unknown";
@@ -1886,9 +1899,6 @@ const App = {
 
     /** @param {Record<string, unknown>} unit */
     function liveRouteBadgeClass(unit) {
-      if (unit.path_pinned && routeHopHashes(unit).length) {
-        return "live-route-badge";
-      }
       const lr = unit.live_route;
       if (!lr || typeof lr !== "object") return "live-route-badge live-route-unknown";
       if (lr.kind === "flood" && lr.fallback) {
@@ -1905,22 +1915,33 @@ const App = {
 
     /** @param {Record<string, unknown>} unit */
     function routePrefillText(unit) {
-      if (unit.path_pinned && typeof unit.forced_path_label === "string") {
-        return unit.forced_path_label.trim();
+      if (typeof unit.route === "string" && unit.route.trim()) {
+        return unit.route.trim();
       }
       return formatRouteHexPaste(routeHopHashes(unit));
     }
 
     /** @param {Record<string, unknown>} unit */
     function routeHopHashes(unit) {
-      if (unit.path_pinned && unit.forced_path_label) {
-        return String(unit.forced_path_label).trim().split(/\s+/).filter(Boolean);
+      if (typeof unit.route === "string" && unit.route.trim()) {
+        return unit.route.trim().split(/\s+/).filter(Boolean);
       }
       const lr = unit.live_route;
       if (lr && typeof lr === "object" && lr.kind === "hops" && lr.label) {
         return String(lr.label).trim().split(/\s+/).filter(Boolean);
       }
       return [];
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function routeDisplayVisible(unit) {
+      const mode = unitRoutingMode(unit);
+      return mode === "auto" || mode === "path";
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function routeEditable(unit) {
+      return unitRoutingMode(unit) === "path";
     }
 
     /** Resolve 4-hex path ids to fleet unit titles (unknown hops keep hex only). */
@@ -1993,10 +2014,19 @@ const App = {
 
     /** @param {Record<string, unknown>} unit */
     function openRouteEdit(unit) {
+      if (!routeEditable(unit)) return;
       routeDraft.value = routePrefillText(unit);
       routeError.value = "";
       routeEditing.value = true;
       nextTick(() => routeTextarea.value?.focus());
+    }
+
+    /** @param {Record<string, unknown>} unit @param {Event} ev */
+    async function onRouteModeChange(unit, ev) {
+      const el = ev.target;
+      if (!el || !("value" in el)) return;
+      const mode = String(el.value);
+      await setRouteMode(unit, mode);
     }
 
     function cancelRouteEdit() {
@@ -2029,34 +2059,47 @@ const App = {
 
     /** @param {Record<string, unknown>} unit */
     async function clearRoutePin(unit) {
-      routeSaving.value = true;
-      routeError.value = "";
-      try {
-        const updated = await clearUnitPath(String(unit.key));
-        applyUnit(updated);
-        routeEditing.value = false;
-        pushMap();
-      } catch (err) {
-        routeError.value = err instanceof Error ? err.message : String(err);
-      } finally {
-        routeSaving.value = false;
-      }
+      await setRouteMode(unit, "auto");
     }
 
     /** @param {Record<string, unknown>} unit */
     function showPolicyFloodBadge(unit) {
-      return unit.routing_explicit === "flood";
+      return unitRoutingMode(unit) === "flood";
     }
 
-    /** @param {Record<string, unknown>} unit @param {'path'|'direct'|'flood'} mode */
-    async function setRoutingPolicy(unit, mode) {
+    /** @param {Record<string, unknown>} unit @param {'auto'|'path'|'direct'|'flood'} mode */
+    async function setRouteMode(unit, mode) {
+      const key = String(unit.key);
+      const prev = fleet.units[key] || unit;
+      fleet.units[key] = {
+        ...prev,
+        routing: mode,
+        ...(mode === "path" ? {} : { route: null }),
+      };
       try {
-        const updated = await patchUnit(String(unit.key), {
-          routing: mode === "path" ? null : mode,
-        });
+        if (mode === "path") {
+          const hops = routeHopHashes(unit);
+          const body = { routing: "path" };
+          if (hops.length) body.route = hops.join(" ");
+          const updated = await patchUnit(key, body);
+          applyUnit(updated);
+          if (!hops.length) openRouteEdit(updated);
+          pushMap();
+          return;
+        }
+        if (mode === "auto") {
+          const updated = await patchUnit(key, { routing: "auto" });
+          applyUnit(updated);
+          routeEditing.value = false;
+          pushMap();
+          return;
+        }
+        const updated = await patchUnit(key, { routing: mode });
         applyUnit(updated);
+        routeEditing.value = false;
         pushMap();
       } catch (err) {
+        applyUnit(prev);
         console.error(err);
       }
     }
@@ -2250,6 +2293,8 @@ const App = {
       onModalPanelMouseUp,
       unitStatus,
       unitStage,
+      unitStageLine,
+      unitStageDisplay,
       isInFlight,
       isOnAir,
       sessionBadgeTitle,
@@ -2346,9 +2391,11 @@ const App = {
       toggleRepeat,
       togglePaused,
       ackStability,
-      setRoutingPolicy,
-      effectiveRoutingPolicy,
-      routingPolicyLabel,
+      setRouteMode,
+      onRouteModeChange,
+      unitRoutingMode,
+      routeDisplayVisible,
+      routeEditable,
       liveRouteLabel,
       liveRouteDisplay,
       liveRouteDisplayClass,
@@ -2575,8 +2622,8 @@ const App = {
                 class="unit-refresh"
                 :class="{ spinning: isInFlight(unit) }"
                 :disabled="!canManualUnit(unit, 'refresh')"
-                :title="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
-                :aria-label="isInFlight(unit) ? unitStage(unit) : 'Refresh'"
+                :title="isInFlight(unit) ? unitStageDisplay(unit) : 'Refresh'"
+                :aria-label="isInFlight(unit) ? unitStageDisplay(unit) : 'Refresh'"
                 @click.stop="runManualJob(unit, 'refresh', $event)"
               >
                 <span class="unit-refresh-icon" aria-hidden="true">↻</span>
@@ -2588,7 +2635,7 @@ const App = {
               v-if="isInFlight(unit)"
               class="dash-foot-busy"
               :title="sessionBadgeTitle(unit)"
-            >{{ unitStage(unit) }}</span>
+            >{{ unitStageDisplay(unit) }}</span>
             <span v-else class="dash-foot-meta">
               <span v-if="cardShowNodeId(unit)" class="unit-id">{{ cardNodeId(unit) }}</span>
               <span v-if="unit.board" class="unit-id">{{ unit.board }}</span>
@@ -2598,7 +2645,7 @@ const App = {
                 title="Always flood — high airtime"
               >flood</span>
               <span
-                v-if="unit.routing_explicit === 'direct'"
+                v-if="unitRoutingMode(unit) === 'direct'"
                 class="routing-policy-direct"
                 title="Direct override"
               >direct*</span>
@@ -2671,7 +2718,7 @@ const App = {
           <div
             id="detail"
             class="detail"
-            :class="{ 'detail-map-side': mapOpen }"
+            :class="{ 'detail-map-side': mapOpen, busy: isInFlight(selectedUnit) }"
             role="dialog"
             aria-modal="true"
             aria-labelledby="detail-title"
@@ -2684,15 +2731,15 @@ const App = {
                 v-if="isInFlight(selectedUnit)"
                 class="detail-stage dash-foot-busy"
                 :title="sessionBadgeTitle(selectedUnit)"
-              >{{ unitStage(selectedUnit) }}</span>
+              >{{ unitStageDisplay(selectedUnit) }}</span>
               <button
                 v-if="manualAccepting"
                 type="button"
                 class="unit-refresh"
                 :class="{ spinning: isInFlight(selectedUnit) }"
                 :disabled="!canManualUnit(selectedUnit, 'refresh')"
-                :title="isInFlight(selectedUnit) ? unitStage(selectedUnit) : 'Refresh'"
-                :aria-label="isInFlight(selectedUnit) ? unitStage(selectedUnit) : 'Refresh'"
+                :title="isInFlight(selectedUnit) ? unitStageDisplay(selectedUnit) : 'Refresh'"
+                :aria-label="isInFlight(selectedUnit) ? unitStageDisplay(selectedUnit) : 'Refresh'"
                 @click="runManualJob(selectedUnit, 'refresh', $event)"
               >
                 <span class="unit-refresh-icon" aria-hidden="true">↻</span>
@@ -2720,77 +2767,93 @@ const App = {
               :title="prefBadgeTitle(pref)"
             >{{ pref.label }} {{ pref.value }}</span>
           </p>
-          <p class="live-route-line">
-            <span class="book-field-label">Route</span>
-            <template v-if="!routeEditing">
-              <div class="live-route-display">
-                <button
-                  type="button"
-                  class="live-route-edit-trigger"
-                  :title="liveRouteTitle(selectedUnit) + (selectedUnit.path_pinned ? ' · session pin' : '') + ' · click to edit'"
-                  @click="openRouteEdit(selectedUnit)"
-                >
-                  <span :class="liveRouteDisplayClass(selectedUnit)">
-                    {{ liveRouteDisplay(selectedUnit) }}
-                  </span>
-                  <span v-if="selectedUnit.path_pinned" class="live-route-pin-badge">pinned</span>
-                </button>
-                <button
-                  v-if="canCopyRoute(selectedUnit)"
-                  type="button"
-                  class="live-route-copy"
-                  :class="{ copied: routeCopied }"
-                  :title="routeCopied ? 'Copied' : 'Copy hop hexes'"
-                  aria-label="Copy path"
-                  @click="copyRouteClipboard(selectedUnit, $event)"
-                >
-                  <svg v-if="!routeCopied" viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6">
-                    <rect x="7" y="5.5" width="9" height="11.5" rx="1.4" />
-                    <path d="M13 5.5V4.4A1.4 1.4 0 0 0 11.6 3H4.4A1.4 1.4 0 0 0 3 4.4v10.2A1.4 1.4 0 0 0 4.4 16H6" />
-                  </svg>
-                  <svg v-else viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M4.5 10.5l3.4 3.4 7.6-7.8" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                </button>
-              </div>
-            </template>
-            <div v-else class="live-route-editor">
-              <textarea
-                ref="routeTextarea"
-                v-model="routeDraft"
-                class="live-route-textarea"
-                rows="5"
-                spellcheck="false"
-                placeholder="fe3b dd4d 3211 (or paste a fleet log; names ignored)"
-              ></textarea>
-              <p class="live-route-hint">
-                Session only. Cleared when fleet exits. Paste a known-good log dump, not a stale cache.
-              </p>
-              <p v-if="routeError" class="live-route-error">{{ routeError }}</p>
-              <div class="live-route-actions">
-                <button
-                  type="button"
-                  class="manual-btn"
-                  :disabled="routeSaving || !routeDraft.trim()"
-                  @click="saveRoutePaste(selectedUnit)"
-                >
-                  Save pin
-                </button>
-                <button type="button" class="manual-btn" :disabled="routeSaving" @click="cancelRouteEdit">
-                  Cancel
-                </button>
-                <button
-                  v-if="selectedUnit.path_pinned"
-                  type="button"
-                  class="manual-btn"
-                  :disabled="routeSaving"
-                  @click="clearRoutePin(selectedUnit)"
-                >
-                  Clear pin
-                </button>
+          <section class="route-section">
+            <div class="route-mode-row">
+              <span class="book-field-label">Route</span>
+              <select
+                class="route-mode-select"
+                :value="unitRoutingMode(selectedUnit)"
+                aria-label="Route mode"
+                @change="onRouteModeChange(selectedUnit, $event)"
+              >
+                <option value="auto">Auto</option>
+                <option value="path">Path</option>
+                <option value="direct">Direct</option>
+                <option value="flood">Flood</option>
+              </select>
+            </div>
+            <p v-if="unitRoutingMode(selectedUnit) === 'flood'" class="routing-policy-warning">
+              Always flood. High airtime on every send.
+            </p>
+            <p v-else-if="unitRoutingMode(selectedUnit) === 'direct'" class="live-route-hint">
+              Zero-hop on every send.
+            </p>
+            <p v-else-if="unitRoutingMode(selectedUnit) === 'auto'" class="live-route-hint">
+              Uses the companion hop cache. Empty cache flood-discovers on the next send.
+            </p>
+            <div v-if="routeDisplayVisible(selectedUnit)" class="live-route-line">
+              <template v-if="!routeEditing">
+                <div class="live-route-display">
+                  <button
+                    type="button"
+                    class="live-route-edit-trigger"
+                    :class="{ 'is-readonly': !routeEditable(selectedUnit) }"
+                    :title="liveRouteTitle(selectedUnit) + (routeEditable(selectedUnit) ? ' · click to edit' : '')"
+                    :disabled="!routeEditable(selectedUnit)"
+                    @click="openRouteEdit(selectedUnit)"
+                  >
+                    <span :class="liveRouteDisplayClass(selectedUnit)">
+                      {{ liveRouteDisplay(selectedUnit) }}
+                    </span>
+                  </button>
+                  <button
+                    v-if="canCopyRoute(selectedUnit)"
+                    type="button"
+                    class="live-route-copy"
+                    :class="{ copied: routeCopied }"
+                    :title="routeCopied ? 'Copied' : 'Copy hop hexes'"
+                    aria-label="Copy path"
+                    @click="copyRouteClipboard(selectedUnit, $event)"
+                  >
+                    <svg v-if="!routeCopied" viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6">
+                      <rect x="7" y="5.5" width="9" height="11.5" rx="1.4" />
+                      <path d="M13 5.5V4.4A1.4 1.4 0 0 0 11.6 3H4.4A1.4 1.4 0 0 0 3 4.4v10.2A1.4 1.4 0 0 0 4.4 16H6" />
+                    </svg>
+                    <svg v-else viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M4.5 10.5l3.4 3.4 7.6-7.8" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                </div>
+              </template>
+              <div v-else class="live-route-editor">
+                <textarea
+                  ref="routeTextarea"
+                  v-model="routeDraft"
+                  class="live-route-textarea"
+                  rows="5"
+                  spellcheck="false"
+                  placeholder="fe3b dd4d 3211 (or paste a fleet log; names ignored)"
+                ></textarea>
+                <p class="live-route-hint">
+                  Saved in the book. Paste a known-good log dump, not a stale cache.
+                </p>
+                <p v-if="routeError" class="live-route-error">{{ routeError }}</p>
+                <div class="live-route-actions">
+                  <button
+                    type="button"
+                    class="manual-btn"
+                    :disabled="routeSaving || !routeDraft.trim()"
+                    @click="saveRoutePaste(selectedUnit)"
+                  >
+                    Save path
+                  </button>
+                  <button type="button" class="manual-btn" :disabled="routeSaving" @click="cancelRouteEdit">
+                    Cancel
+                  </button>
+                </div>
               </div>
             </div>
-          </p>
+          </section>
           <div class="detail-toolbar">
             <label
               class="book-toggle"
@@ -2827,33 +2890,6 @@ const App = {
               </button>
             </div>
           </div>
-          <section class="routing-group">
-            <span class="book-field-label">Routing policy</span>
-            <div class="routing-segment" role="group" aria-label="Routing policy">
-              <button
-                type="button"
-                class="routing-segment-btn"
-                :class="{ active: effectiveRoutingPolicy(selectedUnit) === 'path' }"
-                @click="setRoutingPolicy(selectedUnit, 'path')"
-              >Path</button>
-              <button
-                type="button"
-                class="routing-segment-btn"
-                :class="{ active: selectedUnit.routing_explicit === 'direct' }"
-                @click="setRoutingPolicy(selectedUnit, 'direct')"
-              >Direct</button>
-              <button
-                type="button"
-                class="routing-segment-btn routing-segment-danger"
-                :class="{ active: selectedUnit.routing_explicit === 'flood' }"
-                @click="setRoutingPolicy(selectedUnit, 'flood')"
-              >Flood</button>
-            </div>
-            <p v-if="selectedUnit.routing_explicit === 'flood'" class="routing-policy-warning">
-              Always flood. High airtime on every send.
-            </p>
-            <p class="routing-policy-hint">Book policy: {{ routingPolicyLabel(selectedUnit) }}</p>
-          </section>
           <section class="book-edit">
             <label class="book-field">
               <span class="book-field-label">Alias</span>

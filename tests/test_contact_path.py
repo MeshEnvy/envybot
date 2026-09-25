@@ -25,7 +25,7 @@ from envybot.radio import (
 from envybot.routing import RoutingMode, parse_force_path
 
 
-def _target(*, routing: RoutingMode = RoutingMode.PATH) -> RouterTarget:
+def _target(*, routing: RoutingMode = RoutingMode.AUTO) -> RouterTarget:
     return RouterTarget(
         key="me0003",
         unit_id="ME0003",
@@ -250,7 +250,7 @@ class PrepareRouteTests(unittest.IsolatedAsyncioTestCase):
             site="nightengale",
             pubkey_hex="c1a2b3d4e5f6" + "0" * 52,
             admin_password="pw",
-            routing=RoutingMode.PATH,
+            routing=RoutingMode.AUTO,
         )
         for t in targets:
             contacts[t.pubkey_hex.lower()] = {

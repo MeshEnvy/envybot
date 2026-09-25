@@ -62,14 +62,13 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   edits. Blank platform = meshcore.
 - `paused: true` stays in the UI. Fleet skips auto poll/apply. Refresh,
   Pull, and Deploy still hit the radio. Trust/cmd ignore the flag.
-- `routing: direct | path | flood` is mesh send policy (default **path** when
-  omitted). Path uses cached route (including learned zero-hop direct),
-  flood-logins when cache is empty, and discards stale cache after 3 timeouts.
+- `routing: auto | path | direct | flood` is mesh send policy (default **auto**
+  when omitted). Auto uses companion hop cache, flood-logins when empty, and
+  discards stale cache after 3 timeouts. **path** locks hops in book `route:`.
   `direct` forces zero-hop every send. `flood` always floods (danger).
   **`--refresh-paths`:** startup logs stale cached hops per target, clears
-  companion hop cache, then next login floods to rediscover. Detail
-  **Routing policy** control; list/detail show **live route** from
-  companion cache.
+  companion hop cache, then next login floods to rediscover. Detail **Route**
+  dropdown (auto/path/direct/flood); auto shows live companion cache.
   **Next (ops 09-19, not built):** favorite-route graph (official + community
   guest hops). Launch neighbor-ask. Known path prefix. Traceroute. Do not
   flood-discover when infra is mapped. — `ops/initiatives/envybot-radio-daemon.md`.
@@ -144,10 +143,10 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   Successful GET_STATUS / GET_TELEMETRY / CLI log a one-line result as soon
   as they land (same beat as `login OK`). An apply field whose stamp
   already matches logs `field: skip (synced)` (no radio).
-  Every poll session logins use book routing policy (default path). GET/CLI/binary
+  Every poll session logins use book routing policy (default auto). GET/CLI/binary
   ride the learned path (`mesh_audit.path` = hop hashes, `direct`, or `flood`).
-  Path mode flood-discovers when cache is empty; timeout on cached path (3x)
-  discards cache and re-floods.
+  Auto flood-discovers when cache is empty; timeout on cached path (3x)
+  discards cache and re-floods. Locked path re-applies book `route:`.
   Neighbor discover wait (default 12s) is a background timer, not radio hold.
   Manual Refresh/Pull/Deploy replace that unit's remaining jobs except a
   queued console send (stays in front). A click mid-GET supersedes the
@@ -225,9 +224,9 @@ companions skip. Not re-run on BLE recover.
   badge (pulsing radio icon + teal border) marks the unit holding the
   companion radio (`poll.unit` via session SSE); queued units stay busy
   purple only.
-  **Routing policy** (detail segmented control) writes `routing: direct|flood`
-  or clears the key for default path. **Live route** badge shows companion
-  cache (direct, hops, or flood). Policy flood shows a danger badge on list cards.
+  **Route** (detail dropdown) writes `routing: auto|path|direct|flood`. Locked
+  **path** saves hops in book `route:`. Auto shows companion cache (direct,
+  hops, or flood). Flood shows a danger badge on list cards.
   Units carry `health` (worst-of component checks) and interval traffic
   deltas. Hello snapshot includes compact 72h `sparks` (battery V, temp,
   in/h, unreadable %) per unit; SSE status/telemetry samples extend them

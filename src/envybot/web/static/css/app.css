@@ -536,6 +536,10 @@ body {
   box-shadow: none;
 }
 
+.detail.busy {
+  background: rgba(42, 40, 61, 0.35);
+}
+
 #sidebar {
   border-left: 1px solid #2a3440;
   overflow: auto;
@@ -1207,6 +1211,28 @@ body {
   text-transform: lowercase;
 }
 
+.route-section {
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+}
+
+.route-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.route-mode-select {
+  flex: 1;
+  max-width: 10rem;
+  padding: 5px 8px;
+  font-size: 0.78rem;
+  border: 1px solid #2a3440;
+  border-radius: 6px;
+  background: #1a222c;
+  color: #e8f0f8;
+}
+
 .live-route-line {
   display: flex;
   align-items: flex-start;
@@ -1261,8 +1287,12 @@ body {
   text-align: left;
 }
 
-.live-route-edit-trigger:hover .live-route-badge {
+.live-route-edit-trigger:hover:not(:disabled) .live-route-badge {
   border-color: #5a8ec4;
+}
+
+.live-route-edit-trigger.is-readonly {
+  cursor: default;
 }
 
 .live-route-pin-badge {

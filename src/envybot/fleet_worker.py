@@ -931,7 +931,7 @@ async def execute_job(
 
     if job.kind == "path:clear":
         route_extra.pop("forced_path", None)
-        with ctx.log.phase("clear path pin"):
+        with ctx.log.phase("clear route cache"):
             await reset_to_flood(ctx.client, target, log=ctx.log)
         publish_live_route(ctx.client, target, route_extra)
         return JobOutcome.HEARD, None

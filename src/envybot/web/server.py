@@ -531,7 +531,6 @@ class MonitorWeb:
         snap["edges"] = build_neighbor_edges(snap["units"])
         _attach_ingestor(snap, self.nodes_path)
         snap.setdefault("poll", {})["console"] = self.console.poll_console()
-        self._merge_scheduler_path_pins(snap)
         await self.hub.set_snapshot(snap)
         return snap
 
@@ -565,7 +564,6 @@ class MonitorWeb:
         snap["edges"] = build_neighbor_edges(snap["units"])
         _attach_ingestor(snap, self.nodes_path)
         snap.setdefault("poll", {})["console"] = self.console.poll_console()
-        self._merge_scheduler_path_pins(snap)
         unit = snap["units"].get(key)
         if unit is None:
             return
@@ -578,9 +576,6 @@ class MonitorWeb:
                 from envybot.routing import abbrev_live_route_label
 
                 unit["live_route_label"] = abbrev_live_route_label(str(label))
-        if "path_pinned" in session:
-            unit["path_pinned"] = session["path_pinned"]
-            unit["forced_path_label"] = session.get("forced_path_label")
         if sample is not None:
             source, row = sample
             unit["sample"] = {"source": source, "row": row}
@@ -900,15 +895,37 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
             node.pop("paused", None)
     if "routing" in body:
         routing = body["routing"]
-        if routing is None or routing == "" or routing == "path":
-            node.pop("routing", None)
+        if routing in (None, "", "auto"):
+            node["routing"] = "auto"
+            node.pop("route", None)
+        elif routing == "path":
+            node["routing"] = "path"
         elif routing in ("direct", "flood"):
             node["routing"] = routing
+            node.pop("route", None)
         else:
-            return web.json_response({"error": "routing must be path, direct, or flood"}, status=400)
+            return web.json_response(
+                {"error": "routing must be auto, path, direct, or flood"},
+                status=400,
+            )
+    if "route" in body:
+        from envybot.routing import parse_path_paste
+
+        route = body["route"]
+        if route is None or route == "":
+            node.pop("route", None)
+        elif isinstance(route, str):
+            try:
+                forced = parse_path_paste(route)
+            except ValueError as exc:
+                return web.json_response({"error": str(exc)}, status=400)
+            node["routing"] = "path"
+            node["route"] = forced.label()
+        else:
+            return web.json_response({"error": "route must be a string"}, status=400)
     if "flood" in body:
         return web.json_response(
-            {"error": "flood is removed; use routing: path|direct|flood"},
+            {"error": "flood is removed; use routing: auto|path|direct|flood"},
             status=400,
         )
     if "alias" in body:
@@ -959,22 +976,21 @@ async def _handle_unit_path_set(request: web.Request) -> web.Response:
     paste = body.get("paste")
     if not isinstance(paste, str) or not paste.strip():
         return web.json_response({"error": "paste required"}, status=400)
-    status, err, target = web_ctx._load_target(key)
-    if status != 200 or target is None:
-        return web.json_response({"error": err or "unknown unit"}, status=status)
+    if not web_ctx.unit_visible(key):
+        return web.json_response({"error": "unknown unit"}, status=404)
     doc = load_nodes_doc(web_ctx.nodes_path)
+    nodes = doc.get("nodes") or {}
+    node = nodes.get(key)
+    if not isinstance(node, dict) or is_decommissioned(node) or not is_meshcore_platform(node):
+        return web.json_response({"error": "unknown unit"}, status=404)
     try:
         forced = parse_path_paste(paste)
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
-    status, err = await web_ctx.enqueue_path_pin(key, forced)
-    if status != 200:
-        return web.json_response({"error": err or "path pin failed"}, status=status)
-    snap = await web_ctx.refresh_snapshot(
-        session_states=dict(web_ctx._session_states),
-        companion=web_ctx._companion,
-        poll=web_ctx._poll_state,
-    )
+    node["routing"] = "path"
+    node["route"] = forced.label()
+    write_nodes_doc(web_ctx.nodes_path, doc)
+    snap = await web_ctx.refresh_snapshot()
     unit = snap["units"].get(key) or {}
     return web.json_response(unit)
 
@@ -982,17 +998,17 @@ async def _handle_unit_path_set(request: web.Request) -> web.Response:
 async def _handle_unit_path_clear(request: web.Request) -> web.Response:
     web_ctx: MonitorWeb = request.app["web_ctx"]
     key = request.match_info["key"].lower()
-    status, err, _target = web_ctx._load_target(key)
-    if status != 200:
-        return web.json_response({"error": err or "unknown unit"}, status=status)
-    status, err = await web_ctx.enqueue_path_clear(key)
-    if status != 200:
-        return web.json_response({"error": err or "path clear failed"}, status=status)
-    snap = await web_ctx.refresh_snapshot(
-        session_states=dict(web_ctx._session_states),
-        companion=web_ctx._companion,
-        poll=web_ctx._poll_state,
-    )
+    if not web_ctx.unit_visible(key):
+        return web.json_response({"error": "unknown unit"}, status=404)
+    doc = load_nodes_doc(web_ctx.nodes_path)
+    nodes = doc.get("nodes") or {}
+    node = nodes.get(key)
+    if not isinstance(node, dict) or is_decommissioned(node) or not is_meshcore_platform(node):
+        return web.json_response({"error": "unknown unit"}, status=404)
+    node["routing"] = "auto"
+    node.pop("route", None)
+    write_nodes_doc(web_ctx.nodes_path, doc)
+    snap = await web_ctx.refresh_snapshot()
     unit = snap["units"].get(key) or {}
     return web.json_response(unit)
 

@@ -14,27 +14,37 @@ from envybot.routing import (
 
 
 class RoutingPolicyTests(unittest.TestCase):
-    def test_default_path(self) -> None:
-        self.assertEqual(resolve_routing({}), RoutingMode.PATH)
+    def test_default_auto(self) -> None:
+        self.assertEqual(resolve_routing({}), RoutingMode.AUTO)
+
+    def test_explicit_auto(self) -> None:
+        self.assertEqual(resolve_routing({"routing": "auto"}), RoutingMode.AUTO)
 
     def test_explicit_flood(self) -> None:
         self.assertEqual(resolve_routing({"routing": "flood"}), RoutingMode.FLOOD)
 
+    def test_book_route(self) -> None:
+        from envybot.routing import book_route_from_node
+
+        forced = book_route_from_node({"route": "fe3b dd4d 3211"})
+        assert forced is not None
+        self.assertEqual(forced.hops, ("fe3b", "dd4d", "3211"))
+
 
 class LiveRouteTests(unittest.TestCase):
-    def test_flood_policy(self) -> None:
-        live = live_route_from_contact(None, policy=RoutingMode.PATH)
+    def test_auto_flood_fallback(self) -> None:
+        live = live_route_from_contact(None, policy=RoutingMode.AUTO)
         self.assertEqual(live["kind"], "flood")
         self.assertTrue(live["fallback"])
 
     def test_hops_from_contact(self) -> None:
         contact = {"out_path_len": 2, "out_path": "fe3bdd4d", "out_path_hash_mode": 1}
-        live = live_route_from_contact(contact, policy=RoutingMode.PATH)
+        live = live_route_from_contact(contact, policy=RoutingMode.AUTO)
         self.assertEqual(live["kind"], "hops")
         self.assertEqual(live["label"], "fe3b dd4d")
 
     def test_audit_path(self) -> None:
-        live = live_route_from_audit_path("514e fe3b", policy=RoutingMode.PATH)
+        live = live_route_from_audit_path("514e fe3b", policy=RoutingMode.AUTO)
         self.assertEqual(live["kind"], "hops")
         self.assertEqual(live["label"], "514e fe3b")
 

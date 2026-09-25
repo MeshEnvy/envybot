@@ -57,7 +57,8 @@ Force work: UI **Deploy**, or CLI **`--full-sync`** (Deploy + GETs), or edit the
 
 | Policy | Book | Behavior |
 |--------|------|----------|
-| **path** (default) | omit `routing` or `routing: path` | Use companion cached `out_path` when present; flood-login when empty; discard cache after 3 timeouts |
+| **auto** (default) | omit `routing` or `routing: auto` | Use companion cached `out_path` when present; flood-login when empty; discard cache after 3 timeouts |
+| **path** | `routing: path` + `route:` hop string | Re-apply locked hops every send |
 | **flood** | `routing: flood` | Every send floods (high airtime) |
 | **direct** | `routing: direct` | Zero-hop every send |
 

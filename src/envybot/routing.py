@@ -12,6 +12,7 @@ FLEET_PATH_HASH_MODE = 1
 
 
 class RoutingMode(str, Enum):
+    AUTO = "auto"
     DIRECT = "direct"
     PATH = "path"
     FLOOD = "flood"
@@ -30,7 +31,7 @@ def parse_routing_value(raw: str | None) -> RoutingMode | None:
 
 
 def routing_explicit(node: dict[str, Any] | None) -> str | None:
-    """Book stamp when set; None when default path applies."""
+    """Book stamp when set; None when default auto applies."""
     if not node:
         return None
     explicit = node.get("routing")
@@ -42,11 +43,11 @@ def routing_explicit(node: dict[str, Any] | None) -> str | None:
 
 
 def resolve_routing(node: dict[str, Any] | None) -> RoutingMode:
-    """Effective routing policy. Default path for all units."""
+    """Effective routing policy. Default auto for all units."""
     explicit = routing_explicit(node)
     if explicit is not None:
         return RoutingMode(explicit)
-    return RoutingMode.PATH
+    return RoutingMode.AUTO
 
 
 def has_cached_route(contact: dict[str, Any] | None) -> bool:
@@ -104,6 +105,8 @@ def live_route_from_contact(
         return {"kind": "flood", "label": "flood", "fallback": False}
     if policy is RoutingMode.DIRECT:
         return {"kind": "direct", "label": "direct", "fallback": False}
+    if policy is RoutingMode.PATH:
+        return {"kind": "flood", "label": "flood", "fallback": True}
     label = contact_route_audit_label(contact)
     if label == "direct":
         return {"kind": "direct", "label": "direct", "fallback": False}
@@ -120,6 +123,10 @@ def live_route_from_audit_path(path: str | None, *, policy: RoutingMode) -> dict
         return {"kind": "flood", "label": "flood", "fallback": False}
     if policy is RoutingMode.DIRECT:
         return {"kind": "direct", "label": "direct", "fallback": False}
+    if policy is RoutingMode.PATH:
+        if path and path not in ("direct", "flood"):
+            return {"kind": "hops", "label": path, "fallback": False}
+        return None
     if path == "direct":
         return {"kind": "direct", "label": "direct", "fallback": False}
     if path == "flood":
@@ -139,7 +146,7 @@ def abbrev_live_route_label(label: str, *, max_len: int = 14) -> str:
 
 @dataclass
 class RouteSession:
-    """Per-unit session routing state for path-mode stale cache handling."""
+    """Per-unit session routing state for auto-mode stale cache handling."""
 
     path_failures: int = 0
 
@@ -312,3 +319,35 @@ def forced_path_from_extra(extra: dict[str, Any] | None) -> ForcedPath | None:
     if not hops:
         return None
     return ForcedPath(hops=hops, path_hex=path_hex.lower(), hash_mode=hash_mode)
+
+
+def book_route_from_node(node: dict[str, Any] | None) -> ForcedPath | None:
+    """Locked path hops from nodes.yaml ``route``."""
+    if not node:
+        return None
+    raw = node.get("route")
+    if isinstance(raw, str) and raw.strip():
+        return parse_force_path(raw)
+    if isinstance(raw, list):
+        parts = [str(x).strip() for x in raw if str(x).strip()]
+        if parts:
+            return parse_force_path(",".join(parts))
+    return None
+
+
+def book_route_label(node: dict[str, Any] | None) -> str | None:
+    forced = book_route_from_node(node)
+    return forced.label() if forced else None
+
+
+def effective_forced_path(
+    node: dict[str, Any] | None,
+    route_extra: dict[str, Any] | None,
+) -> ForcedPath | None:
+    """CLI/session pin overrides book locked path."""
+    forced = forced_path_from_extra(route_extra)
+    if forced is not None:
+        return forced
+    if resolve_routing(node) is RoutingMode.PATH:
+        return book_route_from_node(node)
+    return None

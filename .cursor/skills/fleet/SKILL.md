@@ -66,11 +66,12 @@ If all fields synced: `apply skip: all` and `--apply-only` queues nothing.
 
 ## Routing and companion paths
 
-Mesh send policy is per-node in `nodes.yaml`: `routing: path | direct | flood`. Default when omitted: **path**.
+Mesh send policy is per-node in `nodes.yaml`: `routing: auto | path | direct | flood`. Default when omitted: **auto**.
 
 | Policy | Sends use |
 |--------|-----------|
-| **path** | Companion cached `out_path` if present; otherwise flood-login to learn route; after 3 timeouts on cached path, cache discarded and re-flood |
+| **auto** | Companion cached `out_path` if present; otherwise flood-login to learn route; after 3 timeouts on cached path, cache discarded and re-flood |
+| **path** | Locked hops in book `route:` (space-separated 4-hex ids), re-applied every send |
 | **direct** | Zero-hop every send |
 | **flood** | Flood every send (danger — high airtime) |
 
@@ -117,7 +118,7 @@ sqlite3 "$ENVYBOT_HOME/data/fleet/history.sqlite" \
   "SELECT path FROM mesh_audit WHERE unit='ME0048' ORDER BY ts_sent DESC LIMIT 1;"
 ```
 
-Fleet UI: open a unit, click **Route**, paste the same log text (names and `{lora.sh}` are ignored). **Save pin** applies for this fleet session only. **Clear pin** drops the pin and resets companion route to flood. Do not paste a stale cache to fix timeouts; use **`--refresh-paths`** first, then pin a route that worked.
+Fleet UI: set **Route** to **Path**, paste the same log text (names and `{lora.sh}` are ignored), **Save path** writes `route:` in the book. **Auto** drops the locked path and uses the companion cache again. Do not paste a stale cache to fix timeouts; use **`--refresh-paths`** first, then save a route that worked.
 
 ### Light path probe without full fleet
 

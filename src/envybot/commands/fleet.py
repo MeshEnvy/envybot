@@ -38,6 +38,7 @@ from envybot.jobs import (
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import is_paused, sync_book
 from envybot.routing import (
+    book_route_from_node,
     parse_force_path,
     path_pin_fields_from_extra,
     resolve_routing,
@@ -730,6 +731,7 @@ async def run(args: argparse.Namespace) -> int:
         node_row = nodes.get(uq.target.key) or {}
         uq.target.routing = resolve_routing(node_row)
         uq.target.routing_explicit = routing_explicit(node_row)
+        uq.target.book_route = book_route_from_node(node_row)
         if (
             is_paused(nodes.get(uq.target.key))
             and uq.target.key not in manual_keys

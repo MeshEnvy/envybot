@@ -28,6 +28,7 @@ from envybot.nodes_doc import (
 from envybot.position import book_coord, display_name, load_sites, site_binding
 from envybot.history import begin_mesh_audit, finish_mesh_audit, mark_mesh_audit_late, mesh_audit_row
 from envybot.routing import (
+    book_route_from_node,
     FLEET_PATH_HASH_MODE,
     ForcedPath,
     RouteSession,
@@ -552,8 +553,9 @@ class RouterTarget:
     pubkey_hex: str
     admin_password: str
     due_groups: list[str] = field(default_factory=list)
-    routing: RoutingMode = RoutingMode.PATH
+    routing: RoutingMode = RoutingMode.AUTO
     routing_explicit: str | None = None
+    book_route: ForcedPath | None = None
 
 
 def poll_staleness_key(target: RouterTarget) -> tuple[int, int, str]:
@@ -643,6 +645,7 @@ def load_targets(
                 admin_password=admin_pw,
                 routing=resolve_routing(node),
                 routing_explicit=routing_explicit(node),
+                book_route=book_route_from_node(node),
             )
         )
     out.sort(key=poll_staleness_key)
@@ -1713,12 +1716,24 @@ def contact_display_name(target: RouterTarget) -> str:
     return f"{target.unit_id} {target.name}"[:32]
 
 
+def _resolved_forced_path(
+    target: RouterTarget,
+    route_extra: dict[str, Any] | None,
+) -> ForcedPath | None:
+    forced = forced_path_from_extra(route_extra) if route_extra else None
+    if forced is not None:
+        return forced
+    if target.routing is RoutingMode.PATH and target.book_route is not None:
+        return target.book_route
+    return None
+
+
 def publish_live_route(
     client: MeshCore,
     target: RouterTarget,
     route_extra: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    forced = forced_path_from_extra(route_extra) if route_extra else None
+    forced = _resolved_forced_path(target, route_extra)
     if forced is not None:
         live = {"kind": "hops", "label": forced.label(), "fallback": False}
         route_extra["live_route"] = live
@@ -2322,7 +2337,7 @@ async def prepare_route(
 ) -> None:
     """Prepare companion route before login or send."""
     log = log or PollLog()
-    forced = forced_path_from_extra(route_extra)
+    forced = _resolved_forced_path(target, route_extra)
     if forced is not None:
         await prepare_pinned_path(client, target, forced=forced, log=log)
         publish_live_route(client, target, route_extra)
@@ -2332,11 +2347,13 @@ async def prepare_route(
         await prepare_direct_route(client, target, log=log)
     elif policy is RoutingMode.FLOOD:
         await reset_to_flood(client, target, log=log)
-    else:
+    elif policy is RoutingMode.AUTO:
         contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])
         if has_cached_route(contact):
             publish_live_route(client, target, route_extra)
             return
+        await reset_to_flood(client, target, log=log)
+    else:
         await reset_to_flood(client, target, log=log)
     publish_live_route(client, target, route_extra)
 
@@ -2349,9 +2366,9 @@ async def handle_path_timeout(
     log: PollLog | None = None,
 ) -> None:
     """Path policy: count failures on cached route; discard at threshold."""
-    if forced_path_from_extra(route_extra) is not None:
+    if _resolved_forced_path(target, route_extra) is not None:
         return
-    if target.routing is not RoutingMode.PATH or route_extra is None:
+    if target.routing is not RoutingMode.AUTO or route_extra is None:
         return
     log = log or PollLog()
     contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])

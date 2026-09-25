@@ -90,7 +90,7 @@ _STAGE_LABELS = {
     "get:neighbors_wait": "Neighbor wait",
     "get:neighbors": "Fetching neighbors",
     "path:pin": "Pinning path",
-    "path:clear": "Clearing path pin",
+    "path:clear": "Clearing route cache",
     "apply:force_clear": "Clearing stamps",
     "apply:name": "Setting name",
     "apply:lat": "Setting GPS",

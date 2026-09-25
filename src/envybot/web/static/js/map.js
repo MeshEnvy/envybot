@@ -43,8 +43,8 @@ export function mapPinLabel(unit, now = Date.now() / 1000) {
 /** @param {Record<string, unknown> | undefined} unit */
 function routeHopTokens(unit) {
   if (!unit) return []
-  if (unit.path_pinned && unit.forced_path_label) {
-    return String(unit.forced_path_label).trim().split(/\s+/).filter(Boolean)
+  if (typeof unit.route === 'string' && unit.route.trim()) {
+    return unit.route.trim().split(/\s+/).filter(Boolean)
   }
   const lr = unit.live_route
   if (lr && typeof lr === 'object' && lr.kind === 'hops' && lr.label) {
@@ -223,6 +223,25 @@ export function unitStage(unit) {
   const stage = s && typeof s === 'object' && typeof s.stage === 'string' ? s.stage.trim() : ''
   if (stage) return stage
   return unitStatus(unit)
+}
+
+/** @param {string} stage @param {Record<string, unknown> | null | undefined} session */
+export function formatStageWithAttempt(stage, session) {
+  if (!session || typeof session !== 'object') return stage
+  const attempt = session.attempt
+  const max = session.max_attempts
+  if (typeof attempt === 'number' && attempt > 0 && typeof max === 'number' && max > 0) {
+    return `${stage} ${attempt}/${max}…`
+  }
+  if (typeof attempt === 'number' && attempt > 0) {
+    return `${stage} ${attempt}…`
+  }
+  return stage
+}
+
+/** Stage plus scheduler attempt when session carries retry counts. */
+export function unitStageLine(unit) {
+  return formatStageWithAttempt(unitStage(unit), unit?.session)
 }
 
 /**

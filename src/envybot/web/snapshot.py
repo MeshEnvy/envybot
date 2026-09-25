@@ -43,7 +43,9 @@ from envybot.nodes_doc import (
 )
 from envybot.unit_filter import key_in_unit_filter
 from envybot.routing import (
+    RoutingMode,
     abbrev_live_route_label,
+    book_route_label,
     live_route_from_audit_path,
     resolve_routing,
     routing_explicit,
@@ -623,9 +625,12 @@ def sanitize_unit(
 
     policy = resolve_routing(node)
     explicit = routing_explicit(node)
+    book_route = book_route_label(node)
     live_route = None
     if session and session.get("live_route"):
         live_route = session.get("live_route")
+    elif policy is RoutingMode.PATH and book_route:
+        live_route = {"kind": "hops", "label": book_route, "fallback": False}
     elif audit_path:
         live_route = live_route_from_audit_path(audit_path, policy=policy)
 
@@ -642,6 +647,7 @@ def sanitize_unit(
         "paused": is_paused(node),
         "routing": policy.value,
         "routing_explicit": explicit,
+        "route": book_route,
         "live_route": live_route,
         "live_route_label": abbrev_live_route_label(live_route["label"])
         if live_route and live_route.get("label")
@@ -693,9 +699,6 @@ def sanitize_unit(
     }
     if session:
         unit["session"] = session
-        if "path_pinned" in session:
-            unit["path_pinned"] = session["path_pinned"]
-            unit["forced_path_label"] = session.get("forced_path_label")
     return unit
 
 
