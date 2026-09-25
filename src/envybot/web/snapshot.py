@@ -557,6 +557,17 @@ def build_radio_prefs(
             "state": "synced" if stamped.get(field) == desired else "due",
         }
         prefs.append(row)
+    if not any(p["id"] == "rxgain" for p in prefs) and board_allows_rxgain(node):
+        if desired_rxgain(node) is None:
+            prefs.append(
+                {
+                    "id": "rxgain",
+                    "label": "SX1262 boost",
+                    "value": pref_display("rxgain", True),
+                    "state": "default",
+                    "note": "Stock default; set rxgain in book to apply",
+                }
+            )
     if desired_rxgain(node) is not None and not board_allows_rxgain(node):
         prefs.append(
             {
@@ -567,6 +578,8 @@ def build_radio_prefs(
                 "note": "need board: heltec-t096",
             }
         )
+    order = {field: idx for idx, (field, _label) in enumerate(RADIO_PREF_FIELDS)}
+    prefs.sort(key=lambda row: order.get(row["id"], len(RADIO_PREF_FIELDS)))
     return prefs
 
 
@@ -680,6 +693,9 @@ def sanitize_unit(
     }
     if session:
         unit["session"] = session
+        if "path_pinned" in session:
+            unit["path_pinned"] = session["path_pinned"]
+            unit["forced_path_label"] = session.get("forced_path_label")
     return unit
 
 

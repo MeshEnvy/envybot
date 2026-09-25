@@ -31,12 +31,18 @@ from envybot.jobs import (
     drop_console_jobs,
     is_console_job,
     is_login_job,
+    is_path_job,
     job_still_queued,
     keep_console_jobs,
 )
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import is_paused, sync_book
-from envybot.routing import parse_force_path, resolve_routing, routing_explicit
+from envybot.routing import (
+    parse_force_path,
+    path_pin_fields_from_extra,
+    resolve_routing,
+    routing_explicit,
+)
 from envybot.unit_filter import UnitFilterError, parse_unit_specs, resolve_unit_specs
 from envybot.poll import (
     PollPolicy,
@@ -79,13 +85,16 @@ def _lane_tag(job: Any, uq: Any) -> str | None:
 def _print_lane_heading(target: Any, job: Any, uq: Any, current_lane: str | None) -> str:
     """Unindented heading when the radio moves to a different unit."""
     key = target.key
-    if key == current_lane:
+    bump = bool(getattr(uq, "manual_bump", False))
+    if key == current_lane and not bump:
         return key
     heading = target_label(target)
     tag = _lane_tag(job, uq)
     if tag:
         heading = f"{heading}  ({tag})"
     print(f"{heading} …", flush=True)
+    if bump:
+        uq.manual_bump = False
     return key
 
 
@@ -661,7 +670,12 @@ async def run(args: argparse.Namespace) -> int:
                     elif scheduler.max_attempts:
                         print(f"  {job.kind}: gave up after {n}, continuing")
         else:
-            session_states[target.key] = {"state": "ok", "due_groups": []}
+            pin_fields = path_pin_fields_from_extra(uq.session_extra)
+            session_states[target.key] = {"state": "ok", "due_groups": [], **pin_fields}
+            if uq.manual_job == "path" and not uq.jobs:
+                uq.manual = False
+                uq.manual_job = None
+                manual_keys.discard(target.key)
             dropped = uq.session_extra.get("dropped_jobs") or []
             if (
                 not args.quiet
@@ -682,7 +696,7 @@ async def run(args: argparse.Namespace) -> int:
                     else:
                         print(f"  OK {poll_summary(res)}")
             uq.session_extra.pop("dropped_jobs", None)
-            if uq.manual_job != "console":
+            if uq.manual_job not in ("console", "path"):
                 manual_keys.discard(target.key)
 
         if web_ctx:
@@ -699,6 +713,7 @@ async def run(args: argparse.Namespace) -> int:
             live_route = uq.session_extra.get("live_route")
             if live_route:
                 sess["live_route"] = live_route
+            sess.update(path_pin_fields_from_extra(uq.session_extra))
             await web_ctx.publish_unit(
                 target.key,
                 session=sess,
@@ -719,13 +734,14 @@ async def run(args: argparse.Namespace) -> int:
             is_paused(nodes.get(uq.target.key))
             and uq.target.key not in manual_keys
             and not is_console_job(job)
+            and not is_path_job(job)
         ):
             keep_console_jobs(uq)
             if not uq.jobs:
                 session_states[uq.target.key] = {"state": "paused"}
             return JobOutcome.HARD_FAIL, "paused"
         uq.session_extra["force_apply"] = args.full_sync or uq.manual_job == "deploy"
-        if worker_ctx.force_path is not None:
+        if worker_ctx.force_path is not None and "forced_path" not in uq.session_extra:
             uq.session_extra["forced_path"] = worker_ctx.force_path.to_extra()
         return await execute_job(job, uq, worker_ctx)
 

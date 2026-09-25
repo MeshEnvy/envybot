@@ -53,7 +53,17 @@ DAILY_GROUPS = tuple(g for g in PERIODIC_GROUPS if GET_GROUPS[g].interval is not
 OTA_CLI_GROUPS = frozenset({"ota", "ota_status", "ota_ls"})
 MANUAL_JOBS = frozenset({"refresh", "pull", "deploy", "stage", "install"})
 IN_FLIGHT_STATES = frozenset(
-    {"queued", "refreshing", "pulling", "deploying", "staging", "installing", "polling", "console"}
+    {
+        "queued",
+        "refreshing",
+        "pulling",
+        "deploying",
+        "staging",
+        "installing",
+        "polling",
+        "console",
+        "pinning",
+    }
 )
 
 _STAGE_LABELS = {
@@ -79,6 +89,8 @@ _STAGE_LABELS = {
     "get:neighbors_discover": "Discovering neighbors",
     "get:neighbors_wait": "Neighbor wait",
     "get:neighbors": "Fetching neighbors",
+    "path:pin": "Pinning path",
+    "path:clear": "Clearing path pin",
     "apply:force_clear": "Clearing stamps",
     "apply:name": "Setting name",
     "apply:lat": "Setting GPS",
@@ -127,6 +139,7 @@ def manual_job_session_state(job: str) -> str:
         "stage": "staging",
         "install": "installing",
         "console": "console",
+        "path": "pinning",
     }[job]
 
 

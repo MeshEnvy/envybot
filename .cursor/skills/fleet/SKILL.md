@@ -117,6 +117,8 @@ sqlite3 "$ENVYBOT_HOME/data/fleet/history.sqlite" \
   "SELECT path FROM mesh_audit WHERE unit='ME0048' ORDER BY ts_sent DESC LIMIT 1;"
 ```
 
+Fleet UI: open a unit, click **Route**, paste the same log text (names and `{lora.sh}` are ignored). **Save pin** applies for this fleet session only. **Clear pin** drops the pin and resets companion route to flood. Do not paste a stale cache to fix timeouts; use **`--refresh-paths`** first, then pin a route that worked.
+
 ### Light path probe without full fleet
 
 ```bash

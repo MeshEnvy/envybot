@@ -8,6 +8,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Fleet detail **Active** toggle (on = auto poll/apply; off = paused). Replaces
+  the inverted Pause switch.
 - Fleet map: unit pins are site GPS or optional node `loc` only. Unbound units
   without `loc` (e.g. mobile Jeep on the bench) no longer stack on `bench_loc`.
   `bench_loc` is the yellow **ingestor** pin (browser geolocation still POSTs
@@ -24,6 +26,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 - Fleet **`--no-auto-update`** — skip automatic due poll/apply seeding; manual
   Refresh, Pull, and Deploy only.
+- Fleet UI **Route** editor — paste a fleet log path on unit detail; extracts
+  4-hex hop tokens and session-pins companion `out_path` (`POST`/`DELETE`
+  `/api/unit/{key}/path`). Cleared when fleet exits; use **`--refresh-paths`**
+  to drop cache without pinning.
 - Fleet detail **Audit** log — per-send `mesh_audit` rows (login/CLI/binary,
   path, outcome, reply snippet), newest first with **Load older**;
   `GET /api/audit/{unit}`; live `audit` SSE on send begin/finish.

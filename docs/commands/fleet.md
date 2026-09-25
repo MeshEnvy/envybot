@@ -298,6 +298,7 @@ list warns that fleet may not get out. Requires companion firmware with
 | `--full-sync` | Deploy profile plus periodic/inventory GETs (no audit GETs on same pass) |
 | `--refresh-paths` | Dump each target's stale cached hops, clear companion `out_path`, then flood on next login (use when preset route is wrong) |
 | `--force-path HOPS` | Pin companion `out_path` to comma-separated hop hashes (e.g. `EA6E,E9BD,C458`). Overrides flood/path discovery for this run; stale-cache discard is disabled while pinned |
+| UI **Route** paste | Per-unit session pin (same as `--force-path` for one target). Paste fleet log text; 4-hex tokens become hops. **`DELETE /api/unit/{key}/path`** clears pin. Not persisted in `nodes.yaml` |
 | `--live` | Periodic GET only (status/telemetry/neighbors) |
 | `--no-discover` | GET neighbor table without remote `discover.neighbors` |
 | `--discover-wait SEC` | Listen after discover (default 12; timer job, radio idle) |
@@ -316,15 +317,16 @@ device `0,0`. Pin color is last-heard age (green now, amber at 12h, red at
 24h+; never-heard is gray). Labels are `Site (3h)` when bound, else book
 alias, else unit id. Age ticks live from `last_heard`. Detail shows unit id and site name, editable **alias** and **notes**
 (when bag/bench, alias becomes the list title), `public` / `pause`,
-**routing policy** and **live route**, and drift
+**routing policy** and **live route** (click Route to paste a log dump and
+session-pin hops), and drift
 from the apply stamp (`due` when the profile is stale) or a later pull
 that still shows advert on (`leak`). Leftover name or GPS is not an advert.
 List cards show the same primary label with unit id
 as secondary when it differs. While the companion worker is live, **Refresh** on a
 unit pulls live telemetry now; **Pull** also GETs fw/name/GPS/advert/acl;
 **Deploy** re-SETs the book profile (overrides `paused` and up-to-date skips).
-CLI `--skip` hides units from the dashboard. Pause is a checkbox on the detail card
-(`paused: true`). Routing policy is Path (default) / Direct / Flood on the
+CLI `--skip` hides units from the dashboard. **Active** on the detail card turns
+auto poll/apply on or off (`paused: true` in the book when off). Routing policy is Path (default) / Direct / Flood on the
 detail card; list cards show live route and a danger badge when policy is flood.
 Sidebar rows fade and badge as paused. Rows with
 `decommissioned:` or `firmware_platform: meshtastic` are omitted

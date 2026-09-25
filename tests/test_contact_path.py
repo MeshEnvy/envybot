@@ -18,6 +18,7 @@ from envybot.radio import (
     PollLog,
     prepare_login_route,
     prepare_send_route,
+    publish_live_route,
     refresh_fleet_paths,
     reset_to_flood,
 )
@@ -80,7 +81,7 @@ class ContactOutPathTests(unittest.TestCase):
                 lines.append(f"    {msg}")
 
         log_contact_path(client, _target(), log=CaptureLog())
-        self.assertEqual(lines, ["path:", "    266a", "    → b3b3"])
+        self.assertEqual(lines, ["path:", "    → 266a", "    → b3b3"])
 
     def test_log_flood_when_no_path(self) -> None:
         client = MagicMock()
@@ -192,6 +193,21 @@ class PrepareRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(route_extra["live_route"]["kind"], "hops")
         self.assertEqual(route_extra["live_route"]["label"], "ea6e e9bd")
 
+    def test_publish_live_route_prefers_session_pin_over_flood_contact(self) -> None:
+        client = MagicMock()
+        client.get_contact_by_key_prefix.return_value = {
+            "out_path_len": -1,
+            "out_path": "",
+        }
+        forced = parse_force_path("a52f fe3b dd4d")
+        assert forced is not None
+        route_extra = {"forced_path": forced.to_extra()}
+        live = publish_live_route(client, _target(), route_extra)
+        self.assertEqual(live["kind"], "hops")
+        self.assertEqual(live["label"], forced.label())
+        self.assertEqual(route_extra["live_route"], live)
+        client.get_contact_by_key_prefix.assert_not_called()
+
     async def test_flood_policy_resets_flood(self) -> None:
         client = MagicMock()
         contact = {
@@ -259,7 +275,7 @@ class PrepareRouteTests(unittest.IsolatedAsyncioTestCase):
         for c in contacts.values():
             self.assertEqual(c["out_path_len"], -1)
         self.assertTrue(any("path was:" in line for line in lines))
-        self.assertIn("  aabb", lines)
+        self.assertIn("  → aabb", lines)
         self.assertIn("  → ccdd", lines)
 
 

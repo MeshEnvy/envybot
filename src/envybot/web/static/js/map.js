@@ -40,6 +40,121 @@ export function mapPinLabel(unit, now = Date.now() / 1000) {
   return `${name} (${formatMapAge(age)})`
 }
 
+/** @param {Record<string, unknown> | undefined} unit */
+function routeHopTokens(unit) {
+  if (!unit) return []
+  if (unit.path_pinned && unit.forced_path_label) {
+    return String(unit.forced_path_label).trim().split(/\s+/).filter(Boolean)
+  }
+  const lr = unit.live_route
+  if (lr && typeof lr === 'object' && lr.kind === 'hops' && lr.label) {
+    return String(lr.label).trim().split(/\s+/).filter(Boolean)
+  }
+  return []
+}
+
+/** @param {Record<string, Record<string, unknown>> | undefined} units @param {string} prefix */
+function unitForHopPrefix(units, prefix) {
+  const p = String(prefix).trim().toLowerCase()
+  if (!p) return null
+  for (const u of Object.values(units || {})) {
+    const pk = String(u.identity_pubkey || '').trim().toLowerCase()
+    if (!pk.startsWith(p)) continue
+    if (!hasMapPin(u.position)) continue
+    return u
+  }
+  return null
+}
+
+/** @param {Record<string, unknown>} unit */
+function unitLonLat(unit) {
+  const pos = unit.position
+  const lat = Number(/** @type {{ lat?: unknown }} */ (pos).lat)
+  const lon = Number(/** @type {{ lon?: unknown }} */ (pos).lon)
+  return [lon, lat]
+}
+
+function pushCoord(coords, point) {
+  if (!coords.length) {
+    coords.push(point)
+    return
+  }
+  const prev = coords[coords.length - 1]
+  if (prev[0] === point[0] && prev[1] === point[1]) return
+  coords.push(point)
+}
+
+/**
+ * Line coordinates for the path in use or being waited on.
+ * Skips hop prefixes with no mapped fleet unit; still reaches target when pinned.
+ *
+ * @param {Record<string, unknown>} fleet
+ * @param {string | null} selectedKey
+ */
+export function buildActivePath(fleet, selectedKey) {
+  const poll = /** @type {Record<string, unknown>} */ (fleet.poll || {})
+  const phase = String(poll.phase || 'idle')
+  const pollBusy = phase !== 'idle' && phase !== 'done' && phase !== 'watch'
+  const pollUnit = pollBusy && typeof poll.unit === 'string' ? poll.unit : null
+  const focusKey = pollUnit || selectedKey
+  if (!focusKey) return null
+
+  const units = /** @type {Record<string, Record<string, unknown>>} */ (fleet.units || {})
+  const unit = units[focusKey]
+  if (!unit) return null
+
+  const tokens = routeHopTokens(unit)
+  const lr = unit.live_route
+  const finding =
+    lr &&
+    typeof lr === 'object' &&
+    lr.kind === 'flood' &&
+    !!lr.fallback
+  const session = unit.session
+  const sessionState =
+    session && typeof session === 'object' && typeof session.state === 'string'
+      ? session.state
+      : ''
+  const sessionBusy = [
+    'polling',
+    'refreshing',
+    'queued',
+    'pulling',
+    'deploying',
+  ].includes(sessionState)
+
+  if (!tokens.length && (finding || sessionBusy) && hasMapPin(unit.position)) {
+    const ingestor = /** @type {{ lat?: unknown, lon?: unknown } | null} */ (fleet.ingestor)
+    if (
+      ingestor &&
+      Number.isFinite(Number(ingestor.lat)) &&
+      Number.isFinite(Number(ingestor.lon))
+    ) {
+      return {
+        unit: focusKey,
+        coordinates: [
+          [Number(ingestor.lon), Number(ingestor.lat)],
+          unitLonLat(unit),
+        ],
+      }
+    }
+  }
+
+  if (!tokens.length && !pollUnit && focusKey !== selectedKey) return null
+  if (!tokens.length && !finding && !sessionBusy) return null
+
+  /** @type {number[][]} */
+  const coords = []
+  for (const hop of tokens) {
+    const hopUnit = unitForHopPrefix(units, hop)
+    if (hopUnit) pushCoord(coords, unitLonLat(hopUnit))
+  }
+  if (hasMapPin(unit.position)) pushCoord(coords, unitLonLat(unit))
+
+  if (coords.length < 2) return null
+  return { unit: focusKey, coordinates: coords }
+}
+
 /** @param {Record<string, Record<string, unknown>> | undefined} units */
 export function buildNeighborEdges(units) {
   /** @type {Array<{ from: string, to: string, coordinates: number[][] }>} */
@@ -204,6 +319,22 @@ export function createMapController(containerId, onSelect, onClear) {
       },
     })
 
+    map.addSource('active-path', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    })
+    map.addLayer({
+      id: 'active-path',
+      type: 'line',
+      source: 'active-path',
+      paint: {
+        'line-color': '#f4e27a',
+        'line-width': 5,
+        'line-opacity': 0.95,
+        'line-dasharray': [0, 4, 3],
+      },
+    })
+
     map.addSource('units', {
       type: 'geojson',
       data: { type: 'FeatureCollection', features: [] },
@@ -217,6 +348,19 @@ export function createMapController(containerId, onSelect, onClear) {
         'circle-color': colorExpr,
         'circle-opacity': 0.35,
         'circle-blur': 0.4,
+      },
+    })
+    map.addLayer({
+      id: 'units-focus',
+      type: 'circle',
+      source: 'units',
+      filter: ['==', ['get', 'focus'], 1],
+      paint: {
+        'circle-radius': 18,
+        'circle-color': '#f4e27a',
+        'circle-opacity': 0.45,
+        'circle-stroke-width': 3,
+        'circle-stroke-color': '#f4e27a',
       },
     })
     map.addLayer({
@@ -278,6 +422,8 @@ export function createMapController(containerId, onSelect, onClear) {
     }
     ensureLayers()
 
+    const active = buildActivePath(fleet, selectedKey)
+    const focusKey = active?.unit || null
     const units = /** @type {Record<string, Record<string, unknown>>} */ (fleet.units || {})
     /** @type {GeoJSON.Feature[]} */
     const features = []
@@ -294,6 +440,7 @@ export function createMapController(containerId, onSelect, onClear) {
           label: mapPinLabel(unit, now),
           pin: pinFreshnessColor(unit.last_heard, now),
           selected: unit.key === selectedKey ? 1 : 0,
+          focus: unit.key === focusKey ? 1 : 0,
         },
       })
     }
@@ -330,6 +477,22 @@ export function createMapController(containerId, onSelect, onClear) {
         })),
     })
 
+    const activeSrc = /** @type {import('maplibre-gl').GeoJSONSource} */ (map.getSource('active-path'))
+    const activeCoords = Array.isArray(active?.coordinates) ? active.coordinates : []
+    activeSrc.setData({
+      type: 'FeatureCollection',
+      features:
+        activeCoords.length >= 2
+          ? [
+              {
+                type: 'Feature',
+                geometry: { type: 'LineString', coordinates: activeCoords },
+                properties: {},
+              },
+            ]
+          : [],
+    })
+
     if (!fitted && (features.length || ingestorFeatures.length)) {
       const bounds = new maplibregl.LngLatBounds()
       for (const f of features) {
@@ -349,6 +512,39 @@ export function createMapController(containerId, onSelect, onClear) {
     }
   }
 
+  const dashSeq = [
+    [0, 4, 3],
+    [0.5, 4, 2.5],
+    [1, 4, 2],
+    [1.5, 4, 1.5],
+    [2, 4, 1],
+    [2.5, 4, 0.5],
+    [3, 4, 0],
+    [0, 0.5, 3, 3.5],
+    [0, 1, 3, 3],
+    [0, 1.5, 3, 2.5],
+    [0, 2, 3, 2],
+    [0, 2.5, 3, 1.5],
+    [0, 3, 3, 1],
+    [0, 3.5, 3, 0.5],
+  ]
+  let dashStep = 0
+  let rafId = 0
+
+  function tickFocus() {
+    if (map.getLayer('active-path')) {
+      dashStep = (dashStep + 1) % dashSeq.length
+      map.setPaintProperty('active-path', 'line-dasharray', dashSeq[dashStep])
+    }
+    if (map.getLayer('units-focus')) {
+      const pulse = (Math.sin(Date.now() / 180) + 1) / 2
+      map.setPaintProperty('units-focus', 'circle-radius', 16 + pulse * 16)
+      map.setPaintProperty('units-focus', 'circle-opacity', 0.2 + pulse * 0.45)
+      map.setPaintProperty('units-focus', 'circle-stroke-width', 2 + pulse * 2)
+    }
+    rafId = requestAnimationFrame(tickFocus)
+  }
+
   function onReady() {
     if (ready) return
     ready = true
@@ -358,6 +554,7 @@ export function createMapController(containerId, onSelect, onClear) {
       sync(pendingFleet, pendingSelected, pendingNow)
       pendingFleet = null
     }
+    rafId = requestAnimationFrame(tickFocus)
   }
 
   if (map.loaded()) onReady()
@@ -406,6 +603,7 @@ export function createMapController(containerId, onSelect, onClear) {
     flyTo,
     hitUnit,
     destroy() {
+      if (rafId) cancelAnimationFrame(rafId)
       ro.disconnect()
       map.remove()
     },

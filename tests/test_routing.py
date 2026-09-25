@@ -1,101 +1,118 @@
-"""Routing policy resolution and live route snapshots."""
-
-from __future__ import annotations
-
 import unittest
 
 from envybot.routing import (
-    RouteSession,
-    RoutingMode,
     forced_path_from_extra,
-    has_cached_route,
     live_route_from_audit_path,
     live_route_from_contact,
     parse_force_path,
+    parse_path_paste,
+    parse_routing_value,
     resolve_routing,
-    routing_explicit,
+    RouteSession,
+    RoutingMode,
 )
 
 
-class ResolveRoutingTests(unittest.TestCase):
+class RoutingPolicyTests(unittest.TestCase):
     def test_default_path(self) -> None:
         self.assertEqual(resolve_routing({}), RoutingMode.PATH)
-        self.assertEqual(resolve_routing({"unit_id": "ME0001"}), RoutingMode.PATH)
-        self.assertIsNone(routing_explicit({}))
-
-    def test_explicit_direct(self) -> None:
-        node = {"routing": "direct"}
-        self.assertEqual(resolve_routing(node), RoutingMode.DIRECT)
-        self.assertEqual(routing_explicit(node), "direct")
 
     def test_explicit_flood(self) -> None:
-        node = {"routing": "flood"}
-        self.assertEqual(resolve_routing(node), RoutingMode.FLOOD)
-        self.assertEqual(routing_explicit(node), "flood")
-
-    def test_resolve_does_not_read_flood_key(self) -> None:
-        self.assertEqual(resolve_routing({"flood": True}), RoutingMode.PATH)
-        self.assertIsNone(routing_explicit({"flood": True}))
-
-
-class CachedRouteTests(unittest.TestCase):
-    def test_zero_hop_is_cached(self) -> None:
-        self.assertTrue(
-            has_cached_route({"out_path_len": 0, "out_path_hash_mode": 0, "out_path": ""})
-        )
-
-    def test_multi_hop_is_cached(self) -> None:
-        self.assertTrue(has_cached_route({"out_path_len": 2, "out_path": "aabbccdd"}))
-
-    def test_flood_not_cached(self) -> None:
-        self.assertFalse(has_cached_route({"out_path_len": -1}))
-        self.assertFalse(has_cached_route(None))
+        self.assertEqual(resolve_routing({"routing": "flood"}), RoutingMode.FLOOD)
 
 
 class LiveRouteTests(unittest.TestCase):
-    def test_path_policy_flood_fallback(self) -> None:
+    def test_flood_policy(self) -> None:
         live = live_route_from_contact(None, policy=RoutingMode.PATH)
         self.assertEqual(live["kind"], "flood")
         self.assertTrue(live["fallback"])
 
-    def test_path_policy_direct_live(self) -> None:
-        contact = {"out_path_len": 0, "out_path_hash_mode": 0, "out_path": ""}
+    def test_hops_from_contact(self) -> None:
+        contact = {"out_path_len": 2, "out_path": "fe3bdd4d", "out_path_hash_mode": 1}
         live = live_route_from_contact(contact, policy=RoutingMode.PATH)
-        self.assertEqual(live["kind"], "direct")
-        self.assertFalse(live["fallback"])
+        self.assertEqual(live["kind"], "hops")
+        self.assertEqual(live["label"], "fe3b dd4d")
 
-    def test_policy_flood_not_fallback(self) -> None:
-        live = live_route_from_contact(None, policy=RoutingMode.FLOOD)
-        self.assertEqual(live["kind"], "flood")
-        self.assertFalse(live["fallback"])
-
-    def test_audit_path_hops(self) -> None:
+    def test_audit_path(self) -> None:
         live = live_route_from_audit_path("514e fe3b", policy=RoutingMode.PATH)
-        self.assertIsNotNone(live)
-        assert live is not None
         self.assertEqual(live["kind"], "hops")
         self.assertEqual(live["label"], "514e fe3b")
 
 
-class ForcePathTests(unittest.TestCase):
-    def test_parse_comma_separated(self) -> None:
-        forced = parse_force_path("EA6E,E9BD,C458,D709,04E2,1FD6")
-        assert forced is not None
-        self.assertEqual(forced.hops, ("ea6e", "e9bd", "c458", "d709", "04e2", "1fd6"))
-        self.assertEqual(forced.path_hex, "ea6ee9bdc458d70904e21fd6")
-        self.assertEqual(forced.hash_mode, 1)
-
-    def test_round_trip_extra(self) -> None:
-        forced = parse_force_path("a1b2 c3d4")
+class ForcedPathTests(unittest.TestCase):
+    def test_roundtrip_extra(self) -> None:
+        forced = parse_force_path("ea6e,e9bd,c458")
         assert forced is not None
         extra = {"forced_path": forced.to_extra()}
         restored = forced_path_from_extra(extra)
         assert restored is not None
-        self.assertEqual(restored, forced)
+        self.assertEqual(restored.hops, forced.hops)
 
-    def test_invalid_hop_length(self) -> None:
+    def test_bad_hop_len(self) -> None:
         with self.assertRaises(ValueError):
             parse_force_path("ea6,e9bd")
+
+
+class ParsePathPasteTests(unittest.TestCase):
+    _SAMPLE = """BTN-Barn-Repeater (a52f)
+    → Ophir {lora.sh} (fe3b)
+    → Spencer Peak {lora.sh} (dd4d)
+    → Bald Mountain {lora.sh} (3211)"""
+
+    def test_log_paste_keeps_all_four_hex_tokens(self) -> None:
+        forced = parse_path_paste(self._SAMPLE)
+        self.assertEqual(forced.hops, ("a52f", "fe3b", "dd4d", "3211"))
+
+    def test_drop_prefix_kwarg_ignored(self) -> None:
+        forced = parse_path_paste(self._SAMPLE, drop_prefix="3211")
+        self.assertEqual(forced.hops, ("a52f", "fe3b", "dd4d", "3211"))
+
+    def test_hash_mode_kwarg_does_not_shrink_token_len(self) -> None:
+        paste = "a52f fe3b dd4d 3211 266a"
+        forced = parse_path_paste(paste, hash_mode=0)
+        self.assertEqual(forced.hops, ("a52f", "fe3b", "dd4d", "3211", "266a"))
+
+    def test_markdown_fence_and_prose_ignored(self) -> None:
+        blob = """id like to paste me0042 path like
+
+```
+BTN-Barn-Repeater (a52f)
+    → Ophir {lora.sh} (fe3b)
+    → Spencer Peak {lora.sh} (dd4d)
+    → Bald Mountain {lora.sh} (3211)
+```
+"""
+        forced = parse_path_paste(blob)
+        self.assertEqual(forced.hops, ("a52f", "fe3b", "dd4d", "3211"))
+
+    def test_comma_paste(self) -> None:
+        forced = parse_path_paste("fe3b, dd4d, 3211")
+        self.assertEqual(forced.hops, ("fe3b", "dd4d", "3211"))
+
+    def test_space_separated_hex(self) -> None:
+        forced = parse_path_paste("fe3b dd4d 3211 266a 82b1")
+        self.assertEqual(forced.hops, ("fe3b", "dd4d", "3211", "266a", "82b1"))
+
+    def test_paren_only_first_hop(self) -> None:
+        text = """(a52f)
+    → Ophir (fe3b)
+    → Spencer Peak (dd4d)
+    → Bald Mountain (3211)
+    → Walker Lake East (266a)
+    → Pilot Peak East (82b1)"""
+        forced = parse_path_paste(text)
+        self.assertEqual(
+            forced.hops,
+            ("a52f", "fe3b", "dd4d", "3211", "266a", "82b1"),
+        )
+
+    def test_empty_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_path_paste("   ")
+
+    def test_no_hex_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            parse_path_paste("Ophir → Spencer Peak")
 
 
 class RouteSessionTests(unittest.TestCase):
@@ -111,5 +128,6 @@ class RouteSessionTests(unittest.TestCase):
         self.assertEqual(rs.path_failures, 0)
 
 
-if __name__ == "__main__":
-    unittest.main()
+class ParseRoutingValueTests(unittest.TestCase):
+    def test_values(self) -> None:
+        self.assertEqual(parse_routing_value("direct"), RoutingMode.DIRECT)

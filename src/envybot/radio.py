@@ -1718,6 +1718,11 @@ def publish_live_route(
     target: RouterTarget,
     route_extra: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    forced = forced_path_from_extra(route_extra) if route_extra else None
+    if forced is not None:
+        live = {"kind": "hops", "label": forced.label(), "fallback": False}
+        route_extra["live_route"] = live
+        return live
     contact = client.get_contact_by_key_prefix(target.pubkey_hex[:12])
     live = live_route_from_contact(contact, policy=target.routing)
     if route_extra is not None:
@@ -1774,9 +1779,8 @@ def log_contact_path(
         return
     if heading:
         log.step(heading)
-    for i, label in enumerate(hops):
-        mark = "" if i == 0 else "→ "
-        log.substep(f"{mark}{label}")
+    for label in hops:
+        log.substep(f"→ {label}")
 
 
 def _audit_redact(text: str | None, *, max_len: int = 500) -> str | None:

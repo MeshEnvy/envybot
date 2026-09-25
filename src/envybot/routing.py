@@ -201,6 +201,66 @@ class ForcedPath:
         }
 
 
+def path_pin_fields_from_extra(extra: dict[str, Any] | None) -> dict[str, Any]:
+    """Snapshot/UI fields for a session-pinned companion path."""
+    forced = forced_path_from_extra(extra)
+    if forced is None:
+        return {"path_pinned": False, "forced_path_label": None}
+    return {"path_pinned": True, "forced_path_label": forced.label()}
+
+
+def _normalize_path_paste_text(text: str) -> str:
+    """Prefer fenced markdown blocks; drop fence lines from loose paste."""
+    stripped = text.strip()
+    if "```" in stripped:
+        parts = stripped.split("```")
+        blocks = [p.strip() for i, p in enumerate(parts) if i % 2 == 1 and p.strip()]
+        if blocks:
+            return max(blocks, key=len)
+        stripped = stripped.replace("```", "")
+    lines = [ln for ln in stripped.splitlines() if ln.strip() and not ln.strip().startswith("```")]
+    return "\n".join(lines)
+
+
+# Companion path paste / pins use 2-byte hop ids (4 hex chars) regardless of book pref.
+PASTE_HOP_HEX_LEN = (FLEET_PATH_HASH_MODE + 1) * 2
+
+
+def _extract_path_hop_tokens(text: str, *, chunk: int = PASTE_HOP_HEX_LEN) -> list[str]:
+    """Non-alphanumeric → space; keep tokens that are exactly ``chunk`` hex chars."""
+    cleaned = re.sub(r"[^0-9A-Za-z]+", " ", text)
+    hop_re = re.compile(rf"^[0-9a-f]{{{chunk}}}$")
+    out: list[str] = []
+    for piece in cleaned.split():
+        token = piece.lower()
+        if hop_re.fullmatch(token):
+            out.append(token)
+    return out
+
+
+def parse_path_paste(
+    text: str | None,
+    *,
+    hash_mode: int = FLEET_PATH_HASH_MODE,
+    drop_prefix: str | None = None,
+) -> ForcedPath:
+    """Extract hop hashes from paste: alphanumeric tokens, 4-hex hops only."""
+    del drop_prefix
+    hash_mode = FLEET_PATH_HASH_MODE
+    if not text or not isinstance(text, str):
+        raise ValueError("path paste is empty")
+    body = _normalize_path_paste_text(text)
+    if not body.strip():
+        raise ValueError("path paste is empty")
+    tokens = _extract_path_hop_tokens(body)
+    if not tokens:
+        raise ValueError("no hop hashes found in paste")
+    forced = parse_force_path(",".join(tokens), hash_mode=hash_mode)
+    if forced is None:
+        raise ValueError("no hop hashes found in paste")
+    return forced
+
+
 def parse_force_path(
     raw: str | None,
     *,

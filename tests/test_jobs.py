@@ -621,6 +621,11 @@ class LaneHeadingTests(unittest.TestCase):
             lane = _print_lane_heading(t, job, uq, "me0001")
             self.assertEqual(lane, "me0001")
             self.assertEqual(buf.getvalue(), "")
+            uq.manual_bump = True
+            lane = _print_lane_heading(t, job, uq, "me0001")
+            self.assertEqual(lane, "me0001")
+            self.assertIn("ME0001", buf.getvalue())
+            self.assertFalse(uq.manual_bump)
 
 
 class DropOtaPollJobsTests(unittest.TestCase):

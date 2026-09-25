@@ -29,6 +29,8 @@ TIMER_JOB_KINDS = frozenset(
     {"get:neighbors_wait", "get:ota_ls_wait", "get:post_install_wait"}
 )
 
+PATH_JOB_KINDS = frozenset({"path:pin", "path:clear"})
+
 # Auto poll/apply only. Console and manual Refresh/Pull/Deploy are exempt.
 DEFAULT_RETRY_DELAY_S = 60.0
 DEFAULT_MISS_COOLDOWN_S = 3600.0
@@ -84,6 +86,11 @@ JobDoneFn = Callable[[UnitQueue, RadioJob, JobOutcome, Any | None], Awaitable[No
 def is_console_job(job: RadioJob | str) -> bool:
     kind = job.kind if isinstance(job, RadioJob) else job
     return kind.startswith("console:")
+
+
+def is_path_job(job: RadioJob | str) -> bool:
+    kind = job.kind if isinstance(job, RadioJob) else job
+    return kind in PATH_JOB_KINDS
 
 
 def is_login_job(job: RadioJob | str) -> bool:
@@ -274,6 +281,50 @@ class FleetScheduler:
         uq.backoff_until = 0.0
         self.clear_cooldown(uq)
         self._wake_idle()
+
+    def set_unit_forced_path(
+        self,
+        key: str,
+        forced: Any | None,
+    ) -> None:
+        """Session-only companion path pin (ForcedPath.to_extra() or None to clear)."""
+        uq = self.units.get(key.lower())
+        if uq is None:
+            return
+        if forced is None:
+            uq.session_extra.pop("forced_path", None)
+        else:
+            uq.session_extra["forced_path"] = forced
+
+    def enqueue_path_job(
+        self,
+        target: RouterTarget,
+        *,
+        kind: str,
+        forced_extra: dict[str, Any] | None = None,
+    ) -> tuple[int, str | None]:
+        """Queue path:pin or path:clear on one unit (works when paused)."""
+        if kind not in PATH_JOB_KINDS:
+            return 400, f"unknown path job {kind}"
+        uq = self.get_or_create(target)
+        if forced_extra is not None:
+            uq.session_extra["forced_path"] = forced_extra
+        self._cancel_timer(uq)
+        uq.manual = True
+        uq.manual_job = "path"
+        uq.manual_bump = True
+        job = RadioJob(
+            kind=kind,
+            unit_key=target.key,
+            manual=True,
+            manual_job="path",
+        )
+        uq.jobs.appendleft(job)
+        uq.backoff_until = 0.0
+        self.clear_cooldown(uq)
+        uq.last_served = 0.0
+        self._wake_idle()
+        return 200, None
 
     def drop_auto_paused(self, paused_keys: set[str], *, manual_keys: set[str]) -> list[str]:
         dropped: list[str] = []

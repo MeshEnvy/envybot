@@ -15,6 +15,8 @@ import {
   fetchPolls,
   installUnit,
   patchUnit,
+  postUnitPath,
+  clearUnitPath,
   postBenchLoc,
   pullUnit,
   deployUnit,
@@ -41,7 +43,7 @@ import {
   replaceSnapshot,
   startClock,
   stopClock,
-} from "./state.js?v=9";
+} from "./state.js?v=10";
 import {
   formatAgo,
   formatBattery,
@@ -84,7 +86,7 @@ import {
   createMapController,
   unitStage,
   unitStatus,
-} from "./map.js?v=32";
+} from "./map.js?v=33";
 import {
   seriesFromHistories,
   seriesFromPolls,
@@ -143,7 +145,10 @@ const App = {
   setup() {
     const fleet = fleetStore;
     const selectedKey = ref(null);
-    const mapOpen = ref(false);
+    const mapOpen = ref(
+      typeof location !== "undefined" &&
+        new URLSearchParams(location.search).get("map") === "1",
+    );
     const mapHighlightKey = ref(/** @type {string | null} */ (null));
     const search = ref("");
     /** @type {import('vue').Ref<HTMLInputElement | null>} */
@@ -153,6 +158,14 @@ const App = {
     const notesDraft = ref("");
     const aliasEditing = ref(false);
     const notesEditing = ref(false);
+    const routeEditing = ref(false);
+    const routeDraft = ref("");
+    const routeError = ref("");
+    const routeSaving = ref(false);
+    const routeCopied = ref(false);
+    /** @type {import('vue').Ref<HTMLTextAreaElement | null>} */
+    const routeTextarea = ref(null);
+    let routeCopiedTimer = null;
     const historyHours = 72;
     const LOG_PAGE = 10;
     const AUDIT_PAGE = 40;
@@ -693,6 +706,23 @@ const App = {
     async function maybeReopenMap() {
       if (!mapFromLocation()) return;
       await showMap();
+    }
+
+    /** Restore map, unit detail, and console from query string (refresh / popstate). */
+    async function restoreFromLocation() {
+      if (mapFromLocation()) {
+        mapOpen.value = true;
+        await nextTick();
+        await nextTick();
+        await initMapIfNeeded();
+        const pending = unitKeyFromLocation();
+        syncLocation(pending || selectedKey.value);
+      } else if (mapOpen.value) {
+        mapOpen.value = false;
+        syncLocation(unitKeyFromLocation() || selectedKey.value);
+      }
+      await applyLocationUnit();
+      if (consoleFromLocation()) await maybeReopenConsole();
     }
 
     function toggleConsolePicker() {
@@ -1492,7 +1522,7 @@ const App = {
         clearSelection();
         return;
       }
-      openDetail(key, { fly: true });
+      openDetail(key);
     }
 
     async function applyLocationUnit() {
@@ -1504,7 +1534,11 @@ const App = {
         return;
       }
       if (!fleet.units[key]) return;
-      if (selectedKey.value === key) return;
+      if (selectedKey.value === key) {
+        mapHighlightKey.value = key;
+        pushMap();
+        return;
+      }
       openDetail(key);
     }
 
@@ -1583,6 +1617,13 @@ const App = {
       return String(unit.unit_id || unit.key || "");
     }
 
+    /** First 4 hex of identity pubkey (2-byte path hop id). */
+    function cardPathHashPrefix(unit) {
+      const pk = String(unit?.identity_pubkey || "").trim().toLowerCase();
+      if (pk.length < 4) return null;
+      return pk.slice(0, 4);
+    }
+
     function cardShowNodeId(unit) {
       const id = cardNodeId(unit);
       return !!id && id !== cardPrimary(unit);
@@ -1595,6 +1636,15 @@ const App = {
       if (badge === "sees update") return "fw";
       if (badge === "downloading") return "dl";
       return badge;
+    }
+
+    function prefBadgeTitle(pref) {
+      if (!pref) return "";
+      if (pref.note) return pref.note;
+      if (pref.state === "due") return "Book apply due";
+      if (pref.state === "blocked") return "Not applied";
+      if (pref.state === "default") return "Stock default (not in book)";
+      return "Apply stamped";
     }
 
     function cardVoltage(unit) {
@@ -1688,6 +1738,8 @@ const App = {
     watch(selectedKey, (key) => {
       aliasEditing.value = false;
       notesEditing.value = false;
+      routeEditing.value = false;
+      routeError.value = "";
       resetLogShown();
       syncBookDrafts(selectedUnit.value);
       syncLocation(key);
@@ -1771,13 +1823,60 @@ const App = {
 
     /** @param {Record<string, unknown>} unit */
     function liveRouteLabel(unit) {
+      if (unit.path_pinned && unit.forced_path_label) {
+        return String(unit.forced_path_label).trim();
+      }
       const lr = unit.live_route;
       if (!lr || typeof lr !== "object") return "unknown";
       return String(lr.label || "unknown");
     }
 
+    /** Display mode: hop names + (hex), one per line; flood/direct stay short. */
+    function liveRouteDisplay(unit) {
+      const pinnedHops = unit.path_pinned ? routeHopHashes(unit) : [];
+      if (pinnedHops.length) {
+        const byPrefix = routePrefixNameMap();
+        return pinnedHops
+          .map((h) => {
+            const name = byPrefix.get(h);
+            return name ? `${name} (${h})` : `(${h})`;
+          })
+          .join("\n");
+      }
+      const lr = unit.live_route;
+      if (!lr || typeof lr !== "object") return "unknown";
+      if (lr.kind === "flood") {
+        return lr.fallback ? "flood · discovering" : "flood";
+      }
+      if (lr.kind === "direct") return "direct";
+      const hops = routeHopHashes(unit);
+      if (!hops.length) return liveRouteLabel(unit);
+      const byPrefix = routePrefixNameMap();
+      return hops
+        .map((h) => {
+          const name = byPrefix.get(h);
+          return name ? `${name} (${h})` : `(${h})`;
+        })
+        .join("\n");
+    }
+
+    function liveRouteDisplayClass(unit) {
+      const base = liveRouteBadgeClass(unit);
+      if (unit.path_pinned && routeHopHashes(unit).length) {
+        return `${base} live-route-hops-display`;
+      }
+      const lr = unit.live_route;
+      if (lr && typeof lr === "object" && lr.kind === "hops" && routeHopHashes(unit).length) {
+        return `${base} live-route-hops-display`;
+      }
+      return base;
+    }
+
     /** @param {Record<string, unknown>} unit */
     function liveRouteTitle(unit) {
+      if (unit.path_pinned && unit.forced_path_label) {
+        return `Pinned route: ${String(unit.forced_path_label).trim()}`;
+      }
       const lr = unit.live_route;
       if (!lr || typeof lr !== "object") return "Route unknown";
       if (lr.kind === "flood" && lr.fallback) return "Rediscovering route";
@@ -1787,6 +1886,9 @@ const App = {
 
     /** @param {Record<string, unknown>} unit */
     function liveRouteBadgeClass(unit) {
+      if (unit.path_pinned && routeHopHashes(unit).length) {
+        return "live-route-badge";
+      }
       const lr = unit.live_route;
       if (!lr || typeof lr !== "object") return "live-route-badge live-route-unknown";
       if (lr.kind === "flood" && lr.fallback) {
@@ -1794,6 +1896,151 @@ const App = {
       }
       if (lr.kind === "flood") return "live-route-badge live-route-flood";
       return "live-route-badge";
+    }
+
+    /** @param {string[]} hops */
+    function formatRouteHexPaste(hops) {
+      return hops.join(" ");
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function routePrefillText(unit) {
+      if (unit.path_pinned && typeof unit.forced_path_label === "string") {
+        return unit.forced_path_label.trim();
+      }
+      return formatRouteHexPaste(routeHopHashes(unit));
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function routeHopHashes(unit) {
+      if (unit.path_pinned && unit.forced_path_label) {
+        return String(unit.forced_path_label).trim().split(/\s+/).filter(Boolean);
+      }
+      const lr = unit.live_route;
+      if (lr && typeof lr === "object" && lr.kind === "hops" && lr.label) {
+        return String(lr.label).trim().split(/\s+/).filter(Boolean);
+      }
+      return [];
+    }
+
+    /** Resolve 4-hex path ids to fleet unit titles (unknown hops keep hex only). */
+    function routePrefixNameMap() {
+      /** @type {Map<string, string>} */
+      const byPrefix = new Map();
+      for (const u of Object.values(fleet.units || {})) {
+        const hex = cardPathHashPrefix(u);
+        if (!hex || byPrefix.has(hex)) continue;
+        byPrefix.set(hex, unitTitle(u));
+      }
+      return byPrefix;
+    }
+
+    /** Hops for handoff to a neighbor: live/pinned path + this unit's 4-hex id last. */
+    function routeHexesForNeighborCopy(unit) {
+      const hops = [...routeHopHashes(unit)];
+      const selfHex = cardPathHashPrefix(unit);
+      if (selfHex && hops[hops.length - 1] !== selfHex) {
+        hops.push(selfHex);
+      }
+      return hops;
+    }
+
+    /** Copy / editor: space-separated 4-hex hops only. */
+    function formatRouteClipboard(unit) {
+      const lr = unit.live_route;
+      if (lr && typeof lr === "object" && lr.kind === "flood") return "flood";
+      if (lr && typeof lr === "object" && lr.kind === "direct") {
+        const selfHex = cardPathHashPrefix(unit);
+        return selfHex || "direct";
+      }
+      return formatRouteHexPaste(routeHexesForNeighborCopy(unit));
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function canCopyRoute(unit) {
+      const lr = unit.live_route;
+      if (lr && typeof lr === "object") {
+        if (lr.kind === "hops" || lr.kind === "direct" || lr.kind === "flood") return true;
+      }
+      return routeHopHashes(unit).length > 0;
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    async function copyRouteClipboard(unit, ev) {
+      ev?.stopPropagation?.();
+      const text = formatRouteClipboard(unit);
+      try {
+        if (!navigator.clipboard?.writeText) throw new Error("no clipboard");
+        await navigator.clipboard.writeText(text);
+      } catch (err) {
+        console.error(err);
+        routeError.value = "Could not copy to clipboard";
+        return;
+      }
+      routeCopied.value = true;
+      if (routeCopiedTimer) clearTimeout(routeCopiedTimer);
+      routeCopiedTimer = setTimeout(() => {
+        routeCopied.value = false;
+        routeCopiedTimer = null;
+      }, 2000);
+    }
+
+    function routePasteText() {
+      const el = routeTextarea.value;
+      if (el && typeof el.value === "string") return el.value;
+      return routeDraft.value;
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function openRouteEdit(unit) {
+      routeDraft.value = routePrefillText(unit);
+      routeError.value = "";
+      routeEditing.value = true;
+      nextTick(() => routeTextarea.value?.focus());
+    }
+
+    function cancelRouteEdit() {
+      routeEditing.value = false;
+      routeError.value = "";
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    async function saveRoutePaste(unit) {
+      const paste = routePasteText();
+      routeDraft.value = paste;
+      const trimmed = paste.trim();
+      if (!trimmed) {
+        routeError.value = "Paste a path first";
+        return;
+      }
+      routeSaving.value = true;
+      routeError.value = "";
+      try {
+        const updated = await postUnitPath(String(unit.key), trimmed);
+        applyUnit(updated);
+        routeEditing.value = false;
+        pushMap();
+      } catch (err) {
+        routeError.value = err instanceof Error ? err.message : String(err);
+      } finally {
+        routeSaving.value = false;
+      }
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    async function clearRoutePin(unit) {
+      routeSaving.value = true;
+      routeError.value = "";
+      try {
+        const updated = await clearUnitPath(String(unit.key));
+        applyUnit(updated);
+        routeEditing.value = false;
+        pushMap();
+      } catch (err) {
+        routeError.value = err instanceof Error ? err.message : String(err);
+      } finally {
+        routeSaving.value = false;
+      }
     }
 
     /** @param {Record<string, unknown>} unit */
@@ -1817,12 +2064,12 @@ const App = {
     /** @param {Record<string, unknown>} unit @param {Event} [ev] */
     async function togglePaused(unit, ev) {
       ev?.stopPropagation?.();
-      const next =
+      const paused =
         ev && ev.target && "checked" in ev.target
-          ? !!ev.target.checked
+          ? !ev.target.checked
           : !unit.paused;
       try {
-        const updated = await patchUnit(String(unit.key), { paused: next });
+        const updated = await patchUnit(String(unit.key), { paused });
         applyUnit(updated);
         pushMap();
       } catch (err) {
@@ -1842,7 +2089,14 @@ const App = {
     }
 
     function pushMap() {
-      mapCtrl?.sync(fleet, selectedKey.value ?? mapHighlightKey.value, fleet.now);
+      mapCtrl?.sync(
+        {
+          ...fleet,
+          ingestor: fleet.ingestor,
+        },
+        selectedKey.value ?? mapHighlightKey.value,
+        fleet.now,
+      );
     }
 
     /** @param {EventTarget | null} target */
@@ -1917,7 +2171,9 @@ const App = {
       };
       const onPageHide = () => persistConsole();
       window.addEventListener("pagehide", onPageHide);
-      const onPop = () => applyLocationUnit();
+      const onPop = () => {
+        void restoreFromLocation();
+      };
       window.addEventListener("keydown", onKey);
       window.addEventListener("popstate", onPop);
       onUnmounted(() => {
@@ -1927,9 +2183,7 @@ const App = {
       });
       try {
         await applyHello(await fetchFleet());
-        applyLocationUnit();
-        await maybeReopenConsole();
-        await maybeReopenMap();
+        await restoreFromLocation();
       } catch (err) {
         console.error(err);
       }
@@ -1940,7 +2194,7 @@ const App = {
       es = connectEvents({
         onHello: async (snap) => {
           await applyHello(snap);
-          applyLocationUnit();
+          await applyLocationUnit();
           pushMap();
         },
         onUnit: (unit) => {
@@ -1949,6 +2203,7 @@ const App = {
         },
         onSession: (poll) => {
           applySession(poll);
+          pushMap();
         },
         onAudit: (event) => {
           applyAudit(event);
@@ -2005,8 +2260,10 @@ const App = {
       healthTooltip,
       cardPrimary,
       cardNodeId,
+      cardPathHashPrefix,
       cardShowNodeId,
       cardOtaLabel,
+      prefBadgeTitle,
       cardVoltage,
       cardTraffic,
       cardTemp,
@@ -2093,8 +2350,22 @@ const App = {
       effectiveRoutingPolicy,
       routingPolicyLabel,
       liveRouteLabel,
+      liveRouteDisplay,
+      liveRouteDisplayClass,
       liveRouteTitle,
       liveRouteBadgeClass,
+      routeEditing,
+      routeDraft,
+      routeTextarea,
+      routeError,
+      routeSaving,
+      openRouteEdit,
+      cancelRouteEdit,
+      saveRoutePaste,
+      clearRoutePin,
+      canCopyRoute,
+      copyRouteClipboard,
+      routeCopied,
       showPolicyFloodBadge,
       runManualJob,
       otaLocalLabel,
@@ -2372,6 +2643,24 @@ const App = {
         </article>
       </div>
     </main>
+    <div
+      v-show="mapOpen"
+      class="map-modal overlay-modal"
+      @mousedown.self="hideMapAtEvent"
+    >
+      <div class="map-shell" role="dialog" aria-modal="true" aria-label="Map" @mousedown.stop>
+        <div class="map-modal-head">
+          <span class="map-modal-title">Map</span>
+          <button type="button" class="console-modal-close" aria-label="Hide map" @click="hideMap">×</button>
+        </div>
+        <div id="layout" class="map-layout" :class="{ 'detail-open': !!selectedUnit }">
+          <div id="map-wrap">
+            <div id="map"></div>
+          </div>
+          <aside id="map-detail-slot" class="map-detail-slot" :class="{ 'is-open': !!selectedUnit }"></aside>
+        </div>
+      </div>
+    </div>
     <Teleport :to="mapOpen ? '#map-detail-slot' : 'body'">
     <div
       v-if="selectedUnit"
@@ -2395,6 +2684,11 @@ const App = {
           <p class="sub">
             {{ selectedUnit.unit_id }}
             <span v-if="selectedUnit.board"> · {{ selectedUnit.board }}</span>
+            <span
+              v-if="cardPathHashPrefix(selectedUnit)"
+              class="unit-path-hash"
+              :title="'Path hop id (2 bytes): ' + cardPathHashPrefix(selectedUnit)"
+            > · {{ cardPathHashPrefix(selectedUnit) }}</span>
             · {{ formatRelative(selectedUnit.last_heard, fleet.now) }}
             <span v-if="selectedUnit.drift"> · {{ selectedUnit.drift }}</span>
           </p>
@@ -2404,18 +2698,79 @@ const App = {
               :key="pref.id"
               class="pref-badge"
               :class="'pref-' + pref.state"
-              :title="pref.note || (pref.state === 'due' ? 'Book apply due' : pref.state === 'blocked' ? 'Not applied' : 'Apply stamped')"
+              :title="prefBadgeTitle(pref)"
             >{{ pref.label }} {{ pref.value }}</span>
           </p>
           <p class="live-route-line">
             <span class="book-field-label">Route</span>
-            <span :class="liveRouteBadgeClass(selectedUnit)" :title="liveRouteTitle(selectedUnit)">
-              {{ liveRouteLabel(selectedUnit) }}
-              <span
-                v-if="selectedUnit.live_route?.kind === 'flood' && selectedUnit.live_route?.fallback"
-                class="live-route-sub"
-              >discovering</span>
-            </span>
+            <template v-if="!routeEditing">
+              <div class="live-route-display">
+                <button
+                  type="button"
+                  class="live-route-edit-trigger"
+                  :title="liveRouteTitle(selectedUnit) + (selectedUnit.path_pinned ? ' · session pin' : '') + ' · click to edit'"
+                  @click="openRouteEdit(selectedUnit)"
+                >
+                  <span :class="liveRouteDisplayClass(selectedUnit)">
+                    {{ liveRouteDisplay(selectedUnit) }}
+                  </span>
+                  <span v-if="selectedUnit.path_pinned" class="live-route-pin-badge">pinned</span>
+                </button>
+                <button
+                  v-if="canCopyRoute(selectedUnit)"
+                  type="button"
+                  class="live-route-copy"
+                  :class="{ copied: routeCopied }"
+                  :title="routeCopied ? 'Copied' : 'Copy hop hexes'"
+                  aria-label="Copy path"
+                  @click="copyRouteClipboard(selectedUnit, $event)"
+                >
+                  <svg v-if="!routeCopied" viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6">
+                    <rect x="7" y="5.5" width="9" height="11.5" rx="1.4" />
+                    <path d="M13 5.5V4.4A1.4 1.4 0 0 0 11.6 3H4.4A1.4 1.4 0 0 0 3 4.4v10.2A1.4 1.4 0 0 0 4.4 16H6" />
+                  </svg>
+                  <svg v-else viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4.5 10.5l3.4 3.4 7.6-7.8" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </div>
+            </template>
+            <div v-else class="live-route-editor">
+              <textarea
+                ref="routeTextarea"
+                v-model="routeDraft"
+                class="live-route-textarea"
+                rows="5"
+                spellcheck="false"
+                placeholder="fe3b dd4d 3211 (or paste a fleet log; names ignored)"
+              ></textarea>
+              <p class="live-route-hint">
+                Session only. Cleared when fleet exits. Paste a known-good log dump, not a stale cache.
+              </p>
+              <p v-if="routeError" class="live-route-error">{{ routeError }}</p>
+              <div class="live-route-actions">
+                <button
+                  type="button"
+                  class="manual-btn"
+                  :disabled="routeSaving || !routeDraft.trim()"
+                  @click="saveRoutePaste(selectedUnit)"
+                >
+                  Save pin
+                </button>
+                <button type="button" class="manual-btn" :disabled="routeSaving" @click="cancelRouteEdit">
+                  Cancel
+                </button>
+                <button
+                  v-if="selectedUnit.path_pinned"
+                  type="button"
+                  class="manual-btn"
+                  :disabled="routeSaving"
+                  @click="clearRoutePin(selectedUnit)"
+                >
+                  Clear pin
+                </button>
+              </div>
+            </div>
           </p>
           <div class="detail-toolbar">
             <label
@@ -2427,12 +2782,12 @@ const App = {
               Repeat
             </label>
             <label
-              class="book-toggle book-toggle-pause"
-              title="Skip auto poll and apply. Refresh, Pull, and Deploy still work."
+              class="book-toggle"
+              title="On: auto poll and apply. Off: skip those. Refresh, Pull, and Deploy still work."
             >
-              <input type="checkbox" :checked="!!selectedUnit.paused" @change="togglePaused(selectedUnit, $event)" />
+              <input type="checkbox" :checked="!selectedUnit.paused" @change="togglePaused(selectedUnit, $event)" />
               <span class="switch" aria-hidden="true"></span>
-              Pause
+              Active
             </label>
             <div v-if="manualAccepting" class="manual-actions">
               <button
@@ -2621,7 +2976,7 @@ const App = {
                 <dt>{{ pref.label }}</dt>
                 <dd>
                   {{ pref.value }}
-                  <span class="dim">{{ pref.note || (pref.state === 'due' ? 'due' : pref.state === 'blocked' ? 'blocked' : 'applied') }}</span>
+                  <span class="dim">{{ pref.note || (pref.state === 'due' ? 'due' : pref.state === 'blocked' ? 'blocked' : pref.state === 'default' ? 'default' : 'applied') }}</span>
                 </dd>
               </template>
             </dl>
@@ -3134,24 +3489,6 @@ const App = {
             <p v-else class="console-empty">Pick a unit to open a tab.</p>
           </div>
         </div>
-    <div
-      v-show="mapOpen"
-      class="map-modal overlay-modal"
-      @mousedown.self="hideMapAtEvent"
-    >
-      <div class="map-shell" role="dialog" aria-modal="true" aria-label="Map" @mousedown.stop>
-        <div class="map-modal-head">
-          <span class="map-modal-title">Map</span>
-          <button type="button" class="console-modal-close" aria-label="Hide map" @click="hideMap">×</button>
-        </div>
-        <div id="layout" class="map-layout" :class="{ 'detail-open': !!selectedUnit }">
-          <div id="map-wrap">
-            <div id="map"></div>
-          </div>
-          <aside id="map-detail-slot" class="map-detail-slot" :class="{ 'is-open': !!selectedUnit }"></aside>
-        </div>
-      </div>
-    </div>
   `,
 };
 

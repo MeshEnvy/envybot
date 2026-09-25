@@ -893,6 +893,34 @@ class RadioPrefTests(unittest.TestCase):
             self.assertEqual(prefs["path_hash"]["value"], "2-byte")
             self.assertEqual(prefs["ota_autofetch"]["value"], "off")
 
+    def test_rxgain_default_on_t096_without_book_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            yaml = YAML()
+            yaml.dump({"sites": {}}, sites_path.open("w", encoding="utf-8"))
+            yaml.dump(
+                {
+                    "next_unit": 2,
+                    "nodes": {
+                        "me0001": {
+                            "unit_id": "ME0001",
+                            "firmware_platform": "meshcore",
+                            "guest_password": "GuestOneStrong1",
+                            "admin_password": "AdminOneStrong1",
+                            "identity_pubkey": "aa" * 32,
+                            "board": "heltec-t096",
+                        }
+                    },
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
+            prefs = {p["id"]: p for p in snap["units"]["me0001"]["prefs"]}
+            self.assertEqual(prefs["rxgain"]["value"], "on")
+            self.assertEqual(prefs["rxgain"]["state"], "default")
+
     def test_only_skip_filter_dashboard_units(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             book = Path(tmp)

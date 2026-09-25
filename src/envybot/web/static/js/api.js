@@ -49,6 +49,28 @@ export async function postBenchLoc(lat, lon) {
   return res.json()
 }
 
+/** @param {string} key @param {string} paste */
+export async function postUnitPath(key, paste) {
+  const res = await fetch(`/api/unit/${encodeURIComponent(key)}/path`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paste }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || `path pin ${res.status}`)
+  return body
+}
+
+/** @param {string} key */
+export async function clearUnitPath(key) {
+  const res = await fetch(`/api/unit/${encodeURIComponent(key)}/path`, {
+    method: 'DELETE',
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || `path clear ${res.status}`)
+  return body
+}
+
 /** @param {string} key @param {Record<string, unknown>} body */
 export async function patchUnit(key, body) {
   const res = await fetch(`/api/unit/${encodeURIComponent(key)}`, {

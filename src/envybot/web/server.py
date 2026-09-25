@@ -13,6 +13,11 @@ from typing import Any
 from aiohttp import web
 
 from envybot.apply import apply_is_due
+from envybot.routing import (
+    ForcedPath,
+    parse_path_paste,
+    path_pin_fields_from_extra,
+)
 from envybot.fleet_worker import build_manual_jobs
 from envybot.history import (
     get_last_seen,
@@ -228,6 +233,62 @@ class MonitorWeb:
         )
         return status, err
 
+    async def enqueue_path_pin(
+        self,
+        key: str,
+        forced: ForcedPath,
+    ) -> tuple[int, str | None]:
+        from envybot.poll import in_flight_session
+
+        key = key.lower()
+        if not self.unit_visible(key):
+            return 404, "unknown unit"
+        if not self._accepting or self._binding is None:
+            return 409, "fleet worker not accepting manual jobs"
+        status, err, target = self._load_target(key)
+        if status != 200 or target is None:
+            return status, err or "unknown unit"
+        binding = self._binding
+        status, err = binding.scheduler.enqueue_path_job(
+            target,
+            kind="path:pin",
+            forced_extra=forced.to_extra(),
+        )
+        if status != 200:
+            return status, err
+        binding.manual_keys.add(key)
+        sess = in_flight_session(
+            manual_job="path",
+            job_kind="path:pin",
+            queued=True,
+        )
+        sess.update(path_pin_fields_from_extra({"forced_path": forced.to_extra()}))
+        self._session_states[key] = sess
+        return 200, None
+
+    async def enqueue_path_clear(self, key: str) -> tuple[int, str | None]:
+        from envybot.poll import in_flight_session
+
+        key = key.lower()
+        if not self.unit_visible(key):
+            return 404, "unknown unit"
+        if not self._accepting or self._binding is None:
+            return 409, "fleet worker not accepting manual jobs"
+        status, err, target = self._load_target(key)
+        if status != 200 or target is None:
+            return status, err or "unknown unit"
+        binding = self._binding
+        status, err = binding.scheduler.enqueue_path_job(target, kind="path:clear")
+        if status != 200:
+            return status, err
+        binding.manual_keys.add(key)
+        self._session_states[key] = in_flight_session(
+            manual_job="path",
+            job_kind="path:clear",
+            queued=True,
+        )
+        return 200, None
+
     def _load_target(
         self, key: str, *, require_worker: bool = True
     ) -> tuple[int, str | None, Any | None]:
@@ -432,6 +493,17 @@ class MonitorWeb:
             return live
         return self._reported_locs or None
 
+    def _merge_scheduler_path_pins(self, snap: dict[str, Any]) -> None:
+        binding = self._binding
+        if binding is None:
+            return
+        units = snap.get("units") or {}
+        for key, uq in binding.scheduler.units.items():
+            unit = units.get(key)
+            if unit is None:
+                continue
+            unit.update(path_pin_fields_from_extra(uq.session_extra))
+
     async def refresh_snapshot(
         self,
         *,
@@ -459,6 +531,7 @@ class MonitorWeb:
         snap["edges"] = build_neighbor_edges(snap["units"])
         _attach_ingestor(snap, self.nodes_path)
         snap.setdefault("poll", {})["console"] = self.console.poll_console()
+        self._merge_scheduler_path_pins(snap)
         await self.hub.set_snapshot(snap)
         return snap
 
@@ -492,6 +565,7 @@ class MonitorWeb:
         snap["edges"] = build_neighbor_edges(snap["units"])
         _attach_ingestor(snap, self.nodes_path)
         snap.setdefault("poll", {})["console"] = self.console.poll_console()
+        self._merge_scheduler_path_pins(snap)
         unit = snap["units"].get(key)
         if unit is None:
             return
@@ -504,6 +578,9 @@ class MonitorWeb:
                 from envybot.routing import abbrev_live_route_label
 
                 unit["live_route_label"] = abbrev_live_route_label(str(label))
+        if "path_pinned" in session:
+            unit["path_pinned"] = session["path_pinned"]
+            unit["forced_path_label"] = session.get("forced_path_label")
         if sample is not None:
             source, row = sample
             unit["sample"] = {"source": source, "row": row}
@@ -870,6 +947,56 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
     return web.json_response(unit)
 
 
+async def _handle_unit_path_set(request: web.Request) -> web.Response:
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    key = request.match_info["key"].lower()
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "invalid json"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({"error": "object required"}, status=400)
+    paste = body.get("paste")
+    if not isinstance(paste, str) or not paste.strip():
+        return web.json_response({"error": "paste required"}, status=400)
+    status, err, target = web_ctx._load_target(key)
+    if status != 200 or target is None:
+        return web.json_response({"error": err or "unknown unit"}, status=status)
+    doc = load_nodes_doc(web_ctx.nodes_path)
+    try:
+        forced = parse_path_paste(paste)
+    except ValueError as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    status, err = await web_ctx.enqueue_path_pin(key, forced)
+    if status != 200:
+        return web.json_response({"error": err or "path pin failed"}, status=status)
+    snap = await web_ctx.refresh_snapshot(
+        session_states=dict(web_ctx._session_states),
+        companion=web_ctx._companion,
+        poll=web_ctx._poll_state,
+    )
+    unit = snap["units"].get(key) or {}
+    return web.json_response(unit)
+
+
+async def _handle_unit_path_clear(request: web.Request) -> web.Response:
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    key = request.match_info["key"].lower()
+    status, err, _target = web_ctx._load_target(key)
+    if status != 200:
+        return web.json_response({"error": err or "unknown unit"}, status=status)
+    status, err = await web_ctx.enqueue_path_clear(key)
+    if status != 200:
+        return web.json_response({"error": err or "path clear failed"}, status=status)
+    snap = await web_ctx.refresh_snapshot(
+        session_states=dict(web_ctx._session_states),
+        companion=web_ctx._companion,
+        poll=web_ctx._poll_state,
+    )
+    unit = snap["units"].get(key) or {}
+    return web.json_response(unit)
+
+
 async def _console_json(request: web.Request) -> dict[str, Any]:
     try:
         body = await request.json()
@@ -1040,6 +1167,8 @@ def make_app(web_ctx: MonitorWeb) -> web.Application:
     app.router.add_get("/api/fleet", _handle_fleet)
     app.router.add_post("/api/bench", _handle_bench)
     app.router.add_post("/api/unit/{key}", _handle_unit_edit)
+    app.router.add_post("/api/unit/{key}/path", _handle_unit_path_set)
+    app.router.add_delete("/api/unit/{key}/path", _handle_unit_path_clear)
     app.router.add_post("/api/refresh/{key}", lambda r: _handle_manual_job(r, "refresh"))
     app.router.add_post("/api/pull/{key}", lambda r: _handle_manual_job(r, "pull"))
     app.router.add_post("/api/deploy/{key}", lambda r: _handle_manual_job(r, "deploy"))

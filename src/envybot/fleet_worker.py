@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from envybot.routing import ForcedPath
+from envybot.routing import ForcedPath, forced_path_from_extra
 from envybot.apply import (
     applicable_field_desireds,
     apply_due_fields,
@@ -105,7 +105,10 @@ from envybot.radio import (
     parse_int_get_value,
     parse_ota_self,
     ota_self_heard_empty,
+    prepare_pinned_path,
+    publish_live_route,
     pull_repeater_status,
+    reset_to_flood,
     send_cmd_once,
     set_book_coord,
     set_dutycycle_policy,
@@ -914,6 +917,24 @@ async def execute_job(
         if err and "rejected" in str(err).lower():
             return JobOutcome.HARD_FAIL, err
         return JobOutcome.TIMEOUT, err
+
+    if job.kind == "path:pin":
+        forced = forced_path_from_extra(route_extra)
+        if forced is None:
+            return JobOutcome.HARD_FAIL, "no forced path"
+        with ctx.log.phase("pin path"):
+            await prepare_pinned_path(
+                ctx.client, target, forced=forced, log=ctx.log
+            )
+        publish_live_route(ctx.client, target, route_extra)
+        return JobOutcome.HEARD, forced.label()
+
+    if job.kind == "path:clear":
+        route_extra.pop("forced_path", None)
+        with ctx.log.phase("clear path pin"):
+            await reset_to_flood(ctx.client, target, log=ctx.log)
+        publish_live_route(ctx.client, target, route_extra)
+        return JobOutcome.HEARD, None
 
     if job.kind == "console:cli":
         return await _execute_console_cli(job, uq, ctx, attempt_num, attempt_cap)

@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import { buildNeighborEdges } from './map.js?v=32'
+import { buildNeighborEdges } from './map.js?v=33'
 
 /** @typedef {{ ts: number, [key: string]: unknown }} HistoryRow */
 /** @typedef {{ status: HistoryRow[], telemetry: HistoryRow[], polls: HistoryRow[], neighbors: HistoryRow[], acl: HistoryRow[], sun?: HistoryRow[] }} UnitHistory */
@@ -19,6 +19,7 @@ export const fleetStore = reactive({
   poll: /** @type {Record<string, unknown>} */ ({}),
   companion: /** @type {string | null} */ (null),
   edges: /** @type {unknown[]} */ ([]),
+  ingestor: /** @type {{ lat: number, lon: number } | null} */ (null),
   now: Math.floor(Date.now() / 1000),
 })
 
@@ -153,6 +154,13 @@ export function replaceSnapshot(snap) {
   fleetStore.counts = snap.counts || {}
   fleetStore.poll = { ...(snap.poll || {}) }
   if (snap.companion != null) fleetStore.companion = snap.companion
+  const ingestor = /** @type {{ lat?: unknown, lon?: unknown } | null} */ (snap.ingestor)
+  fleetStore.ingestor =
+    ingestor &&
+    Number.isFinite(Number(ingestor.lat)) &&
+    Number.isFinite(Number(ingestor.lon))
+      ? { lat: Number(ingestor.lat), lon: Number(ingestor.lon) }
+      : null
 }
 
 /** @param {FleetUnit} unit */
