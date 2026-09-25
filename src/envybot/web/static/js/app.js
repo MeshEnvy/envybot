@@ -2679,7 +2679,26 @@ const App = {
           >
           <div class="detail-head">
             <h2 id="detail-title">{{ unitTitle(selectedUnit) }}</h2>
-            <button type="button" class="detail-close" aria-label="Close" @click="clearSelection">×</button>
+            <div class="detail-activity">
+              <span
+                v-if="isInFlight(selectedUnit)"
+                class="detail-stage dash-foot-busy"
+                :title="sessionBadgeTitle(selectedUnit)"
+              >{{ unitStage(selectedUnit) }}</span>
+              <button
+                v-if="manualAccepting"
+                type="button"
+                class="unit-refresh"
+                :class="{ spinning: isInFlight(selectedUnit) }"
+                :disabled="!canManualUnit(selectedUnit, 'refresh')"
+                :title="isInFlight(selectedUnit) ? unitStage(selectedUnit) : 'Refresh'"
+                :aria-label="isInFlight(selectedUnit) ? unitStage(selectedUnit) : 'Refresh'"
+                @click="runManualJob(selectedUnit, 'refresh', $event)"
+              >
+                <span class="unit-refresh-icon" aria-hidden="true">↻</span>
+              </button>
+              <button type="button" class="detail-close" aria-label="Close" @click="clearSelection">×</button>
+            </div>
           </div>
           <p class="sub">
             {{ selectedUnit.unit_id }}
@@ -2790,14 +2809,6 @@ const App = {
               Active
             </label>
             <div v-if="manualAccepting" class="manual-actions">
-              <button
-                type="button"
-                class="manual-btn"
-                :disabled="!canManualUnit(selectedUnit, 'refresh')"
-                @click="runManualJob(selectedUnit, 'refresh', $event)"
-              >
-                Refresh
-              </button>
               <button
                 type="button"
                 class="manual-btn"

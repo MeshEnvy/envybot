@@ -1394,6 +1394,7 @@ body {
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
+  min-width: 0;
 }
 
 .detail h2 {
@@ -1401,6 +1402,24 @@ body {
   font-size: 1rem;
   line-height: 1.25;
   flex: 1;
+  min-width: 0;
+}
+
+.detail-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  max-width: min(52%, 280px);
+}
+
+.detail-stage {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+  line-height: 1.25;
 }
 
 .detail-close {
