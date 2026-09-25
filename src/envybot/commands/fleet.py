@@ -767,8 +767,9 @@ async def run(args: argparse.Namespace) -> int:
                     force_groups=frozenset(args.group or ()),
                     min_interval=args.min_interval,
                 )
+                seeded = 0
                 if not args.no_auto_update:
-                    _seed_auto_work(
+                    seeded = _seed_auto_work(
                         scheduler,
                         auto_targets=auto_targets,
                         conn=conn,
