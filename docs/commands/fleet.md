@@ -166,13 +166,10 @@ While the companion worker is live:
 
 | Action | GET | SET |
 |--------|-----|-----|
-| **Refresh** | status, telemetry (ignore interval) | only if profile is due |
-| **Pull** | all GET groups (incl. OTA + neighbors) | only if profile is due |
-| **Deploy** | none | re-SET profile (incl. guest/admin passwords) |
+| **Sync** | status, telemetry | SET fields whose book desired differs from apply stamp |
+| **Full sync** | all GET groups (incl. OTA, neighbors, profile audit) | SET dirty fields after reconcile |
 
-List cards expose **Refresh** only. Detail adds **Pull** and **Deploy** (Deploy
-is visually distinct; it rewrites passwords). CLI `--full-sync` is Deploy
-plus periodic/inventory GETs (audit GETs wait for Pull or the weekly cadence).
+Unit detail: **Active** (auto poll/apply), **Sync**, **Full sync** + interval dropdown (`full_sync_interval`: 24h, 7d, 30d, off). **Profile** edits radio prefs and credentials in the book; **ACL** is a read-only table (2-byte prefix, role, person) with per-row status vs last `get acl` (✓ in sync, ⚠ book-only, ! unknown on radio). Edit `nodes.yaml` trust and `keys.yaml` offline, then Sync when `acl` is dirty. CLI `--full-sync` forces GET policy on a headless run.
 
 ### Console (header)
 

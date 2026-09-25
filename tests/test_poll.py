@@ -46,13 +46,13 @@ class JobStageTests(unittest.TestCase):
         from envybot.poll import in_flight_session
 
         sess = in_flight_session(
-            manual_job="refresh",
+            manual_job="sync",
             job_kind="login",
             attempt=3,
             max_attempts=10,
             queued=True,
         )
-        self.assertEqual(sess["state"], "refreshing")
+        self.assertEqual(sess["state"], "syncing")
         self.assertEqual(sess["stage"], "Logging in")
         self.assertEqual(sess["attempt"], 3)
         self.assertTrue(sess["manual"])
@@ -520,6 +520,7 @@ class SeedAutoWorkTests(unittest.TestCase):
             "admin_password": "AdminOneStrong1",
             "guest_password": "GuestOneStrong1",
             "identity_pubkey": "aa" * 32,
+            "full_sync_interval": "off",
         }
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
@@ -557,11 +558,24 @@ class SeedAutoWorkTests(unittest.TestCase):
                             "ota_status",
                             "ota_ls",
                             "neighbors",
+                            "repeat",
+                            "path_hash",
+                            "dutycycle",
+                            "powersaving",
+                            "hop_retry",
+                            "hop_retry_ms",
+                            "fem_rxgain",
+                            "agc_reset_interval",
+                            "rxgain",
+                            "ota_autofetch",
                         }
                     ),
                 ),
                 ts=now - 300,
             )
+            from envybot.full_sync import stamp_full_sync
+
+            stamp_full_sync(conn, "me0001", ts=now - 300)
             sched = FleetScheduler()
             session_states: dict[str, dict] = {}
             seeded = _seed_auto_work(

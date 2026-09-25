@@ -39,6 +39,16 @@ GET_GROUPS: dict[str, PullGroupSpec] = {
     "advert": PullGroupSpec("audit", "advert_at", interval=AUDIT_POLL_INTERVAL),
     "flood_advert": PullGroupSpec("audit", "flood_advert_at", interval=AUDIT_POLL_INTERVAL),
     "acl": PullGroupSpec("audit", "acl_at", interval=AUDIT_POLL_INTERVAL),
+    "repeat": PullGroupSpec("audit", "repeat_at", interval=AUDIT_POLL_INTERVAL),
+    "path_hash": PullGroupSpec("audit", "path_hash_at", interval=AUDIT_POLL_INTERVAL),
+    "dutycycle": PullGroupSpec("audit", "dutycycle_at", interval=AUDIT_POLL_INTERVAL),
+    "powersaving": PullGroupSpec("audit", "powersaving_at", interval=AUDIT_POLL_INTERVAL),
+    "hop_retry": PullGroupSpec("audit", "hop_retry_at", interval=AUDIT_POLL_INTERVAL),
+    "hop_retry_ms": PullGroupSpec("audit", "hop_retry_ms_at", interval=AUDIT_POLL_INTERVAL),
+    "fem_rxgain": PullGroupSpec("audit", "fem_rxgain_at", interval=AUDIT_POLL_INTERVAL),
+    "agc_reset_interval": PullGroupSpec("audit", "agc_reset_interval_at", interval=AUDIT_POLL_INTERVAL),
+    "rxgain": PullGroupSpec("audit", "rxgain_at", interval=AUDIT_POLL_INTERVAL),
+    "ota_autofetch": PullGroupSpec("audit", "ota_autofetch_at", interval=AUDIT_POLL_INTERVAL),
     "ota_status": PullGroupSpec("periodic", "ota_status_at", interval=OTA_POLL_INTERVAL),
     "ota_ls": PullGroupSpec("periodic", "ota_ls_at", interval=OTA_POLL_INTERVAL),
     "status": PullGroupSpec("periodic", "status_at"),
@@ -51,13 +61,12 @@ PERIODIC_GROUPS = tuple(g for g in GET_GROUP_ORDER if GET_GROUPS[g].mode == "per
 LIVE_GROUPS = tuple(g for g in PERIODIC_GROUPS if GET_GROUPS[g].interval is None)
 DAILY_GROUPS = tuple(g for g in PERIODIC_GROUPS if GET_GROUPS[g].interval is not None)
 OTA_CLI_GROUPS = frozenset({"ota", "ota_status", "ota_ls"})
-MANUAL_JOBS = frozenset({"refresh", "pull", "deploy", "stage", "install"})
+MANUAL_JOBS = frozenset({"sync", "full", "stage", "install"})
 IN_FLIGHT_STATES = frozenset(
     {
         "queued",
-        "refreshing",
-        "pulling",
-        "deploying",
+        "syncing",
+        "full_syncing",
         "staging",
         "installing",
         "polling",
@@ -116,26 +125,29 @@ _STAGE_LABELS = {
 }
 
 
-def refresh_due_groups() -> list[str]:
-    """Live GET groups for a manual Refresh (interval ignored).
-
-    Status/telemetry only. OTA and neighbors stay on the 24h auto cadence
-    (Pull still fetches them).
-    """
+def sync_due_groups() -> list[str]:
+    """Live GET groups for manual Sync (status/telemetry)."""
     return list(LIVE_GROUPS)
 
 
-def pull_due_groups() -> list[str]:
-    """All GET groups for a manual Pull."""
+def full_due_groups() -> list[str]:
+    """All GET groups for manual Full sync."""
     return list(GET_GROUP_ORDER)
+
+
+def refresh_due_groups() -> list[str]:
+    return sync_due_groups()
+
+
+def pull_due_groups() -> list[str]:
+    return full_due_groups()
 
 
 def manual_job_session_state(job: str) -> str:
     """UI/worker session state for a pending manual job."""
     return {
-        "refresh": "refreshing",
-        "pull": "pulling",
-        "deploy": "deploying",
+        "sync": "syncing",
+        "full": "full_syncing",
         "stage": "staging",
         "install": "installing",
         "console": "console",

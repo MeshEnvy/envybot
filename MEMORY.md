@@ -60,8 +60,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 - `fleet` / `trust` / `cmd` skip `firmware_platform: meshtastic` even
   when leftover MeshCore pubkey/admin exist. No UI, poll, apply, or
   edits. Blank platform = meshcore.
-- `paused: true` stays in the UI. Fleet skips auto poll/apply. Refresh,
-  Pull, and Deploy still hit the radio. Trust/cmd ignore the flag.
+- `paused: true` stays in the UI. Fleet skips auto poll/apply. Sync and
+  Full sync still hit the radio. Trust/cmd ignore the flag.
 - `routing: auto | path | direct | flood` is mesh send policy (default **auto**
   when omitted). Auto uses companion hop cache, flood-logins when empty, and
   discards stale cache after 3 timeouts. **path** locks hops in book `route:`.
@@ -196,11 +196,12 @@ companions skip. Not re-run on BLE recover.
   sidebar list (first click fly/select, second opens detail). Open card is
   `?unit=<key>` (`replaceState`; reload restores). `?map=1` reopens the map.
   `--web-only` browses the book without a radio. Never expose secrets.
-  **Refresh**, **Pull**, and **Deploy** always enqueue (even while that unit
+  **Sync** and **Full sync** always enqueue (even while that unit
   is polling) and run ahead of auto work until the click is done. Overrides
-  `--skip` and `paused`. Refresh is live GET only (status/telemetry);
-  Pull adds sticky GET plus OTA/neighbors;
-  Deploy is SET-only (clears stamps).   **Console** (header or unit-row icon): tabbed modal, optional extra sessions to the
+  `--skip` and `paused`. Sync is live GET (status/telemetry) then SET dirty
+  fields. Full sync GETs all groups (audit reconciles), then SET dirty only.
+  Per-node `full_sync_interval` (default 7d) schedules auto Full sync.
+  **Console** (header or unit-row icon): tabbed modal, optional extra sessions to the
   same unit. Row icon focuses the first tab for that unit or opens one.
   Open is radio-free. CLI jumps that unit (login on first send if not
   authed, or if a login job is already queued). Login timeout clears

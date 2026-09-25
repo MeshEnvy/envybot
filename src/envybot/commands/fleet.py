@@ -131,11 +131,24 @@ def _seed_auto_work(
     bypass_cooldown: bool = False,
 ) -> int:
     """Queue due GET/apply. Busy units keep their GET lane; apply is spliced in."""
+    from envybot.full_sync import full_sync_is_due
+    from envybot.history import get_last_seen
+    from envybot.poll import full_due_groups, omit_unsupported_ota
+
     queued = 0
     for target in auto_targets:
         if not bypass_cooldown and scheduler.is_on_cooldown(target.key):
             continue
-        due = due_groups(conn, target.key, policy=policy, now=now) if do_poll else []
+        node_row = nodes.get(target.key) or {}
+        apply_after_poll = False
+        if do_poll and full_sync_is_due(conn, target.key, node_row, now=now):
+            seen = get_last_seen(conn, target.key)
+            due = omit_unsupported_ota(full_due_groups(), seen)
+            apply_after_poll = True
+        elif do_poll:
+            due = due_groups(conn, target.key, policy=policy, now=now)
+        else:
+            due = []
         target.due_groups = due
         apply_due = do_apply and apply_is_due(
             conn, target.key, nodes.get(target.key) or {}, sites, force=force, doc=doc, keys=keys
@@ -170,10 +183,15 @@ def _seed_auto_work(
             force_apply=force,
             skip_discover=skip_discover,
             discover_wait=discover_wait,
+            apply_after_poll=apply_after_poll,
         )
         if not jobs:
             continue
         scheduler.enqueue_jobs(target, jobs)
+        if apply_after_poll:
+            uq = scheduler.units.get(target.key)
+            if uq is not None:
+                uq.session_extra["stamp_full_sync_on_ok"] = True
         if session_states is not None:
             session_states[target.key] = in_flight_session(
                 manual_job=None,
@@ -274,7 +292,7 @@ async def run(args: argparse.Namespace) -> int:
     if paused_targets and not args.quiet:
         print(
             f"Paused {len(paused_targets)} unit(s): "
-            f"{', '.join(t.key for t in paused_targets)} (Refresh, Pull, and Deploy still work)"
+            f"{', '.join(t.key for t in paused_targets)} (Sync and Full sync still work)"
         )
     if not all_targets:
         print("No pollable routers matched filters.", file=sys.stderr)
@@ -295,7 +313,7 @@ async def run(args: argparse.Namespace) -> int:
     if args.no_auto_update and not args.quiet:
         print(
             "Manual only (--no-auto-update): no automatic due poll/apply. "
-            "Use Refresh, Pull, or Deploy in the UI."
+            "Use Sync or Full sync in the UI."
         )
     if do_poll and not args.no_auto_update:
         targets, skipped = partition_due(auto_targets, conn, policy=policy, now=now)
@@ -467,8 +485,8 @@ async def run(args: argparse.Namespace) -> int:
                 )
         node_record = nodes.get(target.key) or {}
         job_name = uq.manual_job
-        unit_force = args.full_sync or job_name == "deploy"
-        apply_due_now = job_name == "deploy" or apply_is_due(
+        unit_force = bool(args.full_sync)
+        apply_due_now = apply_is_due(
             conn, target.key, node_record, sites, force=unit_force, doc=doc, keys=keys
         )
         if not args.quiet and job.kind not in TIMER_JOB_KINDS:
@@ -697,6 +715,12 @@ async def run(args: argparse.Namespace) -> int:
                     else:
                         print(f"  OK {poll_summary(res)}")
             uq.session_extra.pop("dropped_jobs", None)
+            if uq.session_extra.pop("stamp_full_sync", None) or uq.session_extra.pop(
+                "stamp_full_sync_on_ok", None
+            ):
+                from envybot.full_sync import stamp_full_sync
+
+                stamp_full_sync(conn, target.key)
             if uq.manual_job not in ("console", "path"):
                 manual_keys.discard(target.key)
 
@@ -742,7 +766,7 @@ async def run(args: argparse.Namespace) -> int:
             if not uq.jobs:
                 session_states[uq.target.key] = {"state": "paused"}
             return JobOutcome.HARD_FAIL, "paused"
-        uq.session_extra["force_apply"] = args.full_sync or uq.manual_job == "deploy"
+        uq.session_extra["force_apply"] = bool(args.full_sync)
         if worker_ctx.force_path is not None and "forced_path" not in uq.session_extra:
             uq.session_extra["forced_path"] = worker_ctx.force_path.to_extra()
         return await execute_job(job, uq, worker_ctx)

@@ -383,6 +383,22 @@ def _ensure_last_seen_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE last_seen ADD COLUMN ota_unsupported INTEGER")
     if "ota_unsupported_fw" not in cols:
         conn.execute("ALTER TABLE last_seen ADD COLUMN ota_unsupported_fw TEXT")
+    if "full_sync_at" not in cols:
+        conn.execute("ALTER TABLE last_seen ADD COLUMN full_sync_at INTEGER")
+    for col in (
+        "repeat_at",
+        "path_hash_at",
+        "dutycycle_at",
+        "powersaving_at",
+        "hop_retry_at",
+        "hop_retry_ms_at",
+        "fem_rxgain_at",
+        "agc_reset_interval_at",
+        "rxgain_at",
+        "ota_autofetch_at",
+    ):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE last_seen ADD COLUMN {col} INTEGER")
     _backfill_last_seen_promoted_fields(conn)
 
 
@@ -1320,6 +1336,26 @@ def neighbors_history(
     return _reverse_limit(chronological, limit)
 
 
+def latest_acl_snapshot(
+    conn: sqlite3.Connection,
+    unit: str,
+) -> tuple[int | None, list[dict[str, Any]] | None]:
+    """Most recent get acl payload for a unit, or (None, None)."""
+    row = conn.execute(
+        "SELECT ts, payload FROM acl_snapshots WHERE unit = ? ORDER BY ts DESC LIMIT 1",
+        (unit,),
+    ).fetchone()
+    if not row:
+        return None, None
+    try:
+        payload = json.loads(row["payload"])
+    except (json.JSONDecodeError, TypeError):
+        return int(row["ts"]), None
+    if not isinstance(payload, list):
+        return int(row["ts"]), None
+    return int(row["ts"]), payload
+
+
 def acl_history(
     conn: sqlite3.Connection,
     unit: str,
@@ -1563,6 +1599,17 @@ def _upsert_last_seen(conn: sqlite3.Connection, unit: str, fields: dict[str, Any
         "ota_state",
         "ota_unsupported",
         "ota_unsupported_fw",
+        "full_sync_at",
+        "repeat_at",
+        "path_hash_at",
+        "dutycycle_at",
+        "powersaving_at",
+        "hop_retry_at",
+        "hop_retry_ms_at",
+        "fem_rxgain_at",
+        "agc_reset_interval_at",
+        "rxgain_at",
+        "ota_autofetch_at",
     ]
     placeholders = ", ".join("?" for _ in cols)
     col_sql = ", ".join(cols)
@@ -1705,6 +1752,20 @@ def record_poll(
             status_at="ota_status" in ota_groups,
             ls_at="ota_ls" in ota_groups,
         )
+    for group, col in (
+        ("repeat", "repeat_at"),
+        ("path_hash", "path_hash_at"),
+        ("dutycycle", "dutycycle_at"),
+        ("powersaving", "powersaving_at"),
+        ("hop_retry", "hop_retry_at"),
+        ("hop_retry_ms", "hop_retry_ms_at"),
+        ("fem_rxgain", "fem_rxgain_at"),
+        ("agc_reset_interval", "agc_reset_interval_at"),
+        ("rxgain", "rxgain_at"),
+        ("ota_autofetch", "ota_autofetch_at"),
+    ):
+        if group in groups:
+            fields[col] = now
     _upsert_last_seen(conn, unit, fields)
     conn.commit()
 

@@ -59,8 +59,8 @@ from envybot.poll import (
     GET_GROUP_ORDER,
     PollPolicy,
     omit_unsupported_ota,
-    pull_due_groups,
-    refresh_due_groups,
+    full_due_groups,
+    sync_due_groups,
 )
 from envybot.position import public_radio_name, site_binding, site_loc_for_unit
 from envybot.public_advert import (
@@ -156,7 +156,26 @@ APPLY_FIELD_ORDER = (
     "acl",
 )
 
-AUDIT_GET_GROUPS = frozenset({"name", "lat", "lon", "advert", "flood_advert", "acl"})
+AUDIT_GET_GROUPS = frozenset(
+    {
+        "name",
+        "lat",
+        "lon",
+        "advert",
+        "flood_advert",
+        "acl",
+        "repeat",
+        "path_hash",
+        "dutycycle",
+        "powersaving",
+        "hop_retry",
+        "hop_retry_ms",
+        "fem_rxgain",
+        "agc_reset_interval",
+        "rxgain",
+        "ota_autofetch",
+    }
+)
 IDENTITY_PUSH_ADVERT_FIELDS = frozenset({"name", "lat", "lon"})
 
 
@@ -381,10 +400,11 @@ def build_poll_jobs(
     force_apply: bool,
     skip_discover: bool,
     discover_wait: float = NEIGHBOR_DISCOVER_WAIT_S,
+    apply_after_poll: bool = False,
 ) -> list[RadioJob]:
     jobs: list[RadioJob] = []
     jobs.append(RadioJob(kind="login", unit_key=target.key))
-    if do_apply and apply_due:
+    if do_apply and apply_due and not apply_after_poll:
         # SET before GET so a long/retrying poll cannot starve profile apply.
         jobs.extend(build_apply_jobs(target.key, force=force_apply))
     for group in GET_GROUP_ORDER:
@@ -414,6 +434,8 @@ def build_poll_jobs(
         else:
             cap = AUDIT_GET_ATTEMPTS if group in AUDIT_GET_GROUPS else None
             jobs.append(RadioJob(kind=f"get:{group}", unit_key=target.key, attempt_cap=cap))
+    if do_apply and apply_due and apply_after_poll:
+        jobs.extend(build_apply_jobs(target.key, force=force_apply))
     return jobs
 
 
@@ -464,30 +486,22 @@ def build_manual_jobs(
         return build_stage_jobs(target, stage_mid)
     if manual_job == "install":
         return build_install_jobs(target)
-    if manual_job == "deploy":
-        return build_poll_jobs(
-            target,
-            [],
-            do_apply=do_apply,
-            apply_due=True,
-            force_apply=True,
-            skip_discover=skip_discover,
-            discover_wait=discover_wait,
-        )
     due: list[str] = []
     if do_poll:
-        if manual_job == "pull":
-            due = omit_unsupported_ota(pull_due_groups(), seen)
-        elif manual_job == "refresh":
-            due = refresh_due_groups()
+        if manual_job == "full":
+            due = omit_unsupported_ota(full_due_groups(), seen)
+        elif manual_job == "sync":
+            due = sync_due_groups()
+    apply_after = manual_job in ("sync", "full")
     return build_poll_jobs(
         target,
         due,
         do_apply=do_apply,
-        apply_due=apply_due or manual_job == "deploy",
-        force_apply=manual_job == "deploy",
+        apply_due=apply_due or manual_job in ("sync", "full"),
+        force_apply=False,
         skip_discover=skip_discover,
         discover_wait=discover_wait,
+        apply_after_poll=apply_after,
     )
 
 
@@ -737,6 +751,62 @@ def _apply_cli_poll_reply(
         acc.heard_acl = acl
         acc.record_group(ctx, target.key, "acl")
         _reconcile_audit_group("acl", acl, ctx=ctx, target=target, node=node)
+        return True
+    if group == "repeat":
+        text = (parse_get_value(raw) or "").strip().lower()
+        heard = text in ("on", "1", "true", "yes")
+        acc.record_group(ctx, target.key, "repeat")
+        _reconcile_audit_group("repeat", heard, ctx=ctx, target=target, node=node)
+        return True
+    if group == "path_hash":
+        mode = parse_int_get_value(raw)
+        acc.record_group(ctx, target.key, "path_hash")
+        _reconcile_audit_group("path_hash", mode, ctx=ctx, target=target, node=node)
+        return True
+    if group == "dutycycle":
+        from envybot.radio import parse_dutycycle
+
+        dc = parse_dutycycle(raw)
+        acc.record_group(ctx, target.key, "dutycycle")
+        _reconcile_audit_group("dutycycle", dc, ctx=ctx, target=target, node=node)
+        return True
+    if group == "powersaving":
+        text = (parse_get_value(raw) or "").strip().lower()
+        heard = text in ("on", "1", "true", "yes")
+        acc.record_group(ctx, target.key, "powersaving")
+        _reconcile_audit_group("powersaving", heard, ctx=ctx, target=target, node=node)
+        return True
+    if group == "hop_retry":
+        val = parse_int_get_value(raw)
+        acc.record_group(ctx, target.key, "hop_retry")
+        _reconcile_audit_group("hop_retry", val, ctx=ctx, target=target, node=node)
+        return True
+    if group == "hop_retry_ms":
+        val = parse_int_get_value(raw)
+        acc.record_group(ctx, target.key, "hop_retry_ms")
+        _reconcile_audit_group("hop_retry_ms", val, ctx=ctx, target=target, node=node)
+        return True
+    if group == "fem_rxgain":
+        text = (parse_get_value(raw) or "").strip().lower()
+        heard = text in ("on", "1", "true", "yes")
+        acc.record_group(ctx, target.key, "fem_rxgain")
+        _reconcile_audit_group("fem_rxgain", heard, ctx=ctx, target=target, node=node)
+        return True
+    if group == "agc_reset_interval":
+        val = parse_int_get_value(raw)
+        acc.record_group(ctx, target.key, "agc_reset_interval")
+        _reconcile_audit_group("agc_reset_interval", val, ctx=ctx, target=target, node=node)
+        return True
+    if group == "rxgain":
+        text = (parse_get_value(raw) or "").strip().lower()
+        heard = text in ("on", "1", "true", "yes")
+        acc.record_group(ctx, target.key, "rxgain")
+        _reconcile_audit_group("rxgain", heard, ctx=ctx, target=target, node=node)
+        return True
+    if group == "ota_autofetch":
+        text = (parse_get_value(raw) or "").strip().lower()
+        acc.record_group(ctx, target.key, "ota_autofetch")
+        _reconcile_audit_group("ota_autofetch", text, ctx=ctx, target=target, node=node)
         return True
     return False
 
@@ -1253,6 +1323,16 @@ async def _execute_get_cli(
         "lon": "get lon",
         "advert": "get advert.interval",
         "flood_advert": "get flood.advert.interval",
+        "repeat": "get repeat",
+        "path_hash": "get path.hash.mode",
+        "dutycycle": "get dutycycle",
+        "powersaving": "get powersaving",
+        "hop_retry": "get hop.retry",
+        "hop_retry_ms": "get hop.retry.ms",
+        "fem_rxgain": "get radio.fem.rxgain",
+        "agc_reset_interval": "get agc.reset.interval",
+        "rxgain": "get radio.rxgain",
+        "ota_autofetch": "get ota config autofetch",
     }
     cmd = cmd_map.get(group)
     if not cmd:
@@ -1631,8 +1711,8 @@ def unit_policy_for_manual(
 ) -> PollPolicy:
     if args_full_sync:
         return PollPolicy(force=True, live_only=False, force_groups=frozenset(args_group or ()), min_interval=min_interval)
-    if manual_job == "pull":
-        return PollPolicy(force=False, force_groups=frozenset(GET_GROUP_ORDER), min_interval=min_interval)
-    if manual_job == "refresh":
-        return PollPolicy(force=False, force_groups=frozenset(refresh_due_groups()), min_interval=min_interval)
+    if manual_job == "full":
+        return PollPolicy(force=True, force_groups=frozenset(GET_GROUP_ORDER), min_interval=min_interval)
+    if manual_job == "sync":
+        return PollPolicy(force=False, force_groups=frozenset(sync_due_groups()), min_interval=min_interval)
     return PollPolicy(force=False, live_only=args_live, force_groups=frozenset(args_group or ()), min_interval=min_interval)

@@ -67,7 +67,7 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
         auto = _target("me0001")
         sched.enqueue_manual(
             manual,
-            "refresh",
+            "sync",
             [
                 RadioJob(kind="login", unit_key="me0037", manual=True),
                 RadioJob(kind="get:status", unit_key="me0037", manual=True),
@@ -97,7 +97,7 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
             if job is first:
                 sched.enqueue_manual(
                     t,
-                    "refresh",
+                    "sync",
                     [RadioJob(kind="get:telemetry", unit_key="me0001", manual=True)],
                 )
             return JobOutcome.HEARD, None
@@ -257,7 +257,7 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
             cons, [RadioJob(kind="console:cli", unit_key="me0001")]
         )
         sched.enqueue_manual(
-            other, "refresh", [RadioJob(kind="login", unit_key="me0002")]
+            other, "sync", [RadioJob(kind="login", unit_key="me0002")]
         )
         order: list[str] = []
 
@@ -333,10 +333,10 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
     def test_manual_refresh_exempt_from_retry_delay(self) -> None:
         sched = FleetScheduler(max_attempts=10, retry_delay=60.0)
         t = _target()
-        job = RadioJob(kind="login", unit_key="me0001", manual=True, manual_job="refresh")
+        job = RadioJob(kind="login", unit_key="me0001", manual=True, manual_job="sync")
         uq = sched.get_or_create(t)
         uq.manual = True
-        uq.manual_job = "refresh"
+        uq.manual_job = "sync"
         uq.jobs.append(job)
         sched._settle_job(uq, job, JobOutcome.TIMEOUT, "login timeout", {})
         self.assertEqual(uq.backoff_until, 0.0)
@@ -369,7 +369,7 @@ class FleetSchedulerTests(unittest.IsolatedAsyncioTestCase):
         uq.cooldown_until = time.monotonic() + 3600.0
         sched.enqueue_manual(
             t,
-            "refresh",
+            "sync",
             [RadioJob(kind="login", unit_key="me0001", manual=True)],
         )
         self.assertEqual(uq.cooldown_until, 0.0)
@@ -447,7 +447,7 @@ class PickNextTests(unittest.TestCase):
         manual = _target("me0002")
         sched.enqueue_jobs(auto, [RadioJob(kind="login", unit_key="me0001")])
         sched.enqueue_manual(
-            manual, "refresh", [RadioJob(kind="login", unit_key="me0002")]
+            manual, "sync", [RadioJob(kind="login", unit_key="me0002")]
         )
         picked = sched.pick_next(0.0)
         assert picked is not None
@@ -462,7 +462,7 @@ class PickNextTests(unittest.TestCase):
         cons = _target("me0003")
         sched.enqueue_jobs(auto, [RadioJob(kind="login", unit_key="me0001")])
         sched.enqueue_manual(
-            manual, "refresh", [RadioJob(kind="login", unit_key="me0002")]
+            manual, "sync", [RadioJob(kind="login", unit_key="me0002")]
         )
         sched.enqueue_console(
             cons, [RadioJob(kind="console:cli", unit_key="me0003")]
@@ -540,7 +540,7 @@ class PickNextTests(unittest.TestCase):
         sched.enqueue_console(t, [RadioJob(kind="console:cli", unit_key="me0001")])
         sched.enqueue_manual(
             t,
-            "refresh",
+            "sync",
             [
                 RadioJob(kind="login", unit_key="me0001"),
                 RadioJob(kind="get:status", unit_key="me0001"),
@@ -596,9 +596,9 @@ class LaneHeadingTests(unittest.TestCase):
         uq = UnitQueue(target=_target())
         self.assertEqual(_lane_tag(cons, uq), "console")
         uq.manual = True
-        uq.manual_job = "refresh"
+        uq.manual_job = "sync"
         login = RadioJob(kind="login", unit_key="me0001")
-        self.assertEqual(_lane_tag(login, uq), "refresh")
+        self.assertEqual(_lane_tag(login, uq), "sync")
         uq.manual = False
         uq.manual_job = None
         self.assertIsNone(_lane_tag(login, uq))

@@ -118,6 +118,14 @@ class PublicAdvertConfigTests(unittest.TestCase):
         sites = {"ophir": {"node": "me0003", "loc": [39.5, -119.8]}}
         self.assertIn("MeshEnvy NCC", owner_info_for_apply(node, DOC, key="me0003", sites=sites))
 
+    def test_owner_info_node_override(self) -> None:
+        node = {"unit_id": "ME0003", "owner_info": "Site-specific owner"}
+        sites = {"ophir": {"node": "me0003", "loc": [39.5, -119.8]}}
+        self.assertEqual(
+            owner_info_for_apply(node, DOC, key="me0003", sites=sites),
+            "Site-specific owner",
+        )
+
     def test_desired_repeat_bound_default_on(self) -> None:
         node = {"unit_id": "ME0003"}
         sites = {"ophir": {"node": "me0003", "loc": [39.5, -119.8]}}

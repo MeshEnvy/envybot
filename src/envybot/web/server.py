@@ -207,7 +207,7 @@ class MonitorWeb:
             key,
             node,
             binding.sites,
-            force=job == "deploy",
+            force=False,
             doc=binding.doc,
             keys=binding.keys,
         )
@@ -940,6 +940,34 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
             node["notes"] = notes
         else:
             node.pop("notes", None)
+    if "full_sync_interval" in body:
+        from envybot.web.profile_edit import apply_profile_field_edit
+        from envybot.position import load_sites_doc as _load_sites_doc
+
+        sites_doc = _load_sites_doc(web_ctx.sites_path)
+        sites_map = sites_doc.get("sites") or {}
+        err = apply_profile_field_edit(
+            key,
+            node,
+            doc,
+            sites_doc,
+            sites_map,
+            "full_sync_interval",
+            body.get("full_sync_interval"),
+        )
+        if err:
+            return web.json_response({"error": err}, status=400)
+        write_sites_doc(web_ctx.sites_path, sites_doc)
+    if "profile" in body or ("profile_field" in body and "profile_value" in body):
+        from envybot.web.profile_edit import apply_profile_patch_body
+
+        err = apply_profile_patch_body(key, node, doc, web_ctx.sites_path, body)
+        if err:
+            return web.json_response({"error": err}, status=400)
+    if body.get("owner_info_default") is True:
+        node.pop("owner_info", None)
+    if body.get("trust_inherit") is True:
+        node.pop("trust", None)
     if body.get("ack_stability") is True:
         node["stability_ack_ts"] = int(time.time())
     if "site" in body:
@@ -1185,9 +1213,8 @@ def make_app(web_ctx: MonitorWeb) -> web.Application:
     app.router.add_post("/api/unit/{key}", _handle_unit_edit)
     app.router.add_post("/api/unit/{key}/path", _handle_unit_path_set)
     app.router.add_delete("/api/unit/{key}/path", _handle_unit_path_clear)
-    app.router.add_post("/api/refresh/{key}", lambda r: _handle_manual_job(r, "refresh"))
-    app.router.add_post("/api/pull/{key}", lambda r: _handle_manual_job(r, "pull"))
-    app.router.add_post("/api/deploy/{key}", lambda r: _handle_manual_job(r, "deploy"))
+    app.router.add_post("/api/sync/{key}", lambda r: _handle_manual_job(r, "sync"))
+    app.router.add_post("/api/full/{key}", lambda r: _handle_manual_job(r, "full"))
     app.router.add_post("/api/stage/{key}", _handle_stage_job)
     app.router.add_post("/api/install/{key}", _handle_install_job)
     app.router.add_post("/api/console/open", _handle_console_open)

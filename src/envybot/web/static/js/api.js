@@ -82,7 +82,7 @@ export async function patchUnit(key, body) {
   return res.json()
 }
 
-/** @param {string} key @param {'refresh' | 'pull' | 'deploy'} job */
+/** @param {string} key @param {'sync' | 'full'} job */
 async function postManualJob(key, job) {
   const res = await fetch(`/api/${job}/${encodeURIComponent(key)}`, { method: 'POST' })
   if (!res.ok) throw new Error(`${job} ${res.status}`)
@@ -90,18 +90,13 @@ async function postManualJob(key, job) {
 }
 
 /** @param {string} key */
-export function refreshUnit(key) {
-  return postManualJob(key, 'refresh')
+export function syncUnit(key) {
+  return postManualJob(key, 'sync')
 }
 
 /** @param {string} key */
-export function pullUnit(key) {
-  return postManualJob(key, 'pull')
-}
-
-/** @param {string} key */
-export function deployUnit(key) {
-  return postManualJob(key, 'deploy')
+export function fullUnit(key) {
+  return postManualJob(key, 'full')
 }
 
 /** @param {string} key @param {string | number} selector catalog index or hex mid */

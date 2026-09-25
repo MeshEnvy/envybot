@@ -633,6 +633,23 @@ def _heard_matches_desired(
         except UnknownPerson:
             want = []
         return not plan_acl_ops(want, heard)
+    if field in ("repeat", "powersaving", "fem_rxgain", "rxgain"):
+        if isinstance(heard, bool):
+            heard_on = heard
+        else:
+            text = str(heard or "").strip().lower()
+            heard_on = text in ("on", "1", "true", "yes")
+        want_on = desired in ("True", "true", "1")
+        return heard_on == want_on
+    if field in ("path_hash", "dutycycle", "hop_retry", "hop_retry_ms", "agc_reset_interval"):
+        try:
+            return str(int(float(heard))) == str(int(float(desired)))
+        except (TypeError, ValueError):
+            return False
+    if field == "ota_autofetch":
+        return str(heard or "").strip().lower() == str(desired or "").strip().lower()
+    if field == "owner":
+        return str(heard or "").strip() == str(desired or "").strip()
     return field_desired_str(heard) == desired
 
 

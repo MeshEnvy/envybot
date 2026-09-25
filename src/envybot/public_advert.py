@@ -322,6 +322,9 @@ def public_radio_name(
         base = lookup_advert_base_name(site, slug)
         suffix = site_advert_suffix(site, config)
         return format_public_radio_name(base, suffix, max_len=max_len)
+    override = (node or {}).get("name")
+    if isinstance(override, str) and override.strip():
+        return override.strip()[:max_len]
     return unit_id[:max_len]
 
 
@@ -336,10 +339,14 @@ def owner_info_for_apply(
 
     if site_binding(key, node, sites) is None:
         return ""
-    config = load_public_advert_config(doc)
-    if not config or not config.owner_info:
-        return ""
-    text = config.owner_info.strip()
+    node_raw = (node or {}).get("owner_info")
+    if isinstance(node_raw, str):
+        text = node_raw.strip()
+    else:
+        config = load_public_advert_config(doc)
+        if not config or not config.owner_info:
+            return ""
+        text = config.owner_info.strip()
     if len(text) > MAX_OWNER_INFO:
         return text[:MAX_OWNER_INFO]
     return text

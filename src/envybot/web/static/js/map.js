@@ -117,10 +117,10 @@ export function buildActivePath(fleet, selectedKey) {
       : ''
   const sessionBusy = [
     'polling',
-    'refreshing',
+    'syncing',
+    'full_syncing',
     'queued',
     'pulling',
-    'deploying',
   ].includes(sessionState)
 
   if (!tokens.length && (finding || sessionBusy) && hasMapPin(unit.position)) {
@@ -201,9 +201,9 @@ export function unitStatus(unit) {
   const state = s && typeof s === 'object' && 'state' in s ? s.state : null
   if (state === 'polling') return 'polling'
   if (state === 'queued') return 'queued'
-  if (state === 'refreshing') return 'refreshing'
+  if (state === 'syncing') return 'syncing'
+  if (state === 'full_syncing') return 'full_syncing'
   if (state === 'pulling') return 'pulling'
-  if (state === 'deploying') return 'deploying'
   const headline =
     unit?.health && typeof unit.health === 'object' && 'headline' in unit.health
       ? unit.health.headline

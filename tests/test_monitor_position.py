@@ -55,8 +55,8 @@ class DueTests(unittest.TestCase):
             self.assertIn("telemetry", due)
             self.assertIn("name", due)
             self.assertIn("lat", due)
-            self.assertNotIn("path_hash", due)
-            self.assertNotIn("dutycycle", due)
+            self.assertIn("repeat", due)
+            self.assertIn("path_hash", due)
 
     def test_force_excludes_audit_without_force_groups(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,4 +1,4 @@
-"""Manual Refresh / Pull / Deploy API."""
+"""Manual Sync / Full sync API."""
 
 from __future__ import annotations
 
@@ -91,54 +91,54 @@ class MonitorWebManualJobTests(unittest.IsolatedAsyncioTestCase):
         self.web_ctx.set_worker_active(True)
         status, err, _payload = await self.web_ctx.open_console("me0003")
         self.assertEqual(status, 200)
-        status, err = await self.web_ctx.enqueue_job("me0003", "refresh")
+        status, err = await self.web_ctx.enqueue_job("me0003", "sync")
         self.assertEqual(status, 200)
         self.assertIsNone(err)
 
     async def test_enqueue_not_accepting(self) -> None:
-        status, err = await self.web_ctx.enqueue_job("me0003", "refresh")
+        status, err = await self.web_ctx.enqueue_job("me0003", "sync")
         self.assertEqual(status, 409)
         self.assertIn("not accepting", err or "")
 
     async def test_enqueue_unknown_unit(self) -> None:
         self.web_ctx.set_worker_active(True)
-        status, err = await self.web_ctx.enqueue_job("me9999", "refresh")
+        status, err = await self.web_ctx.enqueue_job("me9999", "sync")
         self.assertEqual(status, 404)
         self.assertEqual(err, "unknown unit")
 
     async def test_enqueue_puts_job_on_scheduler(self) -> None:
         self.web_ctx.set_worker_active(True)
-        status, err = await self.web_ctx.enqueue_job("me0003", "pull")
+        status, err = await self.web_ctx.enqueue_job("me0003", "full")
         self.assertEqual(status, 200)
         self.assertIsNone(err)
         uq = self.scheduler.units.get("me0003")
         self.assertIsNotNone(uq)
         assert uq is not None
         self.assertTrue(uq.manual)
-        self.assertEqual(uq.manual_job, "pull")
+        self.assertEqual(uq.manual_job, "full")
 
     async def test_enqueue_refresh_bumps_when_busy(self) -> None:
         self.web_ctx.set_worker_active(True)
         self.web_ctx._session_states["me0003"] = {"state": "polling"}
-        status, err = await self.web_ctx.enqueue_job("me0003", "refresh")
+        status, err = await self.web_ctx.enqueue_job("me0003", "sync")
         self.assertEqual(status, 200)
         self.assertIsNone(err)
         uq = self.scheduler.units.get("me0003")
         self.assertIsNotNone(uq)
         assert uq is not None
-        self.assertEqual(uq.manual_job, "refresh")
+        self.assertEqual(uq.manual_job, "sync")
         self.assertTrue(uq.manual)
 
     async def test_enqueue_deploy_bumps_when_busy(self) -> None:
         self.web_ctx.set_worker_active(True)
         self.web_ctx._session_states["me0003"] = {"state": "polling"}
-        status, err = await self.web_ctx.enqueue_job("me0003", "deploy")
+        status, err = await self.web_ctx.enqueue_job("me0003", "full")
         self.assertEqual(status, 200)
         self.assertIsNone(err)
         uq = self.scheduler.units.get("me0003")
         self.assertIsNotNone(uq)
         assert uq is not None
-        self.assertEqual(uq.manual_job, "deploy")
+        self.assertEqual(uq.manual_job, "full")
         self.assertTrue(any(j.kind.startswith("apply:") for j in uq.jobs))
 
     async def test_wait_for_work(self) -> None:
@@ -196,7 +196,7 @@ class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.tmp.cleanup()
 
     async def test_post_refresh_409_when_idle(self) -> None:
-        resp = await self.client.post("/api/refresh/me0003")
+        resp = await self.client.post("/api/sync/me0003")
         self.assertEqual(resp.status, 409)
 
     async def test_post_refresh_marks_refreshing(self) -> None:
@@ -205,32 +205,32 @@ class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
             session_states={},
             poll={"phase": "idle", "accepting": True},
         )
-        resp = await self.client.post("/api/refresh/me0003")
+        resp = await self.client.post("/api/sync/me0003")
         self.assertEqual(resp.status, 200)
         body = await resp.json()
-        self.assertEqual(body.get("session", {}).get("state"), "refreshing")
+        self.assertEqual(body.get("session", {}).get("state"), "syncing")
         self.assertEqual(body.get("session", {}).get("stage"), "Logging in")
         uq = self.scheduler.units.get("me0003")
         self.assertIsNotNone(uq)
         assert uq is not None
-        self.assertEqual(uq.manual_job, "refresh")
+        self.assertEqual(uq.manual_job, "sync")
 
     async def test_post_pull_and_deploy(self) -> None:
         self.web_ctx.set_worker_active(True)
-        resp = await self.client.post("/api/pull/me0003")
+        resp = await self.client.post("/api/full/me0003")
         self.assertEqual(resp.status, 200)
         uq = self.scheduler.units.get("me0003")
         assert uq is not None
-        self.assertEqual(uq.manual_job, "pull")
+        self.assertEqual(uq.manual_job, "full")
         self.scheduler.units.pop("me0003", None)
         self.web_ctx._session_states.pop("me0003", None)
-        resp = await self.client.post("/api/deploy/me0003")
+        resp = await self.client.post("/api/full/me0003")
         self.assertEqual(resp.status, 200)
         body = await resp.json()
-        self.assertEqual(body.get("session", {}).get("state"), "deploying")
+        self.assertEqual(body.get("session", {}).get("state"), "full_syncing")
         uq = self.scheduler.units.get("me0003")
         assert uq is not None
-        self.assertEqual(uq.manual_job, "deploy")
+        self.assertEqual(uq.manual_job, "full")
 
     async def test_post_unit_paused(self) -> None:
         resp = await self.client.post("/api/unit/me0003", json={"paused": True})
@@ -289,7 +289,7 @@ class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
             session_states={},
             poll={"phase": "idle", "accepting": True},
         )
-        resp = await self.client.post("/api/refresh/me0003")
+        resp = await self.client.post("/api/sync/me0003")
         self.assertEqual(resp.status, 200)
         uq = self.scheduler.units.get("me0003")
         assert uq is not None
@@ -310,7 +310,7 @@ class ManualJobHandlerTests(unittest.IsolatedAsyncioTestCase):
 
 
 class FleetManualJobBuildTests(unittest.TestCase):
-    def test_refresh_pull_deploy_due_groups(self) -> None:
+    def test_sync_full_due_groups(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             book = Path(tmp)
             nodes_path = book / "nodes.yaml"
@@ -330,23 +330,25 @@ class FleetManualJobBuildTests(unittest.TestCase):
                     fh,
                 )
             target = load_targets(nodes_path, deployed_only=False, include={"me0003"})[0]
-            refresh = build_manual_jobs(
-                target, "refresh", do_poll=True, do_apply=True, apply_due=False, skip_discover=False
+            sync = build_manual_jobs(
+                target, "sync", do_poll=True, do_apply=True, apply_due=True, skip_discover=False
             )
-            refresh_get = {j.kind for j in refresh if j.kind.startswith("get:")}
+            sync_kinds = [j.kind for j in sync]
+            sync_get = {j.kind for j in sync if j.kind.startswith("get:")}
             for g in refresh_due_groups():
-                self.assertIn(f"get:{g}", refresh_get)
-            self.assertNotIn("get:neighbors", refresh_get)
-            self.assertNotIn("get:ota_status", refresh_get)
-            self.assertNotIn("get:ota_ls", refresh_get)
-            pull = build_manual_jobs(
-                target, "pull", do_poll=True, do_apply=True, apply_due=False, skip_discover=False
+                self.assertIn(f"get:{g}", sync_get)
+            self.assertNotIn("get:neighbors", sync_get)
+            apply_idx = next(i for i, k in enumerate(sync_kinds) if k.startswith("apply:"))
+            status_idx = sync_kinds.index("get:status")
+            self.assertLess(status_idx, apply_idx)
+            full = build_manual_jobs(
+                target, "full", do_poll=True, do_apply=True, apply_due=False, skip_discover=False
             )
-            pull_kinds = [j.kind for j in pull if j.kind.startswith("get:")]
-            self.assertIn("get:neighbors_discover", pull_kinds)
-            pull_skip = build_manual_jobs(
+            full_kinds = [j.kind for j in full if j.kind.startswith("get:")]
+            self.assertIn("get:neighbors_discover", full_kinds)
+            full_skip = build_manual_jobs(
                 target,
-                "pull",
+                "full",
                 do_poll=True,
                 do_apply=True,
                 apply_due=False,
@@ -357,17 +359,11 @@ class FleetManualJobBuildTests(unittest.TestCase):
                     "ota_unsupported_fw": "1.14.0",
                 },
             )
-            skip_kinds = {j.kind for j in pull_skip if j.kind.startswith("get:")}
+            skip_kinds = {j.kind for j in full_skip if j.kind.startswith("get:")}
             self.assertNotIn("get:ota", skip_kinds)
             self.assertNotIn("get:ota_status", skip_kinds)
             self.assertNotIn("get:ota_ls", skip_kinds)
-            deploy = build_manual_jobs(
-                target, "deploy", do_poll=True, do_apply=True, apply_due=True, skip_discover=False
-            )
-            get_kinds = [j.kind for j in deploy if j.kind.startswith("get:")]
-            self.assertEqual(get_kinds, [])
-            apply_kinds = [j.kind for j in deploy if j.kind.startswith("apply:")]
-            self.assertTrue(apply_kinds)
+            self.assertNotIn("apply:force_clear", [j.kind for j in full_skip])
 
 
 from envybot.web.server import make_app  # noqa: E402

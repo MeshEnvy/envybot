@@ -3,7 +3,7 @@ name: fleet
 description: >-
   envybot fleet: poll/apply, UI, --only/--skip filters, routing (path/flood/direct),
   stale hop cache (--refresh-paths), --force-path, companion BLE, Fleet idle vs queued
-  work, Deploy vs apply-only vs full-sync. Read this before grepping fleet.py for basics.
+  work, Sync vs Full sync vs apply-only. Read this before grepping fleet.py for basics.
 ---
 
 # envybot fleet
@@ -33,12 +33,12 @@ cd /path/to/envybot
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `Fleet idle` right after start | No auto jobs queued (all poll/apply up to date) | **Deploy** in UI, or `--full-sync`, or edit book / clear stamps |
-| `--apply-only` + synced profile | Apply not due; login never queued | **Deploy** / `--full-sync` to force SETs |
+| `Fleet idle` right after start | No auto jobs queued (all poll/apply up to date) | **Sync** in UI, or edit book / clear stamps |
+| `--apply-only` + synced profile | Apply not due; login never queued | **Sync** when book edits made apply due |
 | Companion connects, neighbor ping only | Idle loop waiting for manual/scheduled work | Expected when idle |
 | `--only` matched but no login lines | Filter worked; unit not due for queued phase | Same as idle |
 
-Auto seed only queues units with **due** poll groups or **due** apply fields. `--full-sync` and UI **Deploy** bypass apply skip. `--only` bypasses miss-cooldown on startup seed. **`--no-auto-update`:** no auto seed at start or on cadence; Refresh/Pull/Deploy only.
+Auto seed queues due poll groups, due apply, or **Full sync** when `full_sync_interval` elapsed. `--only` bypasses miss-cooldown on startup seed. **`--no-auto-update`:** no auto seed; Sync/Full sync only.
 
 Progress logs require default progress (do not pass `-q` / `--quiet`).
 
@@ -62,7 +62,7 @@ apply skip: none
 
 If all fields synced: `apply skip: all` and `--apply-only` queues nothing.
 
-**Deploy** (UI) or **`--full-sync`** (CLI) forces profile SETs regardless of stamps.
+**Sync** (UI) SETs dirty fields after live GET. **Full sync** GETs the profile first, then SETs dirty fields (no blind re-SET). CLI **`--full-sync`** forces periodic GET policy on that run.
 
 ## Routing and companion paths
 
@@ -133,10 +133,10 @@ Fleet UI: set **Route** to **Path**, paste the same log text (names and `{lora.s
 | `--web-only` | Dashboard only, no radio |
 | `--no-web` | Headless poll/apply |
 | `--only SPEC` / `--skip SPEC` | Filter units (see above) |
-| `--full-sync` | Deploy profile + periodic/inventory GETs (not weekly audit GETs) |
+| `--full-sync` | Force GET policy on headless run (inventory + periodic) |
 | `--apply-only` | SET only, skip GET cadence |
 | `--poll-only` | GET only |
-| `--no-auto-update` | No due seeding; Refresh/Pull/Deploy only |
+| `--no-auto-update` | No due seeding; Sync/Full sync only |
 | `--refresh-paths` | Dump stale hops, clear cache, flood on next login |
 | `--force-path HOPS` | Pin hops for this run |
 | `--companion HINT` | Pubkey prefix or `keys.yaml` person slug (skip BLE picker) |
@@ -150,11 +150,10 @@ Companion flags match `cmd`: `--ble`, `--serial`, `--tcp`, `--timeout`, `--login
 
 | Action | GET | SET |
 |--------|-----|-----|
-| **Refresh** | status, telemetry now | only if profile due |
-| **Pull** | all GET groups | only if profile due |
-| **Deploy** | none | full profile re-SET (always) |
+| **Sync** | status, telemetry | dirty fields only |
+| **Full sync** | all GET groups (audit reconciles) | dirty fields only |
 
-`paused: true` skips auto poll/apply; manual three still work.
+`paused: true` skips auto poll/apply; manual Sync/Full still work. Node card **Profile** section edits the book; dirty rows until Sync.
 
 ## Stores (do not confuse)
 

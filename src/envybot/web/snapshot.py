@@ -7,17 +7,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-from envybot.apply import (
-    apply_is_due,
-    applicable_field_desireds,
-    board_allows_rxgain,
-    desired_repeat,
-    desired_rxgain,
-    profile_parts,
-)
+from envybot.apply import apply_is_due, desired_repeat, profile_parts
+from envybot.full_sync import node_full_sync_interval_label
+from envybot.web.profile_fields import build_profile_rows, build_radio_prefs, pref_display
 from envybot.health import compute_health
 from envybot.history import (
     all_last_seen,
+    latest_acl_snapshot,
     compact_sparks,
     interval_traffic,
     last_ok_apply_desireds,
@@ -70,18 +66,6 @@ DEFAULT_STALE_SECS = 86400.0
 NEIGHBOR_FRESH_SECS = 7 * 24 * 3600
 
 SessionState = str  # idle | queued | refreshing | pulling | deploying | polling | ok | unreachable | paused
-
-RADIO_PREF_FIELDS = (
-    ("powersaving", "Power saving"),
-    ("hop_retry", "Hop retry"),
-    ("hop_retry_ms", "Hop retry ms"),
-    ("fem_rxgain", "FEM LNA"),
-    ("agc_reset_interval", "AGC reset"),
-    ("rxgain", "SX1262 boost"),
-    ("dutycycle", "Duty cycle"),
-    ("path_hash", "Path hash"),
-    ("ota_autofetch", "OTA autofetch"),
-)
 
 STATUS_PUBLIC_KEYS = (
     "battery_mv",
@@ -510,81 +494,6 @@ def drift_state(
     return None
 
 
-def pref_display(field: str, value: Any) -> str:
-    if field in ("powersaving", "fem_rxgain", "rxgain"):
-        if isinstance(value, bool):
-            return "on" if value else "off"
-        text = str(value).strip().lower()
-        if text in ("1", "true", "on", "yes"):
-            return "on"
-        if text in ("0", "false", "off", "no"):
-            return "off"
-        return text
-    if field == "dutycycle":
-        try:
-            return f"{int(round(float(value)))}%"
-        except (TypeError, ValueError):
-            return str(value)
-    if field == "path_hash":
-        try:
-            mode = int(value)
-        except (TypeError, ValueError):
-            return str(value)
-        return "2-byte" if mode == 1 else str(mode)
-    return str(value)
-
-
-def build_radio_prefs(
-    node: dict[str, Any],
-    sites: dict[str, dict[str, Any]] | None,
-    *,
-    doc: dict[str, Any] | None = None,
-    keys: dict[str, list[str]] | None = None,
-    key: str | None = None,
-    apply_desireds: dict[str, str] | None = None,
-) -> list[dict[str, str]]:
-    """Book apply prefs plus stamp state. Not a live radio GET."""
-    parts = profile_parts(node, sites, doc=doc, keys=keys, key=key)
-    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=key)
-    stamped = apply_desireds or {}
-    prefs: list[dict[str, str]] = []
-    for field, label in RADIO_PREF_FIELDS:
-        if field not in applicable or field not in parts:
-            continue
-        desired = applicable[field]
-        row = {
-            "id": field,
-            "label": label,
-            "value": pref_display(field, parts[field]),
-            "state": "synced" if stamped.get(field) == desired else "due",
-        }
-        prefs.append(row)
-    if not any(p["id"] == "rxgain" for p in prefs) and board_allows_rxgain(node):
-        if desired_rxgain(node) is None:
-            prefs.append(
-                {
-                    "id": "rxgain",
-                    "label": "SX1262 boost",
-                    "value": pref_display("rxgain", True),
-                    "state": "default",
-                    "note": "Stock default; set rxgain in book to apply",
-                }
-            )
-    if desired_rxgain(node) is not None and not board_allows_rxgain(node):
-        prefs.append(
-            {
-                "id": "rxgain",
-                "label": "SX1262 boost",
-                "value": pref_display("rxgain", desired_rxgain(node)),
-                "state": "blocked",
-                "note": "need board: heltec-t096",
-            }
-        )
-    order = {field: idx for idx, (field, _label) in enumerate(RADIO_PREF_FIELDS)}
-    prefs.sort(key=lambda row: order.get(row["id"], len(RADIO_PREF_FIELDS)))
-    return prefs
-
-
 def sanitize_unit(
     key: str,
     node: dict[str, Any],
@@ -604,6 +513,7 @@ def sanitize_unit(
     ota_raw: dict[str, Any] | None = None,
     apply_at: dict[str, int] | None = None,
     prefs: list[dict[str, str]] | None = None,
+    profile: list[dict[str, Any]] | None = None,
     doc: dict[str, Any] | None = None,
     audit_path: str | None = None,
 ) -> dict[str, Any]:
@@ -683,6 +593,8 @@ def sanitize_unit(
         "fem_rxgain": node.get("fem_rxgain"),
         "rxgain": node.get("rxgain"),
         "prefs": prefs or [],
+        "profile": profile or [],
+        "full_sync_interval": node_full_sync_interval_label(node),
         "node_clock": (seen or {}).get("node_clock"),
         "drift": drift_state(
             node,
@@ -738,6 +650,8 @@ def build_fleet_snapshot(
     apply_at_map: dict[str, dict[str, int]] = {}
     apply_desired_map: dict[str, dict[str, str]] = {}
     audit_path_map: dict[str, str] = {}
+    acl_heard_map: dict[str, list[dict[str, Any]]] = {}
+    acl_heard_at_map: dict[str, int] = {}
     conn = None
     try:
         conn = open_history(book_dir)
@@ -767,6 +681,11 @@ def build_fleet_snapshot(
             audit_path = latest_mesh_audit_path(conn, key)
             if audit_path:
                 audit_path_map[key] = audit_path
+            acl_ts, acl_payload = latest_acl_snapshot(conn, key)
+            if acl_payload is not None:
+                acl_heard_map[key] = acl_payload
+            if acl_ts is not None:
+                acl_heard_at_map[key] = acl_ts
         if reported_locs:
             save_community_locs(conn, reported_locs)
         else:
@@ -813,6 +732,17 @@ def build_fleet_snapshot(
                     keys=keys,
                     key=key,
                     apply_desireds=apply_desired_map.get(key),
+                ),
+                profile=build_profile_rows(
+                    node,
+                    sites,
+                    doc=doc,
+                    keys=keys,
+                    key=key,
+                    apply_desireds=apply_desired_map.get(key),
+                    include_secrets=True,
+                    heard_acl=acl_heard_map.get(key),
+                    acl_heard_at=acl_heard_at_map.get(key),
                 ),
                 doc=doc,
                 audit_path=audit_path_map.get(key),

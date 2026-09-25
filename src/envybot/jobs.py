@@ -31,10 +31,10 @@ TIMER_JOB_KINDS = frozenset(
 
 PATH_JOB_KINDS = frozenset({"path:pin", "path:clear"})
 
-# Auto poll/apply only. Console and manual Refresh/Pull/Deploy are exempt.
+# Auto poll/apply only. Console and manual Sync/Full are exempt.
 DEFAULT_RETRY_DELAY_S = 60.0
 DEFAULT_MISS_COOLDOWN_S = 3600.0
-MANUAL_UI_JOBS = frozenset({"refresh", "pull", "deploy"})
+MANUAL_UI_JOBS = frozenset({"sync", "full"})
 
 
 def _auto_retry_policy(job: RadioJob, uq: UnitQueue) -> bool:
@@ -414,6 +414,8 @@ class FleetScheduler:
             if not uq.jobs:
                 uq.succeeded = True
                 succeeded[uq.target.key] = True
+                if uq.manual and uq.manual_job == "full":
+                    uq.session_extra["stamp_full_sync"] = True
                 if uq.manual and uq.manual_job != "console":
                     uq.manual = False
                     uq.manual_job = None
