@@ -1,5 +1,5 @@
 import { reactive } from 'vue'
-import { buildNeighborEdges } from './map.js?v=28'
+import { buildNeighborEdges } from './map.js?v=32'
 
 /** @typedef {{ ts: number, [key: string]: unknown }} HistoryRow */
 /** @typedef {{ status: HistoryRow[], telemetry: HistoryRow[], polls: HistoryRow[], neighbors: HistoryRow[], acl: HistoryRow[], sun?: HistoryRow[] }} UnitHistory */

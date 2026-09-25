@@ -282,14 +282,19 @@ async def run(args: argparse.Namespace) -> int:
         min_interval=args.min_interval,
     )
     now = int(time.time())
-    if do_poll:
+    if args.no_auto_update and not args.quiet:
+        print(
+            "Manual only (--no-auto-update): no automatic due poll/apply. "
+            "Use Refresh, Pull, or Deploy in the UI."
+        )
+    if do_poll and not args.no_auto_update:
         targets, skipped = partition_due(auto_targets, conn, policy=policy, now=now)
     else:
         targets, skipped = list(auto_targets), []
         for t in targets:
             t.due_groups = []
 
-    if skipped and not args.quiet and do_poll:
+    if skipped and not args.quiet and do_poll and not args.no_auto_update:
         print(
             f"Skipping {len(skipped)} up-to-date poll(s) "
             f"(live periodic within {format_interval(policy.min_interval)})"
@@ -298,24 +303,25 @@ async def run(args: argparse.Namespace) -> int:
     for target in paused_targets:
         session_states[target.key] = {"state": "paused"}
 
-    _seed_auto_work(
-        scheduler,
-        auto_targets=auto_targets,
-        conn=conn,
-        nodes=nodes,
-        sites=sites,
-        doc=doc,
-        keys=keys,
-        policy=policy,
-        do_poll=do_poll,
-        do_apply=do_apply,
-        force=args.full_sync,
-        now=now,
-        skip_discover=args.no_discover,
-        discover_wait=args.discover_wait,
-        session_states=session_states,
-        bypass_cooldown=bypass_cooldown,
-    )
+    if not args.no_auto_update:
+        _seed_auto_work(
+            scheduler,
+            auto_targets=auto_targets,
+            conn=conn,
+            nodes=nodes,
+            sites=sites,
+            doc=doc,
+            keys=keys,
+            policy=policy,
+            do_poll=do_poll,
+            do_apply=do_apply,
+            force=args.full_sync,
+            now=now,
+            skip_discover=args.no_discover,
+            discover_wait=args.discover_wait,
+            session_states=session_states,
+            bypass_cooldown=bypass_cooldown,
+        )
 
     initial_units = scheduler.active_unit_count()
     if web_ctx:
@@ -761,23 +767,24 @@ async def run(args: argparse.Namespace) -> int:
                     force_groups=frozenset(args.group or ()),
                     min_interval=args.min_interval,
                 )
-                seeded = _seed_auto_work(
-                    scheduler,
-                    auto_targets=auto_targets,
-                    conn=conn,
-                    nodes=nodes,
-                    sites=sites,
-                    doc=doc,
-                    keys=keys,
-                    policy=cadence_policy,
-                    do_poll=do_poll,
-                    do_apply=do_apply,
-                    force=False,
-                    now=int(time.time()),
-                    skip_discover=args.no_discover,
-                    discover_wait=args.discover_wait,
-                    session_states=session_states,
-                )
+                if not args.no_auto_update:
+                    _seed_auto_work(
+                        scheduler,
+                        auto_targets=auto_targets,
+                        conn=conn,
+                        nodes=nodes,
+                        sites=sites,
+                        doc=doc,
+                        keys=keys,
+                        policy=cadence_policy,
+                        do_poll=do_poll,
+                        do_apply=do_apply,
+                        force=False,
+                        now=int(time.time()),
+                        skip_discover=args.no_discover,
+                        discover_wait=args.discover_wait,
+                        session_states=session_states,
+                    )
                 if scheduler.pending_count() == 0:
                     continue
                 round_num += 1
@@ -814,23 +821,25 @@ async def run(args: argparse.Namespace) -> int:
             )
             before_keys = {k for k, uq in scheduler.units.items() if uq.jobs}
             sync_book(nodes_path, doc, nodes, sites, keys)
-            seeded = _seed_auto_work(
-                scheduler,
-                auto_targets=auto_targets,
-                conn=conn,
-                nodes=nodes,
-                sites=sites,
-                doc=doc,
-                keys=keys,
-                policy=cadence_policy,
-                do_poll=do_poll,
-                do_apply=do_apply,
-                force=False,
-                now=int(time.time()),
-                skip_discover=args.no_discover,
-                discover_wait=args.discover_wait,
-                session_states=session_states,
-            )
+            seeded = 0
+            if not args.no_auto_update:
+                seeded = _seed_auto_work(
+                    scheduler,
+                    auto_targets=auto_targets,
+                    conn=conn,
+                    nodes=nodes,
+                    sites=sites,
+                    doc=doc,
+                    keys=keys,
+                    policy=cadence_policy,
+                    do_poll=do_poll,
+                    do_apply=do_apply,
+                    force=False,
+                    now=int(time.time()),
+                    skip_discover=args.no_discover,
+                    discover_wait=args.discover_wait,
+                    session_states=session_states,
+                )
             if seeded:
                 new_units = [
                     uq.target
@@ -914,6 +923,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-rounds", type=int, default=0)
     parser.add_argument("--max-attempts", type=int, default=0)
     parser.add_argument("--once", action="store_true", help="Single pass only")
+    parser.add_argument(
+        "--no-auto-update",
+        action="store_true",
+        help="Do not queue due GET/apply. Manual Refresh, Pull, and Deploy only.",
+    )
     parser.add_argument(
         "--deployed-only",
         action="store_true",

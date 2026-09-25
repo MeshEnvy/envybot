@@ -12,6 +12,7 @@ from envybot.position import (
     public_radio_name,
     resolve_book_position,
     resolve_display_position,
+    resolve_map_position,
     site_binding,
     site_loc_for_unit,
 )
@@ -59,6 +60,7 @@ class ResolveTests(unittest.TestCase):
         node = {"unit_id": "ME0041"}
         doc = {"bench_loc": [39.5276, -119.8142]}
         self.assertIsNone(resolve_book_position(node, {}, key="me0041"))
+        self.assertIsNone(resolve_map_position(node, {}, key="me0041"))
         pos = resolve_display_position(node, {}, key="me0041", doc=doc)
         assert pos is not None
         self.assertEqual(pos["source"], "bench")

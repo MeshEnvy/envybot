@@ -1,4 +1,8 @@
-"""Book GPS. Radio apply uses sites.yaml. Sun/map can use bench_loc."""
+"""Book GPS. Radio apply uses sites.yaml. Sun/history can use bench_loc.
+
+Unit map pins use a bound site or the node's own ``loc``. ``bench_loc`` is the
+ingestor (companion) pin only, updated from browser geolocation.
+"""
 
 from __future__ import annotations
 
@@ -150,7 +154,7 @@ def site_loc(site: dict[str, Any] | None) -> tuple[float, float] | None:
 
 
 def bench_loc_from_doc(doc: dict[str, Any] | None) -> tuple[float, float] | None:
-    """Book-level HQ loc for unbound units (sun/map). Not applied."""
+    """Book-level ingestor loc (sun/history backfill, map ingestor pin). Not applied."""
     if not doc:
         return None
     return parse_loc(doc.get("bench_loc"))
@@ -201,6 +205,28 @@ def resolve_book_position(
     }
 
 
+def resolve_map_position(
+    node: dict[str, Any],
+    sites: dict[str, dict[str, Any]] | None = None,
+    *,
+    key: str | None = None,
+) -> dict[str, Any] | None:
+    """Fleet map pin: bound site GPS, else optional node ``loc`` (mobile/bag)."""
+    site_pos = resolve_book_position(node, sites, key=key)
+    if site_pos:
+        return site_pos
+    node_loc = parse_loc((node or {}).get("loc"))
+    if node_loc:
+        return {
+            "lat": node_loc[0],
+            "lon": node_loc[1],
+            "source": "node",
+            "site": None,
+            "site_name": None,
+        }
+    return None
+
+
 def resolve_display_position(
     node: dict[str, Any],
     sites: dict[str, dict[str, Any]] | None = None,
@@ -209,7 +235,7 @@ def resolve_display_position(
     doc: dict[str, Any] | None = None,
     bench_loc: tuple[float, float] | None = None,
 ) -> dict[str, Any] | None:
-    """Sun/map loc: bound site, else node ``loc``, else book ``bench_loc``."""
+    """Sun/history loc: bound site, else node ``loc``, else book ``bench_loc``."""
     site_pos = resolve_book_position(node, sites, key=key)
     if site_pos:
         return site_pos

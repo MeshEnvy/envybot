@@ -31,6 +31,7 @@ from envybot.nodes_doc import (
     write_nodes_doc,
 )
 from envybot.position import (
+    bench_loc_from_doc,
     bind_node_to_site,
     is_placeholder_gps,
     load_sites_doc,
@@ -52,6 +53,15 @@ from envybot.web.snapshot import (
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 DEFAULT_HOST = "127.0.0.1"
+
+
+def _attach_ingestor(snap: dict[str, Any], nodes_path: Path) -> None:
+    doc = load_nodes_doc(nodes_path)
+    loc = bench_loc_from_doc(doc)
+    if loc is None:
+        snap["ingestor"] = None
+    else:
+        snap["ingestor"] = {"lat": loc[0], "lon": loc[1]}
 DEFAULT_PORT = 8787
 
 
@@ -447,6 +457,7 @@ class MonitorWeb:
             skip=self._skip,
         )
         snap["edges"] = build_neighbor_edges(snap["units"])
+        _attach_ingestor(snap, self.nodes_path)
         snap.setdefault("poll", {})["console"] = self.console.poll_console()
         await self.hub.set_snapshot(snap)
         return snap
@@ -479,6 +490,7 @@ class MonitorWeb:
             skip=self._skip,
         )
         snap["edges"] = build_neighbor_edges(snap["units"])
+        _attach_ingestor(snap, self.nodes_path)
         snap.setdefault("poll", {})["console"] = self.console.poll_console()
         unit = snap["units"].get(key)
         if unit is None:

@@ -23,7 +23,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/nodes_doc.py` | Desired `nodes.yaml` load/write |
 | `src/envybot/history.py` | `data/fleet/history.sqlite` (+ `mesh_audit` per send; `list_mesh_audit`) |
 | `src/envybot/health.py` | Per-node health checks (snapshot + UI grade) |
-| `src/envybot/position.py` | Display GPS: site → node `loc` → `bench_loc`; apply uses site only |
+| `src/envybot/position.py` | Map pin: site → node `loc`. Sun/history: + `bench_loc` (ingestor). Apply: site only |
 | `src/envybot/sun.py` | Clear-sky elev: ☀️/🌙 + 72h elevation sparkline |
 | `src/envybot/weather.py` | Open-Meteo cache + attach on poll history |
 | `src/envybot/radio.py` | Companion session, login, CLI/binary |
@@ -52,8 +52,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   reachability / fw / battery / uptime / temperature.
 - GPS for **apply** lives on `sites.yaml` (`loc` + `node:` bind). Apply
   SETs `0,0` unless `public: true`. Never GET device coords into YAML.
-- **Display** GPS (map, sun, poll stamps): bound site → optional node
-  `loc` → book `bench_loc`. Fleet UI may POST `/api/bench` from browser
+- **Map** pins: bound site → optional node `loc` (mobile/bag). No `bench_loc`
+  fallback on units. **Sun/history** still use `bench_loc` after node `loc`.
+  Fleet UI POSTs `/api/bench` for the ingestor pin.
   GPS (debounced); that does not SET radios. One-shot sqlite backfill v2
   stamps NULL history rows once.
 - `fleet` / `trust` / `cmd` skip `firmware_platform: meshtastic` even
@@ -76,7 +77,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   but envybot ignores them: no UI, poll, apply, trust, cmd, or onboard.
 - `fleet` and `trust` poll every pollable MeshCore unit, including
   bag/bench (no site bind). `--deployed-only` narrows fleet to
-  site-bound units only. Contact name is the site `name` (e.g. Ophir),
+  site-bound units only. **`--no-auto-update`:** no due seeding; manual UI
+  jobs only. Contact name is the site `name` (e.g. Ophir),
   else `unit_id`. Stale advert names on the same key are removed and
   re-added. A replaced chip (same unit/site name, new pubkey) drops the
   old companion contact; bare `Repeater` names stay. `trust ben`

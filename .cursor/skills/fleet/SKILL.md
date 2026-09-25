@@ -38,7 +38,7 @@ cd /path/to/envybot
 | Companion connects, neighbor ping only | Idle loop waiting for manual/scheduled work | Expected when idle |
 | `--only` matched but no login lines | Filter worked; unit not due for queued phase | Same as idle |
 
-Auto seed only queues units with **due** poll groups or **due** apply fields. `--full-sync` and UI **Deploy** bypass apply skip. `--only` bypasses miss-cooldown on startup seed.
+Auto seed only queues units with **due** poll groups or **due** apply fields. `--full-sync` and UI **Deploy** bypass apply skip. `--only` bypasses miss-cooldown on startup seed. **`--no-auto-update`:** no auto seed at start or on cadence; Refresh/Pull/Deploy only.
 
 Progress logs require default progress (do not pass `-q` / `--quiet`).
 
@@ -133,6 +133,7 @@ sqlite3 "$ENVYBOT_HOME/data/fleet/history.sqlite" \
 | `--full-sync` | Deploy profile + periodic/inventory GETs (not weekly audit GETs) |
 | `--apply-only` | SET only, skip GET cadence |
 | `--poll-only` | GET only |
+| `--no-auto-update` | No due seeding; Refresh/Pull/Deploy only |
 | `--refresh-paths` | Dump stale hops, clear cache, flood on next login |
 | `--force-path HOPS` | Pin hops for this run |
 | `--companion HINT` | Pubkey prefix or `keys.yaml` person slug (skip BLE picker) |

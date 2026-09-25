@@ -57,6 +57,7 @@ from envybot.position import (
     lookup_site_name,
     node_alias,
     resolve_display_position,
+    resolve_map_position,
     site_binding,
 )
 
@@ -192,7 +193,7 @@ def resolve_position(
     key: str | None = None,
     doc: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    return resolve_display_position(node, sites, key=key, doc=doc)
+    return resolve_map_position(node, sites, key=key)
 
 
 def build_pubkey_index(nodes: dict[str, Any]) -> dict[str, str]:

@@ -84,7 +84,7 @@ import {
   createMapController,
   unitStage,
   unitStatus,
-} from "./map.js?v=31";
+} from "./map.js?v=32";
 import {
   seriesFromHistories,
   seriesFromPolls,

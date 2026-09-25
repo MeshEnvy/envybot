@@ -8,6 +8,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Fleet map: unit pins are site GPS or optional node `loc` only. Unbound units
+  without `loc` (e.g. mobile Jeep on the bench) no longer stack on `bench_loc`.
+  `bench_loc` is the yellow **ingestor** pin (browser geolocation still POSTs
+  `/api/bench`).
 - Fleet UI **Push** is **Deploy** (`POST /api/deploy/{key}`). CLI `--force`
   is **`--full-sync`** (Pull every GET group plus Deploy profile). Session
   state is `deploying`.
@@ -18,6 +22,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- Fleet **`--no-auto-update`** — skip automatic due poll/apply seeding; manual
+  Refresh, Pull, and Deploy only.
 - Fleet detail **Audit** log — per-send `mesh_audit` rows (login/CLI/binary,
   path, outcome, reply snippet), newest first with **Load older**;
   `GET /api/audit/{unit}`; live `audit` SSE on send begin/finish.

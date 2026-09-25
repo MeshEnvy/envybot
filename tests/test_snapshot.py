@@ -69,14 +69,19 @@ class GpsTests(unittest.TestCase):
         self.assertEqual(pos["source"], "site")
         self.assertAlmostEqual(pos["lat"], 40.0)
 
-    def test_unbound_uses_bench_loc(self) -> None:
+    def test_unbound_bench_loc_is_not_a_map_pin(self) -> None:
         node = {"unit_id": "ME0041"}
         sites = {"foo": {"name": "Foo Peak", "loc": [40.0, -117.0], "node": "me0001"}}
         doc = {"bench_loc": [39.5296, -119.8138]}
         pos = resolve_position(node, sites, key="me0041", doc=doc)
+        self.assertIsNone(pos)
+
+    def test_unbound_node_loc_is_a_map_pin(self) -> None:
+        node = {"unit_id": "ME0006", "loc": [39.3094, -119.6516]}
+        pos = resolve_position(node, {}, key="me0006")
         assert pos is not None
-        self.assertEqual(pos["source"], "bench")
-        self.assertAlmostEqual(pos["lat"], 39.5296)
+        self.assertEqual(pos["source"], "node")
+        self.assertAlmostEqual(pos["lat"], 39.3094)
 
     def test_site_wins_over_bench(self) -> None:
         node = {"unit_id": "ME0011"}
@@ -162,7 +167,7 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(len(nbs), 1)
             self.assertEqual(nbs[0]["label"], "ME0002")
 
-    def test_unbound_bench_loc_pins_on_map(self) -> None:
+    def test_unbound_bench_loc_is_not_a_unit_pin(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             book = Path(tmp)
             nodes_path = book / "nodes.yaml"
@@ -181,9 +186,8 @@ class SnapshotTests(unittest.TestCase):
             )
             snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
             u = snap["units"]["me0041"]
-            self.assertTrue(u["mapped"])
-            self.assertEqual(u["position"]["source"], "bench")
-            self.assertAlmostEqual(u["position"]["lat"], 39.5296)
+            self.assertFalse(u["mapped"])
+            self.assertIsNone(u["position"])
 
     def test_exposes_base_hash_from_sqlite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

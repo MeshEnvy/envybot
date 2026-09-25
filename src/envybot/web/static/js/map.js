@@ -156,6 +156,39 @@ export function createMapController(containerId, onSelect, onClear) {
   function ensureLayers() {
     if (map.getSource('units')) return
 
+    map.addSource('ingestor', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    })
+    map.addLayer({
+      id: 'ingestor',
+      type: 'circle',
+      source: 'ingestor',
+      paint: {
+        'circle-radius': 8,
+        'circle-color': '#f4e27a',
+        'circle-stroke-width': 2,
+        'circle-stroke-color': '#1a1408',
+      },
+    })
+    map.addLayer({
+      id: 'ingestor-label',
+      type: 'symbol',
+      source: 'ingestor',
+      layout: {
+        'text-field': 'ingestor',
+        'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular'],
+        'text-size': 11,
+        'text-offset': [0, 1.2],
+        'text-anchor': 'top',
+      },
+      paint: {
+        'text-color': '#f4e27a',
+        'text-halo-color': '#0f1419',
+        'text-halo-width': 1.5,
+      },
+    })
+
     map.addSource('edges', {
       type: 'geojson',
       data: { type: 'FeatureCollection', features: [] },
@@ -268,6 +301,22 @@ export function createMapController(containerId, onSelect, onClear) {
     const src = /** @type {import('maplibre-gl').GeoJSONSource} */ (map.getSource('units'))
     src.setData({ type: 'FeatureCollection', features })
 
+    const ingestor = /** @type {{ lat?: unknown, lon?: unknown } | null} */ (fleet.ingestor)
+    const ingestorSrc = /** @type {import('maplibre-gl').GeoJSONSource} */ (map.getSource('ingestor'))
+    /** @type {GeoJSON.Feature[]} */
+    const ingestorFeatures = []
+    if (ingestor && Number.isFinite(Number(ingestor.lat)) && Number.isFinite(Number(ingestor.lon))) {
+      ingestorFeatures.push({
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [Number(ingestor.lon), Number(ingestor.lat)],
+        },
+        properties: {},
+      })
+    }
+    ingestorSrc.setData({ type: 'FeatureCollection', features: ingestorFeatures })
+
     const edges = /** @type {Array<{ coordinates: number[][] }>} */ (fleet.edges || [])
     const edgeSrc = /** @type {import('maplibre-gl').GeoJSONSource} */ (map.getSource('edges'))
     edgeSrc.setData({
@@ -281,9 +330,14 @@ export function createMapController(containerId, onSelect, onClear) {
         })),
     })
 
-    if (!fitted && features.length) {
+    if (!fitted && (features.length || ingestorFeatures.length)) {
       const bounds = new maplibregl.LngLatBounds()
       for (const f of features) {
+        if (f.geometry?.type === 'Point') {
+          bounds.extend(/** @type {[number, number]} */ (f.geometry.coordinates))
+        }
+      }
+      for (const f of ingestorFeatures) {
         if (f.geometry?.type === 'Point') {
           bounds.extend(/** @type {[number, number]} */ (f.geometry.coordinates))
         }

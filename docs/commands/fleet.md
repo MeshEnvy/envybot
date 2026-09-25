@@ -24,7 +24,7 @@ Contact sync drops an old companion record when a unit's pubkey changes
 
 | Store | Role |
 |-------|------|
-| `nodes.yaml` | Desired identity + `trust.admin` / `trust.guest`. Poll does not write. `bench_loc` + optional per-node `loc` for map/sun/history only (not radio apply). |
+| `nodes.yaml` | Desired identity + `trust.admin` / `trust.guest`. Poll does not write. Map pins: site GPS or per-node `loc` (mobile/bag). `bench_loc` is the ingestor pin plus sun/history backfill (not radio apply). |
 | `keys.yaml` | Person → MeshCore companion pubkeys. Apply resolves names to ACL. |
 | `sites.yaml` | Places (`loc`) and the 1:1 `node:` bind. Fleet writes bind only. |
 | `data/fleet/history.sqlite` | Observed last-seen, telemetry, apply log, `cmd` audit |
@@ -306,6 +306,7 @@ list warns that fleet may not get out. Requires companion firmware with
 | `--round-delay SEC` | Pause between scheduler retry rounds |
 | `--poll-only` | GET only |
 | `--apply-only` | SET only |
+| `--no-auto-update` | No automatic due GET/apply. UI **Refresh**, **Pull**, and **Deploy** only. |
 | `--deployed-only` | Site-bound units only (skip bag/bench) |
 
 ## UI
