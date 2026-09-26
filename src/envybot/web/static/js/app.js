@@ -185,17 +185,77 @@ const App = {
     let routeCopiedTimer = null;
     const historyHours = 72;
     const LOG_PAGE = 10;
-    const AUDIT_PAGE = 40;
+    const AUDIT_PAGE = 10;
+    const DETAIL_SECTIONS_KEY = "envybot.detail.sections.v1";
+    const DETAIL_SECTION_DEFAULTS = {
+      profile: true,
+      heard: true,
+      firmware: false,
+      sinceBoot: false,
+      audit: false,
+      polls: false,
+    };
     const logShown = reactive({
       polls: LOG_PAGE,
-      acl: LOG_PAGE,
     });
     /** @type {import('vue').Ref<import('./api.js').AuditRow[]>} */
     const auditRows = ref([]);
     const auditHasMore = ref(false);
     const auditLoading = ref(false);
+    const auditShown = ref(LOG_PAGE);
+    const auditFilter = ref("");
     /** @type {import('vue').Ref<string | null>} */
     const auditKey = ref(null);
+
+    function loadDetailSectionsState() {
+      try {
+        const raw = localStorage.getItem(DETAIL_SECTIONS_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          return { ...DETAIL_SECTION_DEFAULTS, ...parsed };
+        }
+      } catch {
+        /* ignore */
+      }
+      return { ...DETAIL_SECTION_DEFAULTS };
+    }
+
+    const detailSectionsOpen = reactive(loadDetailSectionsState());
+
+    /** @param {string} id */
+    function detailSectionOpen(id) {
+      return !!detailSectionsOpen[id];
+    }
+
+    /** @param {string} id */
+    function toggleDetailSection(id) {
+      detailSectionsOpen[id] = !detailSectionsOpen[id];
+      try {
+        localStorage.setItem(DETAIL_SECTIONS_KEY, JSON.stringify({ ...detailSectionsOpen }));
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const auditFilteredRows = computed(() => {
+      const q = auditFilter.value.trim().toLowerCase();
+      const rows = auditRows.value;
+      if (!q) return rows;
+      return rows.filter((row) => {
+        const hay = [row.kind, row.label, row.path, row.outcome, row.reply, row.error]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return hay.includes(q);
+      });
+    });
+
+    const auditTableRows = computed(() => auditFilteredRows.value.slice(0, auditShown.value));
+
+    const auditCanLoadMore = computed(() => {
+      if (auditShown.value < auditFilteredRows.value.length) return true;
+      return auditHasMore.value;
+    });
     const CONSOLE_STORE_KEY = "envybot.console.v1";
     const CMD_HISTORY_CAP = 100;
     const consoleOpen = ref(false);
@@ -214,25 +274,20 @@ const App = {
     const consoleCopied = ref(false);
     let consoleCopyTimer = 0;
 
-    function resetLogShown() {
-      logShown.polls = LOG_PAGE;
-      logShown.acl = LOG_PAGE;
-    }
-
-    /** @param {'polls' | 'acl'} source */
+    /** @param {'polls'} source */
     function logSlice(source) {
       const list = unitHistory.value?.[source];
       if (!Array.isArray(list)) return [];
       return list.slice(0, logShown[source]);
     }
 
-    /** @param {'polls' | 'acl'} source */
+    /** @param {'polls'} source */
     function logHasMore(source) {
       const list = unitHistory.value?.[source];
       return Array.isArray(list) && list.length > logShown[source];
     }
 
-    /** @param {'polls' | 'acl'} source */
+    /** @param {'polls'} source */
     function loadMoreLog(source) {
       logShown[source] += LOG_PAGE;
     }
@@ -278,6 +333,33 @@ const App = {
       auditRows.value = [];
       auditHasMore.value = false;
       auditKey.value = null;
+      auditShown.value = LOG_PAGE;
+      auditFilter.value = "";
+    }
+
+    /** Clear loaded audit rows when switching units; keep shared UI state. */
+    function clearAuditForUnitSwitch() {
+      auditRows.value = [];
+      auditHasMore.value = false;
+      auditKey.value = null;
+    }
+
+    const detailScrollTop = ref(0);
+    /** @type {import('vue').Ref<HTMLElement | null>} */
+    const detailPanelRef = ref(null);
+
+    function onDetailPanelScroll() {
+      const el = detailPanelRef.value;
+      if (el) detailScrollTop.value = el.scrollTop;
+    }
+
+    function restoreDetailScroll() {
+      void nextTick(() => {
+        requestAnimationFrame(() => {
+          const el = detailPanelRef.value;
+          if (el) el.scrollTop = detailScrollTop.value;
+        });
+      });
     }
 
     /** @param {import('./api.js').AuditRow[]} existing @param {import('./api.js').AuditRow[]} incoming */
@@ -296,10 +378,17 @@ const App = {
         auditHasMore.value = !!res.has_more;
         auditKey.value = key;
       } catch {
-        resetAudit();
+        clearAuditForUnitSwitch();
         auditKey.value = key;
       } finally {
         auditLoading.value = false;
+      }
+    }
+
+    async function loadMoreAudit() {
+      auditShown.value += LOG_PAGE;
+      if (auditShown.value > auditFilteredRows.value.length && auditHasMore.value) {
+        await loadOlderAudit();
       }
     }
 
@@ -1154,6 +1243,18 @@ const App = {
     }
 
     /** @param {Record<string, unknown> | undefined} unit */
+    function firmwareSummaryLine(unit) {
+      if (!unit) return "—";
+      const parts = [];
+      parts.push(unit.firmware_version ? String(unit.firmware_version) : "—");
+      if (unit.firmware_platform) parts.push(String(unit.firmware_platform));
+      const bl = unit.ota?.running?.bl_apply;
+      if (bl === true) parts.push("MOTA");
+      else if (bl === false) parts.push("no MOTA");
+      return parts.join(" · ");
+    }
+
+    /** @param {Record<string, unknown> | undefined} unit */
     function canInstallUnit(unit) {
       if (!unit || isInFlight(unit) || !manualAccepting.value) return false;
       const ota = unit.ota;
@@ -1557,7 +1658,7 @@ const App = {
       syncLocation(key);
       if (fly && mapCtrl) mapCtrl.flyTo(key, fleet);
       pushMap();
-      resetAudit();
+      clearAuditForUnitSwitch();
       try {
         const snap = await fetchFleet();
         if (snap.poll) patchSession(snap.poll);
@@ -1566,8 +1667,9 @@ const App = {
       } catch (err) {
         console.error(err);
       }
-      loadHistoriesFor(key);
-      loadAuditFirstPage(key);
+      await loadHistoriesFor(key);
+      await loadAuditFirstPage(key);
+      restoreDetailScroll();
     }
 
     function selectFromDashboard(key) {
@@ -2275,12 +2377,12 @@ const App = {
       profileEditingId.value = null;
       profileSavingRowId.value = null;
       profileCommitTail = Promise.resolve();
-      resetLogShown();
       syncBookDrafts(selectedUnit.value);
       syncProfileDrafts(selectedUnit.value);
       if (key) resetProfileEditedSinceOpen(key);
       scheduleProfileBaselineCapture();
       syncLocation(key);
+      if (key) restoreDetailScroll();
     });
 
     watch(consoleActiveId, (id) => {
@@ -2927,8 +3029,14 @@ const App = {
       auditRows,
       auditHasMore,
       auditLoading,
-      loadOlderAudit,
+      auditFilter,
+      auditTableRows,
+      auditCanLoadMore,
+      loadMoreAudit,
       auditOutcomeClass,
+      detailSectionOpen,
+      toggleDetailSection,
+      firmwareSummaryLine,
       auditReplySnippet,
       auditAttemptLabel,
       sunEmoji,
@@ -3308,11 +3416,13 @@ const App = {
     >
           <div
             id="detail"
+            ref="detailPanelRef"
             class="detail"
             :class="{ 'detail-map-side': mapOpen, busy: isInFlight(selectedUnit) }"
             role="dialog"
             aria-modal="true"
             aria-labelledby="detail-title"
+            @scroll.passive="onDetailPanelScroll"
             @mouseup="onModalPanelMouseUp"
           >
           <div class="detail-head">
@@ -3611,9 +3721,135 @@ const App = {
                 <span v-else class="spark-empty">{{ sparkFallback(row.key) }}</span>
               </div>
             </div>
+            <section
+              v-if="
+                hasTrafficStats(selectedUnit.status) ||
+                selectedUnit.position ||
+                selectedUnit.status?.uptime_secs != null
+              "
+              class="detail-disclosure detail-disclosure--nested"
+            >
+              <button
+                type="button"
+                class="detail-disclosure-trigger"
+                @click="toggleDetailSection('sinceBoot')"
+              >
+                <span
+                  class="detail-disclosure-chevron"
+                  :class="{ open: detailSectionOpen('sinceBoot') }"
+                  aria-hidden="true"
+                >▸</span>
+                <span class="detail-disclosure-title">Since boot</span>
+              </button>
+              <div v-show="detailSectionOpen('sinceBoot')" class="detail-disclosure-body">
+                <dl>
+                  <dt>GPS</dt>
+                  <dd>
+                    <template v-if="selectedUnit.position">
+                      {{ selectedUnit.position.lat.toFixed(5) }}, {{ selectedUnit.position.lon.toFixed(5) }}
+                    </template>
+                    <template v-else>unmapped</template>
+                  </dd>
+                  <dt>Uptime</dt>
+                  <dd>{{ formatUptime(selectedUnit.status?.uptime_secs) }}</dd>
+                  <template v-if="hasTrafficStats(selectedUnit.status)">
+                    <dt>In / out</dt>
+                    <dd>
+                      {{ formatCount(selectedUnit.status?.packets_recv) }} /
+                      {{ formatCount(selectedUnit.status?.packets_sent) }}
+                    </dd>
+                    <template v-if="selectedUnit.status?.recv_errors != null">
+                      <dt>Unreadable</dt>
+                      <dd>
+                        {{ formatUnreadableRf(selectedUnit.status?.recv_errors, selectedUnit.status?.packets_recv) }}
+                      </dd>
+                    </template>
+                    <template
+                      v-if="
+                        selectedUnit.status?.recv_flood != null ||
+                        selectedUnit.status?.recv_direct != null
+                      "
+                    >
+                      <dt>Recv F / D</dt>
+                      <dd>
+                        {{ formatCount(selectedUnit.status?.recv_flood) }} /
+                        {{ formatCount(selectedUnit.status?.recv_direct) }}
+                      </dd>
+                    </template>
+                    <template
+                      v-if="
+                        selectedUnit.status?.sent_flood != null ||
+                        selectedUnit.status?.sent_direct != null
+                      "
+                    >
+                      <dt>Sent F / D</dt>
+                      <dd>
+                        {{ formatCount(selectedUnit.status?.sent_flood) }} /
+                        {{ formatCount(selectedUnit.status?.sent_direct) }}
+                      </dd>
+                    </template>
+                    <template
+                      v-if="
+                        selectedUnit.status?.last_snr != null ||
+                        selectedUnit.status?.last_rssi != null
+                      "
+                    >
+                      <dt>SNR / RSSI</dt>
+                      <dd>
+                        {{ formatSnr(selectedUnit.status?.last_snr) }} /
+                        {{ formatRssi(selectedUnit.status?.last_rssi) }}
+                      </dd>
+                    </template>
+                  </template>
+                </dl>
+              </div>
+            </section>
           </section>
-          <section v-if="profileVisibleRows(selectedUnit).length" class="profile-section">
-            <h3 :title="PROFILE_SECTION_HINT">Profile</h3>
+          <section v-if="liveNeighbors.length" class="detail-disclosure">
+            <button
+              type="button"
+              class="detail-disclosure-trigger"
+              @click="toggleDetailSection('heard')"
+            >
+              <span
+                class="detail-disclosure-chevron"
+                :class="{ open: detailSectionOpen('heard') }"
+                aria-hidden="true"
+              >▸</span>
+              <span class="detail-disclosure-title">Heard · {{ liveNeighbors.length }}</span>
+            </button>
+            <div v-show="detailSectionOpen('heard')" class="detail-disclosure-body">
+              <div
+                v-for="(nb, i) in liveNeighbors"
+                :key="nb.unit_key || nb.pubkey_prefix || i"
+                class="neighbor-row"
+                :class="{ 'neighbor-off-book': !nb.unit_key }"
+              >
+                {{ neighborLabel(nb) }}
+                <template v-if="nb.miles != null"> · ~{{ formatMiles(nb.miles) }}</template>
+                · {{ nb.snr ?? '?' }} dB
+                · {{ formatAgo(nb.secs_ago) }}
+              </div>
+            </div>
+          </section>
+          <section
+            v-if="profileVisibleRows(selectedUnit).length"
+            class="detail-disclosure profile-section"
+          >
+            <button
+              type="button"
+              class="detail-disclosure-trigger"
+              :title="PROFILE_SECTION_HINT"
+              @click="toggleDetailSection('profile')"
+            >
+              <span
+                class="detail-disclosure-chevron"
+                :class="{ open: detailSectionOpen('profile') }"
+                aria-hidden="true"
+              >▸</span>
+              <span class="detail-disclosure-title">Profile</span>
+            </button>
+            <div v-show="detailSectionOpen('profile')" class="detail-disclosure-body">
             <div v-for="group in profileGroups(selectedUnit)" :key="group.id" class="profile-group">
               <p class="book-field-label profile-group-label">{{ group.label }}</p>
               <dl class="profile-grid">
@@ -3811,9 +4047,25 @@ const App = {
                 </template>
               </dl>
             </div>
+            </div>
           </section>
-          <section class="ota-section">
-            <h3>Firmware</h3>
+          <section class="detail-disclosure ota-section">
+            <button
+              type="button"
+              class="detail-disclosure-trigger"
+              @click="toggleDetailSection('firmware')"
+            >
+              <span
+                class="detail-disclosure-chevron"
+                :class="{ open: detailSectionOpen('firmware') }"
+                aria-hidden="true"
+              >▸</span>
+              <span class="detail-disclosure-title">{{
+                detailSectionOpen('firmware') ? 'Firmware' : firmwareSummaryLine(selectedUnit)
+              }}</span>
+            </button>
+            <div v-show="detailSectionOpen('firmware')" class="detail-disclosure-body">
+            <h3 class="detail-disclosure-subhead">Firmware</h3>
             <dl>
               <dt>Version</dt>
               <dd>
@@ -3895,95 +4147,39 @@ const App = {
                 Install
               </button>
             </div>
-          </section>
-          <section>
-            <dl>
-              <dt>GPS</dt>
-              <dd>
-                <template v-if="selectedUnit.position">
-                  {{ selectedUnit.position.lat.toFixed(5) }}, {{ selectedUnit.position.lon.toFixed(5) }}
-                </template>
-                <template v-else>unmapped</template>
-              </dd>
-              <dt>Uptime</dt>
-              <dd>{{ formatUptime(selectedUnit.status?.uptime_secs) }}</dd>
-            </dl>
-          </section>
-          <section v-if="hasTrafficStats(selectedUnit.status)">
-            <h3>Since boot</h3>
-            <dl>
-              <dt>In / out</dt>
-              <dd>
-                {{ formatCount(selectedUnit.status?.packets_recv) }} /
-                {{ formatCount(selectedUnit.status?.packets_sent) }}
-              </dd>
-              <template v-if="selectedUnit.status?.recv_errors != null">
-                <dt>Unreadable</dt>
-                <dd>
-                  {{ formatUnreadableRf(selectedUnit.status?.recv_errors, selectedUnit.status?.packets_recv) }}
-                </dd>
-              </template>
-              <template
-                v-if="
-                  selectedUnit.status?.recv_flood != null ||
-                  selectedUnit.status?.recv_direct != null
-                "
-              >
-                <dt>Recv F / D</dt>
-                <dd>
-                  {{ formatCount(selectedUnit.status?.recv_flood) }} /
-                  {{ formatCount(selectedUnit.status?.recv_direct) }}
-                </dd>
-              </template>
-              <template
-                v-if="
-                  selectedUnit.status?.sent_flood != null ||
-                  selectedUnit.status?.sent_direct != null
-                "
-              >
-                <dt>Sent F / D</dt>
-                <dd>
-                  {{ formatCount(selectedUnit.status?.sent_flood) }} /
-                  {{ formatCount(selectedUnit.status?.sent_direct) }}
-                </dd>
-              </template>
-              <template
-                v-if="
-                  selectedUnit.status?.last_snr != null ||
-                  selectedUnit.status?.last_rssi != null
-                "
-              >
-                <dt>SNR / RSSI</dt>
-                <dd>
-                  {{ formatSnr(selectedUnit.status?.last_snr) }} /
-                  {{ formatRssi(selectedUnit.status?.last_rssi) }}
-                </dd>
-              </template>
-            </dl>
-          </section>
-          <section v-if="liveNeighbors.length">
-            <h3>Heard · {{ liveNeighbors.length }}</h3>
-            <div
-              v-for="(nb, i) in liveNeighbors"
-              :key="nb.unit_key || nb.pubkey_prefix || i"
-              class="neighbor-row"
-              :class="{ 'neighbor-off-book': !nb.unit_key }"
-            >
-              {{ neighborLabel(nb) }}
-              <template v-if="nb.miles != null"> · ~{{ formatMiles(nb.miles) }}</template>
-              · {{ nb.snr ?? '?' }} dB
-              · {{ formatAgo(nb.secs_ago) }}
             </div>
           </section>
-          <section class="poll-log-section">
+          <section class="detail-disclosure poll-log-section">
+            <button
+              type="button"
+              class="detail-disclosure-trigger"
+              @click="toggleDetailSection('audit')"
+            >
+              <span
+                class="detail-disclosure-chevron"
+                :class="{ open: detailSectionOpen('audit') }"
+                aria-hidden="true"
+              >▸</span>
+              <span class="detail-disclosure-title">Audit</span>
+            </button>
+            <div v-show="detailSectionOpen('audit')" class="detail-disclosure-body">
             <div class="poll-log">
-              <h3>
-                Audit · {{ auditRows.length }}<template v-if="auditHasMore">+</template>
-              </h3>
-              <p v-if="!auditRows.length && !auditLoading" class="audit-empty">
-                No mesh sends logged yet.
+              <label class="audit-filter-label">
+                <span class="visually-hidden">Filter audit rows</span>
+                <input
+                  v-model="auditFilter"
+                  class="audit-filter-input"
+                  type="search"
+                  placeholder="Filter loaded rows…"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+              </label>
+              <p v-if="!auditTableRows.length && !auditLoading" class="audit-empty">
+                <template v-if="auditRows.length && auditFilter.trim()">No rows match the filter.</template>
+                <template v-else>No mesh sends logged yet.</template>
               </p>
-              <table v-if="auditRows.length" class="poll-table poll-table-wide audit-table">
+              <table v-if="auditTableRows.length" class="poll-table poll-table-wide audit-table">
                 <thead>
                   <tr>
                     <th>When</th>
@@ -3996,7 +4192,7 @@ const App = {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="row in auditRows" :key="'au-' + row.id">
+                  <tr v-for="row in auditTableRows" :key="'au-' + row.id">
                     <td>{{ formatRelative(row.ts, fleet.now) }}</td>
                     <td>{{ row.kind || "—" }}</td>
                     <td class="audit-label" :title="row.label || ''">
@@ -4020,20 +4216,34 @@ const App = {
                 </tbody>
               </table>
               <button
-                v-if="auditHasMore"
+                v-if="auditCanLoadMore"
                 type="button"
                 class="load-more"
                 :disabled="auditLoading"
-                @click="loadOlderAudit"
+                @click="loadMoreAudit"
               >
-                Load older
+                Load more
               </button>
             </div>
+            </div>
           </section>
-          <section v-if="unitHistory?.polls?.length" class="poll-log-section">
+          <section class="detail-disclosure poll-log-section">
+            <button
+              type="button"
+              class="detail-disclosure-trigger"
+              @click="toggleDetailSection('polls')"
+            >
+              <span
+                class="detail-disclosure-chevron"
+                :class="{ open: detailSectionOpen('polls') }"
+                aria-hidden="true"
+              >▸</span>
+              <span class="detail-disclosure-title">Polls</span>
+            </button>
+            <div v-show="detailSectionOpen('polls')" class="detail-disclosure-body">
             <div class="poll-log">
-              <h3>Polls · {{ unitHistory.polls.length }}</h3>
-              <table class="poll-table poll-table-wide">
+              <p v-if="!unitHistory?.polls?.length" class="audit-empty">No poll history yet.</p>
+              <table v-if="unitHistory?.polls?.length" class="poll-table poll-table-wide">
                 <thead>
                   <tr>
                     <th>When</th>
@@ -4129,41 +4339,6 @@ const App = {
                 Load more
               </button>
             </div>
-          </section>
-          <section v-if="unitHistory?.acl?.length" class="poll-log-section">
-            <div class="poll-log">
-              <h3>ACL · {{ unitHistory.acl.length }}</h3>
-              <table class="poll-table">
-                <thead>
-                  <tr>
-                    <th>When</th>
-                    <th>Keys</th>
-                    <th>Δ</th>
-                    <th>Gap</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(row, pi) in logSlice('acl')" :key="'ac-' + pi">
-                    <td>{{ formatRelative(row.ts, fleet.now) }}</td>
-                    <td>{{ row.count ?? '—' }}</td>
-                    <td>{{ row.delta_count != null ? (row.delta_count >= 0 ? '+' : '') + row.delta_count : '—' }}</td>
-                    <td>
-                      <template v-if="row.since_prev_secs != null">{{
-                        formatPollWindow(row.since_prev_secs)
-                      }}</template>
-                      <template v-else>—</template>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-              <button
-                v-if="logHasMore('acl')"
-                type="button"
-                class="load-more"
-                @click="loadMoreLog('acl')"
-              >
-                Load more
-              </button>
             </div>
           </section>
           </div>
