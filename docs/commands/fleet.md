@@ -9,7 +9,7 @@ Localhost fleet manager. Serves the dashboard UI, GETs telemetry into
 
 Default: UI at `http://127.0.0.1:8787/` (`?unit=me0032` restores the open
 card; `?map=1` reopens the map modal) plus live GET (status/telemetry),
-inventory gaps (fw/bl/ota base hash), and apply when the profile hash misses.
+fw/bl/`ota self` every 7 days, and apply when the profile hash misses.
 OTA session (`ota status` + delayed `ota ls`) and neighbors stay on a 24h
 auto cadence; Pull fetches them now. Neighbor GET
 sends remote `discover.neighbors`, waits 12s, then reads the table. Heard
@@ -58,7 +58,7 @@ sites until names are shortened.
 | periodic | `status`, `telemetry` | `--min-interval` (default 1h) |
 | periodic | `ota_status`, `ota_ls` | 24h (`ota status` + delayed `ota ls`). Skip after `Unknown command` until firmware changes |
 | periodic | `neighbors` | 24h (`discover.neighbors` + wait + GET) |
-| inventory | `firmware`, `bootloader`, `ota` | until sqlite stamp exists |
+| inventory | `firmware`, `bootloader`, `ota` | 7d (`ver`, bootloader, `ota self` base hash) |
 | audit | `name`, `lat`, `lon`, `advert`, `flood_advert`, `acl` | weekly when stamped; **Pull** or `--group` forces now (3 attempts max) |
 
 Neighbors: remote `discover.neighbors` (zero-hop CTL) then `GET_NEIGHBOURS`.

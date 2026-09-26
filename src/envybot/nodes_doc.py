@@ -97,7 +97,7 @@ NODES_YAML_HEADER = (
     "# admin_password: unique + strong per unit.\n"
     "# guest_password: blank = open guest login; apply SETs blank when book says so.\n"
     "# Apply due = per-field sqlite applies vs book desired.\n"
-    "#   Poll: status/telemetry hourly, neighbors daily; audit GET weekly on Pull.\n"
+    "#   Poll: status/telemetry hourly, neighbors daily; fw/bl/ota and audit GET weekly.\n"
     "#   sync_book reloads sites/public_advert/keys live; new units need restart.\n"
     "# Tool: envybot. Fleet: ./envybot fleet. Trust: ./envybot trust.\n"
     "# Never copy secrets (passwords, keypairs) into public trees.\n"

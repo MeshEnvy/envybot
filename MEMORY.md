@@ -119,8 +119,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   `ota_ls` to that `firmware_version` (no refresh until `ver` changes).
   Long-running fleet re-checks due groups about every 60s
   while idle, and after each swim-lane batch (so apply-due units
-  do not wait for the whole fleet to go quiet). fw/bl/ota once; name/gps/advert/acl
-  audit GET weekly (cap 3 attempts), on Pull / `--group`, or when never stamped.
+  do not wait for the whole fleet to go quiet). fw/bl/ota (`ver`, bootloader,
+  `ota self`) every 7d; name/gps/advert/acl audit GET weekly (cap 3 attempts),
+  on Pull / `--group`, or when never stamped.
   Status/telemetry samples log bound-site GPS.
   One-shot `sample_loc_backfill` stamps current site loc onto older
   rows that lack it. Bench/unmapped stay blank. Voltage is status

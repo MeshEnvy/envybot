@@ -77,6 +77,8 @@ class DueTests(unittest.TestCase):
             later = due_groups(conn, "me0001", policy=PollPolicy(), now=10 + 86400)
             self.assertIn("status", later)
             self.assertNotIn("firmware", later)
+            week = due_groups(conn, "me0001", policy=PollPolicy(), now=10 + 8 * 86400)
+            self.assertIn("firmware", week)
 
 
 if __name__ == "__main__":

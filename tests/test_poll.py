@@ -201,10 +201,12 @@ class PollCadenceTests(unittest.TestCase):
                 conn,
                 unit="me0001",
                 res=_Res(firmware_version="1.15.0", polled_groups=frozenset({"firmware"})),
+                ts=now,
             )
             seen = conn.execute("SELECT * FROM last_seen WHERE unit = 'me0001'").fetchone()
             seen = dict(seen)
-            self.assertFalse(group_is_due(seen, "firmware", policy=policy, now=now + 99999))
+            self.assertFalse(group_is_due(seen, "firmware", policy=policy, now=now + 86400))
+            self.assertTrue(group_is_due(seen, "firmware", policy=policy, now=now + 8 * 86400))
 
     def test_ota_inventory_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -216,11 +218,13 @@ class PollCadenceTests(unittest.TestCase):
                 conn,
                 unit="me0001",
                 res=_Res(base_hash="AABBCCDDEEFF0011", polled_groups=frozenset({"ota"})),
+                ts=now,
             )
             seen = conn.execute("SELECT * FROM last_seen WHERE unit = 'me0001'").fetchone()
             seen = dict(seen)
             self.assertEqual(seen["base_hash"], "AABBCCDDEEFF0011")
-            self.assertFalse(group_is_due(seen, "ota", policy=policy, now=now + 99999))
+            self.assertFalse(group_is_due(seen, "ota", policy=policy, now=now + 86400))
+            self.assertTrue(group_is_due(seen, "ota", policy=policy, now=now + 8 * 86400))
 
 
 class TrustStampTests(unittest.TestCase):
@@ -364,7 +368,7 @@ class GetPlanTests(unittest.TestCase):
             )
         self.assertIn("status", need)
         self.assertIn("telemetry", need)
-        self.assertIn("(have)", skip)
+        self.assertIn("firmware", skip)
         self.assertIn("neighbors (fresh", skip)
         self.assertIn("name", skip)
         self.assertIn("(audit <", skip)

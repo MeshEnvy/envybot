@@ -30,9 +30,9 @@ class PullGroupSpec:
 
 # GET groups. Audit identity (name/gps/advert/acl) reconciles stamps; SET via apply.
 GET_GROUPS: dict[str, PullGroupSpec] = {
-    "firmware": PullGroupSpec("inventory", "firmware_at"),
-    "bootloader": PullGroupSpec("inventory", "bootloader_at"),
-    "ota": PullGroupSpec("inventory", "ota_at"),
+    "firmware": PullGroupSpec("inventory", "firmware_at", interval=AUDIT_POLL_INTERVAL),
+    "bootloader": PullGroupSpec("inventory", "bootloader_at", interval=AUDIT_POLL_INTERVAL),
+    "ota": PullGroupSpec("inventory", "ota_at", interval=AUDIT_POLL_INTERVAL),
     "name": PullGroupSpec("audit", "name_at", interval=AUDIT_POLL_INTERVAL),
     "lat": PullGroupSpec("audit", "gps_at", interval=AUDIT_POLL_INTERVAL),
     "lon": PullGroupSpec("audit", "gps_at", interval=AUDIT_POLL_INTERVAL),
@@ -277,8 +277,6 @@ def group_is_due(
         return False
     if not group_complete(seen, group):
         return True
-    if spec.mode == "inventory":
-        return False
     stamp = _stamp(seen, spec.pulled_at_key)
     if stamp is None:
         return True
@@ -383,9 +381,9 @@ def format_get_plan(
             skip_nocli.append(group)
             continue
         spec = GET_GROUPS[group]
-        if spec.mode == "inventory":
+        if spec.mode == "inventory" and spec.interval is None:
             skip_inv.append(group)
-        elif spec.mode == "audit":
+        elif spec.mode in ("inventory", "audit"):
             skip_audit_fresh.setdefault(group_interval(group, policy), []).append(group)
         else:
             skip_fresh.append(group)
