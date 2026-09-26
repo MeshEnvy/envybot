@@ -85,8 +85,22 @@ function pushCoord(coords, point) {
 }
 
 /**
+ * @param {Record<string, unknown>} fleet
+ * @returns {number[] | null}
+ */
+function ingestorLonLat(fleet) {
+  const ingestor = /** @type {{ lat?: unknown, lon?: unknown } | null} */ (fleet.ingestor)
+  if (!ingestor) return null
+  const lat = Number(ingestor.lat)
+  const lon = Number(ingestor.lon)
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+  return [lon, lat]
+}
+
+/**
  * Line coordinates for the path in use or being waited on.
- * Skips hop prefixes with no mapped fleet unit; still reaches target when pinned.
+ * Starts at the ingestor (companion) pin, then each mapped hop, then the target.
+ * Skips hop prefixes with no mapped fleet unit.
  *
  * @param {Record<string, unknown>} fleet
  * @param {string | null} selectedKey
@@ -124,18 +138,11 @@ export function buildActivePath(fleet, selectedKey) {
   ].includes(sessionState)
 
   if (!tokens.length && (finding || sessionBusy) && hasMapPin(unit.position)) {
-    const ingestor = /** @type {{ lat?: unknown, lon?: unknown } | null} */ (fleet.ingestor)
-    if (
-      ingestor &&
-      Number.isFinite(Number(ingestor.lat)) &&
-      Number.isFinite(Number(ingestor.lon))
-    ) {
+    const origin = ingestorLonLat(fleet)
+    if (origin) {
       return {
         unit: focusKey,
-        coordinates: [
-          [Number(ingestor.lon), Number(ingestor.lat)],
-          unitLonLat(unit),
-        ],
+        coordinates: [origin, unitLonLat(unit)],
       }
     }
   }
@@ -145,6 +152,8 @@ export function buildActivePath(fleet, selectedKey) {
 
   /** @type {number[][]} */
   const coords = []
+  const origin = ingestorLonLat(fleet)
+  if (origin) pushCoord(coords, origin)
   for (const hop of tokens) {
     const hopUnit = unitForHopPrefix(units, hop)
     if (hopUnit) pushCoord(coords, unitLonLat(hopUnit))

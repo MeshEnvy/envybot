@@ -8,6 +8,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Fleet map active path includes the leg from the ingestor pin to the first hop.
 - Fleet re-fetches firmware version, bootloader, and `ota self` every 7 days.
   Those GETs used to stop after the first successful stamp.
 - Fleet neighbor rows and map edges age from now. Radio `secs_ago` is seconds
