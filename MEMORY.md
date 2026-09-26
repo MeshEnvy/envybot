@@ -114,8 +114,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   still shows advert or flood advert on. Name or GPS is not an advert.
   A last-seen interval older than the apply stamp is ignored. Poll default: status/telemetry every 1h
   (`--min-interval`); neighbors and OTA (`ota status` + delayed `ota ls`)
-  stay 24h (`discover.neighbors` + wait + GET; UI drops a neighbor when
-  radio `secs_ago` plus time since that pull is over 7d from now). `Unknown command` on any OTA CLI pins `ota` / `ota_status` /
+  stay 24h (`discover.neighbors` + wait + GET; sooner, after 1h, when no
+  hear is still inside 7d from now). UI drops a neighbor when
+  radio `secs_ago` plus time since that pull is over 7d from now. `Unknown command` on any OTA CLI pins `ota` / `ota_status` /
   `ota_ls` to that `firmware_version` (no refresh until `ver` changes).
   Long-running fleet re-checks due groups about every 60s
   while idle, and after each swim-lane batch (so apply-due units

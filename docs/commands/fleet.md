@@ -57,7 +57,7 @@ sites until names are shortened.
 |------|--------|------|
 | periodic | `status`, `telemetry` | `--min-interval` (default 1h) |
 | periodic | `ota_status`, `ota_ls` | 24h (`ota status` + delayed `ota ls`). Skip after `Unknown command` until firmware changes |
-| periodic | `neighbors` | 24h (`discover.neighbors` + wait + GET) |
+| periodic | `neighbors` | 24h, or 1h when no hear is still inside 7 days |
 | inventory | `firmware`, `bootloader`, `ota` | 7d (`ver`, bootloader, `ota self` base hash) |
 | audit | `name`, `lat`, `lon`, `advert`, `flood_advert`, `acl` | weekly when stamped; **Pull** or `--group` forces now (3 attempts max) |
 
@@ -70,7 +70,8 @@ Firmware has no TTL, so ghosts stay in sqlite history.
 A long-running `fleet` (not `--once`) re-checks due groups about every 60s
 while idle, and after each swim-lane batch so a missing profile can SET
 while other units are still GETting. No extra radio traffic unless
-status/telemetry is ≥1h stale, OTA/neighbors ≥24h, or apply is due. UI
+status/telemetry is ≥1h stale, OTA ≥24h, neighbors are ≥24h or the stored
+table has no hear inside 7 days (then 1h), or apply is due. UI
 freshness stays 24h.
 
 Default runs never GET sticky identity fields unless the weekly audit

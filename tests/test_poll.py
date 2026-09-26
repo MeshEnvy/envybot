@@ -226,6 +226,42 @@ class PollCadenceTests(unittest.TestCase):
             self.assertFalse(group_is_due(seen, "ota", policy=policy, now=now + 86400))
             self.assertTrue(group_is_due(seen, "ota", policy=policy, now=now + 8 * 86400))
 
+    def test_neighbors_due_early_when_none_fresh(self) -> None:
+        from envybot.poll import due_groups
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            now = 1_700_000_000
+            policy = PollPolicy()
+            stale = [{"pubkey": "ab" * 8, "secs_ago": 8 * 86400, "snr": 1}]
+            fresh = [{"pubkey": "cd" * 8, "secs_ago": 30, "snr": 1}]
+            record_poll(
+                conn,
+                unit="me0001",
+                res=_Res(neighbors=stale, polled_groups=frozenset({"neighbors"})),
+                ts=now - 2 * 3600,
+            )
+            due = due_groups(conn, "me0001", policy=policy, now=now)
+            self.assertIn("neighbors", due)
+
+            record_poll(
+                conn,
+                unit="me0001",
+                res=_Res(neighbors=stale, polled_groups=frozenset({"neighbors"})),
+                ts=now - 60,
+            )
+            due = due_groups(conn, "me0001", policy=policy, now=now)
+            self.assertNotIn("neighbors", due)
+
+            record_poll(
+                conn,
+                unit="me0001",
+                res=_Res(neighbors=fresh, polled_groups=frozenset({"neighbors"})),
+                ts=now - 2 * 3600,
+            )
+            due = due_groups(conn, "me0001", policy=policy, now=now)
+            self.assertNotIn("neighbors", due)
+
 
 class TrustStampTests(unittest.TestCase):
     def test_stamp_after_trust_when_reconciled(self) -> None:

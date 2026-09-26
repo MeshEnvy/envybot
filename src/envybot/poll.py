@@ -293,6 +293,36 @@ def group_interval(group: str, policy: PollPolicy) -> float:
     return policy.min_interval
 
 
+# Idle recheck is ~60s. A unit with no fresh neighbors must not rediscover
+# on every pass. One hour is sooner than the 24h neighbor cadence.
+NEIGHBOR_EMPTY_RETRY_S = 3600.0
+
+
+def neighbors_lack_fresh(conn: sqlite3.Connection, unit: str, *, now: int) -> bool:
+    """True when the latest neighbor GET has no hear still inside 7 days.
+
+    Age is ``secs_ago`` at GET plus time since that pull. A pull newer than
+    ``NEIGHBOR_EMPTY_RETRY_S`` does not count, so a still-empty result waits
+    an hour instead of queueing again immediately.
+    """
+    from envybot.history import latest_neighbors
+    from envybot.web.snapshot import neighbor_age_secs, neighbor_is_fresh
+
+    pulled = latest_neighbors(conn, unit)
+    if pulled is None:
+        return False
+    ts, rows = pulled
+    if now - ts < NEIGHBOR_EMPTY_RETRY_S:
+        return False
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        age = neighbor_age_secs(item.get("secs_ago"), pulled_at=ts, now=now)
+        if neighbor_is_fresh(age):
+            return False
+    return True
+
+
 def due_groups(
     conn: sqlite3.Connection,
     unit: str,
@@ -307,6 +337,10 @@ def due_groups(
             group
             for group in GET_GROUP_ORDER
             if group_is_due(seen, group, policy=policy, now=now)
+            or (
+                group == "neighbors"
+                and neighbors_lack_fresh(conn, unit, now=now)
+            )
         ],
         seen,
     )

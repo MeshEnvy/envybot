@@ -8,6 +8,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Fleet neighbor GET is due after 1 hour when the stored table has no hear
+  still inside 7 days, instead of waiting out the 24-hour cadence.
 - Fleet map active path includes the leg from the ingestor pin to the first hop.
 - Fleet re-fetches firmware version, bootloader, and `ota self` every 7 days.
   Those GETs used to stop after the first successful stamp.
