@@ -199,7 +199,7 @@ def build_pubkey_index(nodes: dict[str, Any]) -> dict[str, str]:
 
 
 def neighbor_is_fresh(secs_ago: Any, *, max_age: float = NEIGHBOR_FRESH_SECS) -> bool:
-    """True when the node's last-heard age is known and within the UI window."""
+    """True when age-from-now is known and within the UI window."""
     if secs_ago is None:
         return False
     try:
@@ -209,6 +209,37 @@ def neighbor_is_fresh(secs_ago: Any, *, max_age: float = NEIGHBOR_FRESH_SECS) ->
     if age < 0:
         return True
     return age <= max_age
+
+
+def neighbor_age_secs(
+    secs_ago: Any,
+    *,
+    pulled_at: Any = None,
+    now: int | None = None,
+) -> float | None:
+    """Seconds since the radio heard this neighbor, as of ``now``.
+
+    The repeater reports ``secs_ago`` at GET time (its clock minus
+    ``heard_timestamp``). Add elapsed time since that pull so the 7-day
+    window is measured from now, not from the snapshot.
+    """
+    if secs_ago is None:
+        return None
+    try:
+        age = float(secs_ago)
+    except (TypeError, ValueError):
+        return None
+    if age < 0:
+        age = 0.0
+    if pulled_at is None or now is None:
+        return age
+    try:
+        elapsed = int(now) - int(pulled_at)
+    except (TypeError, ValueError):
+        return age
+    if elapsed > 0:
+        age += elapsed
+    return age
 
 
 def reported_locs_from_contacts(contacts: Any) -> dict[str, tuple[float, float]]:
@@ -307,6 +338,8 @@ def sanitize_neighbors(
     pubkey_index: dict[str, str],
     nodes: dict[str, Any],
     sites: dict[str, dict[str, Any]],
+    pulled_at: Any = None,
+    now: int | None = None,
 ) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
@@ -317,12 +350,13 @@ def sanitize_neighbors(
         pk = str(item.get("pubkey") or "").lower()
         if not pk:
             continue
-        if not neighbor_is_fresh(item.get("secs_ago")):
+        age = neighbor_age_secs(item.get("secs_ago"), pulled_at=pulled_at, now=now)
+        if not neighbor_is_fresh(age):
             continue
         prefix = pk[:8] if len(pk) >= 8 else pk
         row: dict[str, Any] = {
             "pubkey_prefix": prefix,
-            "secs_ago": item.get("secs_ago"),
+            "secs_ago": int(age) if age is not None else None,
             "snr": item.get("snr"),
         }
         resolved = pubkey_index.get(pk) or pubkey_index.get(prefix)
@@ -528,7 +562,17 @@ def sanitize_unit(
             tele_src.append({"type": "temperature", "value": seen.get("temperature")})
     tele = extract_telemetry(tele_src or None)
     status = build_unit_status(seen, status_raw)
-    nbs = neighbors_raw if neighbors_raw is not None else node.get("neighbors")
+    neighbors_pulled_at = None
+    if isinstance(neighbors_raw, dict) and "payload" in neighbors_raw:
+        nbs = neighbors_raw.get("payload")
+        neighbors_pulled_at = neighbors_raw.get("ts")
+    elif neighbors_raw is not None:
+        nbs = neighbors_raw
+    else:
+        nbs = node.get("neighbors")
+        neighbors_pulled_at = node.get("neighbors_pulled_at")
+        if neighbors_pulled_at is None and seen:
+            neighbors_pulled_at = seen.get("neighbors_at")
     bind = site_binding(key, node, sites)
     site_slug = bind[0] if bind else None
     site_name = lookup_site_name(site_slug, sites) if site_slug else None
@@ -584,6 +628,8 @@ def sanitize_unit(
             pubkey_index=pubkey_index,
             nodes=nodes,
             sites=sites,
+            pulled_at=neighbors_pulled_at,
+            now=now,
         ),
         "neighbor_count": len(nbs or []) if isinstance(nbs, list) else 0,
         "acl_count": None,
@@ -662,9 +708,10 @@ def build_fleet_snapshot(
         for key in nodes:
             if not key_in_unit_filter(key, include=include, skip=skip):
                 continue
-            nbs = latest_neighbors(conn, key)
-            if nbs is not None:
-                neighbors_map[key] = nbs
+            pulled = latest_neighbors(conn, key)
+            if pulled is not None:
+                pulled_ts, nbs = pulled
+                neighbors_map[key] = {"ts": pulled_ts, "payload": nbs}
             ota = latest_ota(conn, key)
             if ota is not None:
                 ota_map[key] = ota

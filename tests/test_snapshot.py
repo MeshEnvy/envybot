@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from envybot.web.snapshot import (
     build_fleet_snapshot,
     drift_state,
     is_secret_key,
+    neighbor_age_secs,
     neighbor_is_fresh,
     reported_locs_from_contacts,
     resolve_position,
@@ -129,6 +131,7 @@ class SnapshotTests(unittest.TestCase):
                             "neighbors": [
                                 {"pubkey": ("b" * 8) + "00", "secs_ago": 10, "snr": 5.0},
                             ],
+                            "neighbors_pulled_at": int(time.time()),
                             "acl": [{"key": "abcd1234", "perm": 1}],
                         },
                         "me0002": {
@@ -634,6 +637,46 @@ class NeighborFreshTests(unittest.TestCase):
         ]
         out = sanitize_neighbors(raw, pubkey_index=index, nodes=nodes, sites={})
         self.assertEqual([n["unit_key"] for n in out], ["me0002"])
+
+    def test_age_is_from_now(self) -> None:
+        now = 1_700_000_000
+        pulled_at = now - 8 * 24 * 3600
+        age = neighbor_age_secs(30, pulled_at=pulled_at, now=now)
+        self.assertFalse(neighbor_is_fresh(age))
+        fresh = neighbor_age_secs(30, pulled_at=now - 3600, now=now)
+        self.assertEqual(fresh, 3630)
+        self.assertTrue(neighbor_is_fresh(fresh))
+
+    def test_sanitize_drops_stale_pull(self) -> None:
+        nodes = {
+            "me0002": {"unit_id": "ME0002", "name": "Live"},
+            "me0003": {"unit_id": "ME0003", "name": "Old"},
+        }
+        index = {"b" * 8: "me0002", "c" * 8: "me0003"}
+        now = 1_700_000_000
+        raw = [
+            {"pubkey": "b" * 16, "secs_ago": 30, "snr": 11.0},
+            {"pubkey": "c" * 16, "secs_ago": 30, "snr": 12.0},
+        ]
+        out = sanitize_neighbors(
+            raw,
+            pubkey_index=index,
+            nodes=nodes,
+            sites={},
+            pulled_at=now - 8 * 24 * 3600,
+            now=now,
+        )
+        self.assertEqual(out, [])
+        kept = sanitize_neighbors(
+            [raw[0]],
+            pubkey_index=index,
+            nodes=nodes,
+            sites={},
+            pulled_at=now - 3600,
+            now=now,
+        )
+        self.assertEqual(kept[0]["unit_key"], "me0002")
+        self.assertEqual(kept[0]["secs_ago"], 3630)
 
 
 class NeighborMilesTests(unittest.TestCase):

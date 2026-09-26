@@ -452,9 +452,10 @@ def get_last_seen(conn: sqlite3.Connection, unit: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
-def latest_neighbors(conn: sqlite3.Connection, unit: str) -> list[Any] | None:
+def latest_neighbors(conn: sqlite3.Connection, unit: str) -> tuple[int, list[Any]] | None:
+    """Latest neighbor table and the unix time it was pulled."""
     row = conn.execute(
-        "SELECT payload FROM neighbors WHERE unit = ? ORDER BY ts DESC LIMIT 1",
+        "SELECT ts, payload FROM neighbors WHERE unit = ? ORDER BY ts DESC LIMIT 1",
         (unit,),
     ).fetchone()
     if not row:
@@ -463,7 +464,13 @@ def latest_neighbors(conn: sqlite3.Connection, unit: str) -> list[Any] | None:
         data = json.loads(row["payload"])
     except json.JSONDecodeError:
         return None
-    return data if isinstance(data, list) else None
+    if not isinstance(data, list):
+        return None
+    try:
+        ts = int(row["ts"])
+    except (TypeError, ValueError):
+        return None
+    return ts, data
 
 
 def latest_ota(conn: sqlite3.Connection, unit: str) -> dict[str, Any] | None:
@@ -1931,10 +1938,15 @@ def import_yaml_last_seen(conn: sqlite3.Connection, nodes: dict[str, Any]) -> in
                 (now, key, json.dumps(node["acl"], default=str)),
             )
         if isinstance(node.get("neighbors"), list):
-            fields["neighbors_at"] = node.get("neighbors_pulled_at") or now
+            nb_ts = node.get("neighbors_pulled_at") or now
+            try:
+                nb_ts = int(nb_ts)
+            except (TypeError, ValueError):
+                nb_ts = now
+            fields["neighbors_at"] = nb_ts
             conn.execute(
                 "INSERT INTO neighbors (ts, unit, payload) VALUES (?, ?, ?)",
-                (now, key, json.dumps(node["neighbors"], default=str)),
+                (nb_ts, key, json.dumps(node["neighbors"], default=str)),
             )
         if len(fields) > 1:
             _upsert_last_seen(conn, key, fields)

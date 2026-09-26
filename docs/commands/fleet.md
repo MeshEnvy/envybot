@@ -63,8 +63,9 @@ sites until names are shortened.
 
 Neighbors: remote `discover.neighbors` (zero-hop CTL) then `GET_NEIGHBOURS`.
 `--no-discover` skips the search. `--discover-wait SEC` changes the listen
-window (default 12). The UI hides rows older than 7 days. Firmware has no
-TTL, so ghosts stay in sqlite history.
+window (default 12). The UI hides a neighbor when the hear is older than
+7 days from now: radio `secs_ago` at GET, plus time since that pull.
+Firmware has no TTL, so ghosts stay in sqlite history.
 
 A long-running `fleet` (not `--once`) re-checks due groups about every 60s
 while idle, and after each swim-lane batch so a missing profile can SET

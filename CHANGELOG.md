@@ -8,6 +8,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Fleet neighbor rows and map edges age from now. Radio `secs_ago` is seconds
+  before the GET; the UI adds time since that pull and hides hears older than
+  7 days.
 - Fleet dashboard **Active** list filter means not paused; **In flight** is the
   former Active filter (queued or on the radio).
 - Fleet detail **Active** toggle (on = auto poll/apply; off = paused). Replaces
