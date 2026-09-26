@@ -86,7 +86,7 @@ import {
   unitStage,
   unitStageLine,
   unitStatus,
-} from "./map.js?v=33";
+} from "./map.js?v=34";
 import {
   seriesFromHistories,
   seriesFromPolls,
@@ -443,6 +443,20 @@ const App = {
       const state = s && typeof s === "object" && "state" in s ? s.state : null;
       if (state === "queued") return false;
       return isInFlight(unit) || state === "console";
+    }
+
+    /** @param {Record<string, unknown> | undefined} unit */
+    function syncRefreshClasses(unit) {
+      if (isOnAir(unit)) return { "on-air": true };
+      if (isInFlight(unit)) return { queued: true };
+      return {};
+    }
+
+    /** @param {Record<string, unknown> | undefined} unit */
+    function syncGlyph(unit) {
+      if (isOnAir(unit)) return "↻";
+      if (isInFlight(unit)) return "⏳";
+      return "↻";
     }
 
     /** @param {Record<string, unknown> | undefined} unit @param {'refresh' | 'pull' | 'deploy'} [job] */
@@ -1694,6 +1708,67 @@ const App = {
       return "Apply stamped";
     }
 
+    /** Header chips: only prefs that need operator attention (Profile holds the rest). */
+    function headerPrefs(unit) {
+      const prefs = unit?.prefs;
+      if (!Array.isArray(prefs)) return [];
+      return prefs.filter((p) => p && (p.state === "due" || p.state === "blocked"));
+    }
+
+    const PROFILE_SECTION_HINT =
+      "Click a value to edit the book. Revert restores the value from when you opened this card. Dirty rows need Sync or Full sync to reach the radio.";
+
+    const PROFILE_GROUP_ACCESS = new Set(["acl", "admin", "guest"]);
+    const PROFILE_GROUP_ADVERT = new Set(["name", "lat", "lon", "owner"]);
+
+    /** @param {Record<string, unknown>} unit */
+    function profileVisibleRows(unit) {
+      const profile = unit?.profile;
+      if (!Array.isArray(profile)) return [];
+      return profile.filter((r) => r && r.id !== "paused" && r.id !== "full_sync_interval");
+    }
+
+    /** @param {Record<string, unknown>} row */
+    function profileRowGroupId(row) {
+      const id = String(row.id);
+      if (PROFILE_GROUP_ACCESS.has(id)) return "access";
+      if (PROFILE_GROUP_ADVERT.has(id)) return "advert";
+      return "radio";
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function profileGroups(unit) {
+      const spec = [
+        { id: "radio", label: "Radio" },
+        { id: "advert", label: "Advert" },
+        { id: "access", label: "Access" },
+      ];
+      const rows = profileVisibleRows(unit);
+      return spec
+        .map((g) => ({ ...g, rows: rows.filter((r) => profileRowGroupId(r) === g.id) }))
+        .filter((g) => g.rows.length > 0);
+    }
+
+    /** @param {Record<string, unknown>} row */
+    function profileLabelClass(row) {
+      const span = profileAclTableRow(row);
+      return {
+        "profile-label-span": span,
+        "profile-row-due": row.state === "due",
+      };
+    }
+
+    /** @param {Record<string, unknown>} row */
+    function profileValueClass(row) {
+      return {
+        "profile-acl-cell": profileAclTableRow(row),
+        "profile-row-saving": profileRowSaving(row.id),
+        "profile-value-span": profileAclTableRow(row),
+        "profile-value--mono": row.id === "lat" || row.id === "lon",
+        "profile-value--owner": row.id === "owner",
+      };
+    }
+
     function profileRowTitle(row) {
       if (!row) return "";
       if (row.note) return row.note;
@@ -2281,7 +2356,7 @@ const App = {
       return String(lr.label || "unknown");
     }
 
-    /** Display mode: hop names + (hex), one per line; flood/direct stay short. */
+    /** Inline path: names or bare hex, arrow-separated. */
     function liveRouteDisplay(unit) {
       const lr = unit.live_route;
       if (!lr || typeof lr !== "object") return "unknown";
@@ -2295,18 +2370,59 @@ const App = {
       return hops
         .map((h) => {
           const name = byPrefix.get(h);
-          return name ? `${name} (${h})` : `(${h})`;
+          return name || h;
         })
-        .join("\n");
+        .join(" → ");
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function liveRouteHopParts(unit) {
+      const hops = routeHopHashes(unit);
+      const byPrefix = routePrefixNameMap();
+      return hops.map((h) => {
+        const name = byPrefix.get(h);
+        return {
+          hex: h,
+          text: name || h,
+          title: name ? `${name} (${h})` : h,
+        };
+      });
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function liveRouteIsHopList(unit) {
+      const lr = unit.live_route;
+      if (lr && typeof lr === "object" && (lr.kind === "flood" || lr.kind === "direct")) {
+        return false;
+      }
+      return routeHopHashes(unit).length > 0;
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function liveRouteShortLabel(unit) {
+      const lr = unit.live_route;
+      if (!lr || typeof lr !== "object") return "unknown";
+      if (lr.kind === "flood") {
+        return lr.fallback ? "flood · discovering" : "flood";
+      }
+      if (lr.kind === "direct") return "direct";
+      return liveRouteLabel(unit);
+    }
+
+    /** @param {Record<string, unknown>} unit */
+    function routeModeSelectTitle(unit) {
+      const mode = unitRoutingMode(unit);
+      if (mode === "auto") {
+        return "Uses the companion hop cache. Empty cache flood-discovers on the next send.";
+      }
+      if (mode === "path") return "Send via the book hop list on every request.";
+      if (mode === "direct") return "Zero-hop direct on every send.";
+      if (mode === "flood") return "Always flood. High airtime on every send.";
+      return "Route mode";
     }
 
     function liveRouteDisplayClass(unit) {
-      const base = liveRouteBadgeClass(unit);
-      const lr = unit.live_route;
-      if (lr && typeof lr === "object" && lr.kind === "hops" && routeHopHashes(unit).length) {
-        return `${base} live-route-hops-display`;
-      }
-      return base;
+      return liveRouteBadgeClass(unit);
     }
 
     /** @param {Record<string, unknown>} unit */
@@ -2731,6 +2847,8 @@ const App = {
       unitStageDisplay,
       isInFlight,
       isOnAir,
+      syncRefreshClasses,
+      syncGlyph,
       sessionBadgeTitle,
       healthHeadline,
       healthMark,
@@ -2743,6 +2861,12 @@ const App = {
       cardShowNodeId,
       cardOtaLabel,
       prefBadgeTitle,
+      headerPrefs,
+      PROFILE_SECTION_HINT,
+      profileVisibleRows,
+      profileGroups,
+      profileLabelClass,
+      profileValueClass,
       cardVoltage,
       cardTraffic,
       cardTemp,
@@ -2853,6 +2977,10 @@ const App = {
       liveRouteLabel,
       liveRouteDisplay,
       liveRouteDisplayClass,
+      liveRouteHopParts,
+      liveRouteIsHopList,
+      liveRouteShortLabel,
+      routeModeSelectTitle,
       liveRouteTitle,
       liveRouteBadgeClass,
       routeEditing,
@@ -3083,13 +3211,13 @@ const App = {
                 v-if="manualAccepting"
                 type="button"
                 class="unit-refresh"
-                :class="{ spinning: isInFlight(unit) }"
+                :class="syncRefreshClasses(unit)"
                 :disabled="!canManualUnit(unit, 'sync')"
                 :title="isInFlight(unit) ? unitStageDisplay(unit) : 'Sync'"
                 :aria-label="isInFlight(unit) ? unitStageDisplay(unit) : 'Sync'"
                 @click.stop="runManualJob(unit, 'sync', $event)"
               >
-                <span class="unit-refresh-icon" aria-hidden="true">↻</span>
+                <span class="unit-refresh-icon" aria-hidden="true">{{ syncGlyph(unit) }}</span>
               </button>
             </div>
           </div>
@@ -3212,13 +3340,13 @@ const App = {
                 v-if="manualAccepting"
                 type="button"
                 class="unit-refresh"
-                :class="{ spinning: isInFlight(selectedUnit) }"
+                :class="syncRefreshClasses(selectedUnit)"
                 :disabled="!canManualUnit(selectedUnit, 'sync')"
                 :title="isInFlight(selectedUnit) ? unitStageDisplay(selectedUnit) : 'Sync book changes to radio'"
                 :aria-label="isInFlight(selectedUnit) ? unitStageDisplay(selectedUnit) : 'Sync'"
                 @click="runManualJob(selectedUnit, 'sync', $event)"
               >
-                <span class="unit-refresh-icon" aria-hidden="true">↻</span>
+                <span class="unit-refresh-icon" aria-hidden="true">{{ syncGlyph(selectedUnit) }}</span>
               </button>
               <div v-if="manualAccepting" class="full-sync-control">
                 <button
@@ -3256,9 +3384,9 @@ const App = {
             · {{ formatRelative(selectedUnit.last_heard, fleet.now) }}
             <span v-if="selectedUnit.drift"> · {{ selectedUnit.drift }}</span>
           </p>
-          <p v-if="selectedUnit.prefs?.length" class="pref-line">
+          <p v-if="headerPrefs(selectedUnit).length" class="pref-line pref-line-exceptions">
             <span
-              v-for="pref in selectedUnit.prefs"
+              v-for="pref in headerPrefs(selectedUnit)"
               :key="pref.id"
               class="pref-badge"
               :class="'pref-' + pref.state"
@@ -3266,43 +3394,70 @@ const App = {
             >{{ pref.label }} {{ pref.value }}</span>
           </p>
           <section class="route-section">
-            <div class="route-mode-row">
-              <span class="book-field-label">Route</span>
-              <select
-                class="route-mode-select"
-                :value="unitRoutingMode(selectedUnit)"
-                aria-label="Route mode"
-                @change="onRouteModeChange(selectedUnit, $event)"
-              >
-                <option value="auto">Auto</option>
-                <option value="path">Path</option>
-                <option value="direct">Direct</option>
-                <option value="flood">Flood</option>
-              </select>
+            <div v-if="routeEditing" class="live-route-editor">
+              <textarea
+                ref="routeTextarea"
+                v-model="routeDraft"
+                class="live-route-textarea"
+                rows="5"
+                spellcheck="false"
+                placeholder="fe3b dd4d 3211 (or paste a fleet log; names ignored)"
+              ></textarea>
+              <p class="live-route-hint">
+                Saved in the book. Paste a known-good log dump, not a stale cache.
+              </p>
+              <p v-if="routeError" class="live-route-error">{{ routeError }}</p>
+              <div class="live-route-actions">
+                <button
+                  type="button"
+                  class="manual-btn"
+                  :disabled="routeSaving || !routeDraft.trim()"
+                  @click="saveRoutePaste(selectedUnit)"
+                >
+                  Save path
+                </button>
+                <button type="button" class="manual-btn" :disabled="routeSaving" @click="cancelRouteEdit">
+                  Cancel
+                </button>
+              </div>
             </div>
-            <p v-if="unitRoutingMode(selectedUnit) === 'flood'" class="routing-policy-warning">
-              Always flood. High airtime on every send.
-            </p>
-            <p v-else-if="unitRoutingMode(selectedUnit) === 'direct'" class="live-route-hint">
-              Zero-hop on every send.
-            </p>
-            <p v-else-if="unitRoutingMode(selectedUnit) === 'auto'" class="live-route-hint">
-              Uses the companion hop cache. Empty cache flood-discovers on the next send.
-            </p>
-            <div v-if="routeDisplayVisible(selectedUnit)" class="live-route-line">
-              <template v-if="!routeEditing">
-                <div class="live-route-display">
+            <template v-else>
+              <div class="route-toolbar">
+                <span class="book-field-label">Route</span>
+                <select
+                  class="route-mode-select"
+                  :value="unitRoutingMode(selectedUnit)"
+                  :title="routeModeSelectTitle(selectedUnit)"
+                  aria-label="Route mode"
+                  @change="onRouteModeChange(selectedUnit, $event)"
+                >
+                  <option value="auto">Auto</option>
+                  <option value="path">Path</option>
+                  <option value="direct">Direct</option>
+                  <option value="flood">Flood</option>
+                </select>
+                <div v-if="routeDisplayVisible(selectedUnit)" class="live-route-path">
                   <button
                     type="button"
-                    class="live-route-edit-trigger"
+                    class="live-route-edit-trigger live-route-path-trigger"
                     :class="{ 'is-readonly': !routeEditable(selectedUnit) }"
                     :title="liveRouteTitle(selectedUnit) + (routeEditable(selectedUnit) ? ' · click to edit' : '')"
                     :disabled="!routeEditable(selectedUnit)"
                     @click="openRouteEdit(selectedUnit)"
                   >
-                    <span :class="liveRouteDisplayClass(selectedUnit)">
-                      {{ liveRouteDisplay(selectedUnit) }}
-                    </span>
+                    <template v-if="liveRouteIsHopList(selectedUnit)">
+                      <span
+                        v-for="(hop, idx) in liveRouteHopParts(selectedUnit)"
+                        :key="hop.hex + '-' + idx"
+                        class="live-route-hop-wrap"
+                      >
+                        <span v-if="idx > 0" class="live-route-arrow" aria-hidden="true">→</span>
+                        <span class="live-route-hop" :title="hop.title">{{ hop.text }}</span>
+                      </span>
+                    </template>
+                    <span v-else :class="liveRouteDisplayClass(selectedUnit)">{{
+                      liveRouteShortLabel(selectedUnit)
+                    }}</span>
                   </button>
                   <button
                     v-if="canCopyRoute(selectedUnit)"
@@ -3322,35 +3477,14 @@ const App = {
                     </svg>
                   </button>
                 </div>
-              </template>
-              <div v-else class="live-route-editor">
-                <textarea
-                  ref="routeTextarea"
-                  v-model="routeDraft"
-                  class="live-route-textarea"
-                  rows="5"
-                  spellcheck="false"
-                  placeholder="fe3b dd4d 3211 (or paste a fleet log; names ignored)"
-                ></textarea>
-                <p class="live-route-hint">
-                  Saved in the book. Paste a known-good log dump, not a stale cache.
-                </p>
-                <p v-if="routeError" class="live-route-error">{{ routeError }}</p>
-                <div class="live-route-actions">
-                  <button
-                    type="button"
-                    class="manual-btn"
-                    :disabled="routeSaving || !routeDraft.trim()"
-                    @click="saveRoutePaste(selectedUnit)"
-                  >
-                    Save path
-                  </button>
-                  <button type="button" class="manual-btn" :disabled="routeSaving" @click="cancelRouteEdit">
-                    Cancel
-                  </button>
-                </div>
               </div>
-            </div>
+              <p v-if="unitRoutingMode(selectedUnit) === 'flood'" class="routing-policy-warning">
+                Always flood. High airtime on every send.
+              </p>
+              <p v-else-if="unitRoutingMode(selectedUnit) === 'direct'" class="live-route-hint">
+                Zero-hop on every send.
+              </p>
+            </template>
           </section>
           <section class="book-edit">
             <label class="book-field">
@@ -3478,17 +3612,13 @@ const App = {
               </div>
             </div>
           </section>
-          <section v-if="selectedUnit.profile?.length" class="profile-section">
-            <h3>Profile</h3>
-            <p class="profile-hint">
-              Click a value to edit the book. Revert restores the value from when you opened this card. Dirty rows need Sync or Full sync to reach the radio.
-            </p>
-            <dl class="profile-grid">
-              <template
-                v-for="row in selectedUnit.profile.filter((r) => r.id !== 'paused' && r.id !== 'full_sync_interval')"
-                :key="row.id"
-              >
-                <dt class="profile-label">
+          <section v-if="profileVisibleRows(selectedUnit).length" class="profile-section">
+            <h3 :title="PROFILE_SECTION_HINT">Profile</h3>
+            <div v-for="group in profileGroups(selectedUnit)" :key="group.id" class="profile-group">
+              <p class="book-field-label profile-group-label">{{ group.label }}</p>
+              <dl class="profile-grid">
+                <template v-for="row in group.rows" :key="row.id">
+                <dt class="profile-label" :class="profileLabelClass(row)">
                   <span
                     v-if="row.state === 'due'"
                     class="profile-label-due-mark"
@@ -3497,16 +3627,17 @@ const App = {
                   >⚠</span>{{ row.label }}
                 </dt>
                 <dd
-                  :class="[
-                    'profile-value',
-                    profileAclTableRow(row) ? 'profile-acl-cell' : '',
-                    profileRowSaving(row.id) ? 'profile-row-saving' : '',
-                  ]"
+                  class="profile-value"
+                  :class="profileValueClass(row)"
                   :title="profileRowTitle(row) + (row.editable && row.kind !== 'bool' ? ' · click to edit' : '')"
                   :data-profile-edit="profileEditingId === row.id ? row.id : null"
                 >
                   <template v-if="row.kind === 'bool' && row.editable">
-                    <label class="book-toggle profile-bool" :class="{ 'is-disabled': profileRowSaving(row.id) }">
+                    <label
+                      class="book-toggle profile-bool"
+                      :class="{ 'is-disabled': profileRowSaving(row.id) }"
+                      :aria-label="row.label + ': ' + (profileBoolChecked(row) ? 'on' : 'off')"
+                    >
                       <input
                         type="checkbox"
                         :checked="profileBoolChecked(row)"
@@ -3514,7 +3645,6 @@ const App = {
                         @change="saveProfileBool(selectedUnit, row, $event.target.checked)"
                       />
                       <span class="switch" aria-hidden="true"></span>
-                      {{ profileBoolChecked(row) ? 'on' : 'off' }}
                     </label>
                   </template>
                   <template v-else-if="row.id === 'acl' && !profileAclTableRow(row)">
@@ -3678,8 +3808,9 @@ const App = {
                     Revert
                   </button>
                 </dd>
-              </template>
-            </dl>
+                </template>
+              </dl>
+            </div>
           </section>
           <section class="ota-section">
             <h3>Firmware</h3>

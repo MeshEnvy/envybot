@@ -21,6 +21,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 - Fleet neighbor GET is on the same 1h live interval as status and
   telemetry (`--min-interval`). Sync and auto poll both run it first after
   login. The 24h neighbor cadence is gone.
+- Fleet detail card: one-row route, grouped profile, due/blocked pref chips
+  only in the header. Full sync button no longer wraps.
+- Sync control: hourglass while queued, spinning refresh only when the
+  radio is on that unit. Map keeps a static highlight for the selected
+  route and animates dashes only on the path in use while polling.
 - Fleet map active path includes the leg from the ingestor pin to the first hop.
 - Fleet re-fetches firmware version, bootloader, and `ota self` every 7 days.
   Those GETs used to stop after the first successful stamp.

@@ -98,32 +98,21 @@ function ingestorLonLat(fleet) {
 }
 
 /**
- * Line coordinates for the path in use or being waited on.
- * Starts at the ingestor (companion) pin, then each mapped hop, then the target.
- * Skips hop prefixes with no mapped fleet unit.
- *
  * @param {Record<string, unknown>} fleet
- * @param {string | null} selectedKey
+ * @param {string} unitKey
+ * @param {{ includeBusyDirect?: boolean, includeFindingDirect?: boolean }} [opts]
+ * @returns {number[][] | null}
  */
-export function buildActivePath(fleet, selectedKey) {
-  const poll = /** @type {Record<string, unknown>} */ (fleet.poll || {})
-  const phase = String(poll.phase || 'idle')
-  const pollBusy = phase !== 'idle' && phase !== 'done' && phase !== 'watch'
-  const pollUnit = pollBusy && typeof poll.unit === 'string' ? poll.unit : null
-  const focusKey = pollUnit || selectedKey
-  if (!focusKey) return null
-
+function pathCoordinatesForUnit(fleet, unitKey, opts = {}) {
+  const { includeBusyDirect = false, includeFindingDirect = false } = opts
   const units = /** @type {Record<string, Record<string, unknown>>} */ (fleet.units || {})
-  const unit = units[focusKey]
+  const unit = units[unitKey]
   if (!unit) return null
 
   const tokens = routeHopTokens(unit)
   const lr = unit.live_route
   const finding =
-    lr &&
-    typeof lr === 'object' &&
-    lr.kind === 'flood' &&
-    !!lr.fallback
+    lr && typeof lr === 'object' && lr.kind === 'flood' && !!lr.fallback
   const session = unit.session
   const sessionState =
     session && typeof session === 'object' && typeof session.state === 'string'
@@ -137,18 +126,22 @@ export function buildActivePath(fleet, selectedKey) {
     'pulling',
   ].includes(sessionState)
 
-  if (!tokens.length && (finding || sessionBusy) && hasMapPin(unit.position)) {
+  if (
+    !tokens.length &&
+    includeBusyDirect &&
+    (finding || sessionBusy) &&
+    hasMapPin(unit.position)
+  ) {
     const origin = ingestorLonLat(fleet)
-    if (origin) {
-      return {
-        unit: focusKey,
-        coordinates: [origin, unitLonLat(unit)],
-      }
-    }
+    if (origin) return [origin, unitLonLat(unit)]
   }
 
-  if (!tokens.length && !pollUnit && focusKey !== selectedKey) return null
-  if (!tokens.length && !finding && !sessionBusy) return null
+  if (!tokens.length && includeFindingDirect && finding && hasMapPin(unit.position)) {
+    const origin = ingestorLonLat(fleet)
+    if (origin) return [origin, unitLonLat(unit)]
+  }
+
+  if (!tokens.length) return null
 
   /** @type {number[][]} */
   const coords = []
@@ -161,7 +154,49 @@ export function buildActivePath(fleet, selectedKey) {
   if (hasMapPin(unit.position)) pushCoord(coords, unitLonLat(unit))
 
   if (coords.length < 2) return null
-  return { unit: focusKey, coordinates: coords }
+  return coords
+}
+
+/** @param {Record<string, unknown>} fleet @param {string | null} selectedKey */
+export function buildSelectedPath(fleet, selectedKey) {
+  if (!selectedKey) return null
+  const poll = /** @type {Record<string, unknown>} */ (fleet.poll || {})
+  const onAirKey =
+    String(poll.phase || '') === 'polling' && typeof poll.unit === 'string'
+      ? poll.unit
+      : null
+  if (onAirKey && selectedKey === onAirKey) return null
+  const coordinates = pathCoordinatesForUnit(fleet, selectedKey, {
+    includeFindingDirect: true,
+  })
+  if (!coordinates) return null
+  return { unit: selectedKey, coordinates }
+}
+
+/** @param {Record<string, unknown>} fleet */
+export function buildOnAirPath(fleet) {
+  const poll = /** @type {Record<string, unknown>} */ (fleet.poll || {})
+  if (String(poll.phase || '') !== 'polling' || typeof poll.unit !== 'string') {
+    return null
+  }
+  const unitKey = poll.unit
+  const coordinates = pathCoordinatesForUnit(fleet, unitKey, {
+    includeBusyDirect: true,
+    includeFindingDirect: true,
+  })
+  if (!coordinates) return null
+  return { unit: unitKey, coordinates }
+}
+
+/**
+ * Legacy helper: on-air path while polling, else selected static path.
+ * @param {Record<string, unknown>} fleet
+ * @param {string | null} selectedKey
+ */
+export function buildActivePath(fleet, selectedKey) {
+  const onAir = buildOnAirPath(fleet)
+  if (onAir) return onAir
+  return buildSelectedPath(fleet, selectedKey)
 }
 
 /** @param {Record<string, Record<string, unknown>> | undefined} units */
@@ -347,6 +382,21 @@ export function createMapController(containerId, onSelect, onClear) {
       },
     })
 
+    map.addSource('selected-path', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] },
+    })
+    map.addLayer({
+      id: 'selected-path',
+      type: 'line',
+      source: 'selected-path',
+      paint: {
+        'line-color': '#f4e27a',
+        'line-width': 4,
+        'line-opacity': 0.55,
+      },
+    })
+
     map.addSource('active-path', {
       type: 'geojson',
       data: { type: 'FeatureCollection', features: [] },
@@ -450,8 +500,10 @@ export function createMapController(containerId, onSelect, onClear) {
     }
     ensureLayers()
 
-    const active = buildActivePath(fleet, selectedKey)
-    const focusKey = active?.unit || null
+    const selected = buildSelectedPath(fleet, selectedKey)
+    const onAir = buildOnAirPath(fleet)
+    onAirPathVisible = !!(onAir && onAir.coordinates?.length >= 2)
+    const focusKey = onAir?.unit || selected?.unit || selectedKey || null
     const units = /** @type {Record<string, Record<string, unknown>>} */ (fleet.units || {})
     /** @type {GeoJSON.Feature[]} */
     const features = []
@@ -505,8 +557,26 @@ export function createMapController(containerId, onSelect, onClear) {
         })),
     })
 
+    const selectedSrc = /** @type {import('maplibre-gl').GeoJSONSource} */ (
+      map.getSource('selected-path')
+    )
+    const selectedCoords = Array.isArray(selected?.coordinates) ? selected.coordinates : []
+    selectedSrc.setData({
+      type: 'FeatureCollection',
+      features:
+        selectedCoords.length >= 2
+          ? [
+              {
+                type: 'Feature',
+                geometry: { type: 'LineString', coordinates: selectedCoords },
+                properties: {},
+              },
+            ]
+          : [],
+    })
+
     const activeSrc = /** @type {import('maplibre-gl').GeoJSONSource} */ (map.getSource('active-path'))
-    const activeCoords = Array.isArray(active?.coordinates) ? active.coordinates : []
+    const activeCoords = Array.isArray(onAir?.coordinates) ? onAir.coordinates : []
     activeSrc.setData({
       type: 'FeatureCollection',
       features:
@@ -558,9 +628,10 @@ export function createMapController(containerId, onSelect, onClear) {
   ]
   let dashStep = 0
   let rafId = 0
+  let onAirPathVisible = false
 
   function tickFocus() {
-    if (map.getLayer('active-path')) {
+    if (onAirPathVisible && map.getLayer('active-path')) {
       dashStep = (dashStep + 1) % dashSeq.length
       map.setPaintProperty('active-path', 'line-dasharray', dashSeq[dashStep])
     }
