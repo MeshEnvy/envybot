@@ -8,6 +8,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Fleet dashboard **Active** list filter means not paused; **In flight** is the
+  former Active filter (queued or on the radio).
 - Fleet detail **Active** toggle (on = auto poll/apply; off = paused). Replaces
   the inverted Pause switch.
 - Fleet map: unit pins are site GPS or optional node `loc` only. Unbound units

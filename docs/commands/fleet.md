@@ -323,8 +323,10 @@ List cards show the same primary label with unit id
 as secondary when it differs. While the companion worker is live, **Refresh** on a
 unit pulls live telemetry now; **Pull** also GETs fw/name/GPS/advert/acl;
 **Deploy** re-SETs the book profile (overrides `paused` and up-to-date skips).
-CLI `--skip` hides units from the dashboard. **Active** on the detail card turns
-auto poll/apply on or off (`paused: true` in the book when off). Route mode is
+CLI `--skip` hides units from the dashboard. Dashboard list filters: **Active**
+is every unit that is not paused (idle or queued). **In flight** is queued or
+on the companion radio now. **Active** on the detail card turns auto poll/apply
+on or off (`paused: true` in the book when off). Route mode is
 Auto (default) / Path / Direct / Flood on the detail card; list cards show live
 route and a danger badge when mode is flood.
 Sidebar rows fade and badge as paused. Rows with

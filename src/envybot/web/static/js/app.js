@@ -1249,6 +1249,10 @@ const App = {
     }
 
     const activeCount = computed(
+      () => Object.values(fleet.units || {}).filter((u) => !u.paused).length,
+    );
+
+    const inFlightCount = computed(
       () => Object.values(fleet.units || {}).filter(isInFlight).length,
     );
 
@@ -1267,7 +1271,8 @@ const App = {
     /** @param {Record<string, unknown>} unit */
     function matchesListFilter(unit) {
       const f = listFilter.value;
-      if (f === "active") return isInFlight(unit);
+      if (f === "active") return !unit.paused;
+      if (f === "in_flight") return isInFlight(unit);
       if (f === "attention") {
         const h = healthHeadline(unit, fleet.now);
         return h === "attention" || h === "unreachable";
@@ -1277,7 +1282,8 @@ const App = {
     }
 
     const listFilterEmpty = computed(() => {
-      if (listFilter.value === "active") return "Nothing in flight.";
+      if (listFilter.value === "active") return "No active units.";
+      if (listFilter.value === "in_flight") return "Nothing in flight.";
       if (listFilter.value === "attention") return "Nothing needs attention.";
       if (listFilter.value === "paused") return "No paused units.";
       return "No units.";
@@ -2704,6 +2710,7 @@ const App = {
       searchInput,
       listFilter,
       activeCount,
+      inFlightCount,
       attentionCount,
       pausedCount,
       listFilterEmpty,
@@ -2991,6 +2998,15 @@ const App = {
             @click="listFilter = 'active'"
           >
             Active{{ activeCount ? ' ' + activeCount : '' }}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            :class="{ on: listFilter === 'in_flight' }"
+            :aria-selected="listFilter === 'in_flight'"
+            @click="listFilter = 'in_flight'"
+          >
+            In flight{{ inFlightCount ? ' ' + inFlightCount : '' }}
           </button>
           <button
             type="button"
