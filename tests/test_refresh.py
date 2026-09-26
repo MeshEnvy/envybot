@@ -336,10 +336,15 @@ class FleetManualJobBuildTests(unittest.TestCase):
             sync_kinds = [j.kind for j in sync]
             sync_get = {j.kind for j in sync if j.kind.startswith("get:")}
             for g in refresh_due_groups():
+                if g == "neighbors":
+                    self.assertIn("get:neighbors", sync_get)
+                    continue
                 self.assertIn(f"get:{g}", sync_get)
-            self.assertNotIn("get:neighbors", sync_get)
+            self.assertEqual(sync_kinds[0], "login")
+            self.assertEqual(sync_kinds[1], "get:neighbors_discover")
             apply_idx = next(i for i, k in enumerate(sync_kinds) if k.startswith("apply:"))
             status_idx = sync_kinds.index("get:status")
+            self.assertLess(sync_kinds.index("get:neighbors"), status_idx)
             self.assertLess(status_idx, apply_idx)
             full = build_manual_jobs(
                 target, "full", do_poll=True, do_apply=True, apply_due=False, skip_discover=False

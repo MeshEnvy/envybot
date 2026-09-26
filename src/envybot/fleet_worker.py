@@ -57,7 +57,9 @@ from envybot.keys_doc import UnknownPerson, parse_serial_acl, resolve_node_acl
 from envybot.passwords import normalize_password, password_is_strong
 from envybot.poll import (
     GET_GROUP_ORDER,
+    GET_GROUPS,
     PollPolicy,
+    lead_neighbors,
     omit_unsupported_ota,
     full_due_groups,
     sync_due_groups,
@@ -404,23 +406,23 @@ def build_poll_jobs(
 ) -> list[RadioJob]:
     jobs: list[RadioJob] = []
     jobs.append(RadioJob(kind="login", unit_key=target.key))
+    neighbors_lead = "neighbors" in due_groups
+    if neighbors_lead:
+        _extend_neighbor_jobs(
+            jobs, target.key, skip_discover=skip_discover, discover_wait=discover_wait
+        )
     if do_apply and apply_due and not apply_after_poll:
         # SET before GET so a long/retrying poll cannot starve profile apply.
         jobs.extend(build_apply_jobs(target.key, force=force_apply))
-    for group in GET_GROUP_ORDER:
-        if group not in due_groups:
+    for group in due_groups:
+        if group not in GET_GROUPS:
             continue
         if group == "neighbors":
-            if not skip_discover:
-                jobs.append(RadioJob(kind="get:neighbors_discover", unit_key=target.key))
-            jobs.append(
-                RadioJob(
-                    kind="get:neighbors_wait",
-                    unit_key=target.key,
-                    extra={"wait_s": discover_wait},
-                )
+            if neighbors_lead:
+                continue
+            _extend_neighbor_jobs(
+                jobs, target.key, skip_discover=skip_discover, discover_wait=discover_wait
             )
-            jobs.append(RadioJob(kind="get:neighbors", unit_key=target.key))
         elif group == "ota_ls":
             jobs.append(RadioJob(kind="get:ota_ls_probe", unit_key=target.key))
             jobs.append(
@@ -437,6 +439,25 @@ def build_poll_jobs(
     if do_apply and apply_due and apply_after_poll:
         jobs.extend(build_apply_jobs(target.key, force=force_apply))
     return jobs
+
+
+def _extend_neighbor_jobs(
+    jobs: list[RadioJob],
+    unit_key: str,
+    *,
+    skip_discover: bool,
+    discover_wait: float,
+) -> None:
+    if not skip_discover:
+        jobs.append(RadioJob(kind="get:neighbors_discover", unit_key=unit_key))
+    jobs.append(
+        RadioJob(
+            kind="get:neighbors_wait",
+            unit_key=unit_key,
+            extra={"wait_s": discover_wait},
+        )
+    )
+    jobs.append(RadioJob(kind="get:neighbors", unit_key=unit_key))
 
 
 def build_apply_jobs(unit_key: str, *, force: bool) -> list[RadioJob]:
@@ -489,7 +510,7 @@ def build_manual_jobs(
     due: list[str] = []
     if do_poll:
         if manual_job == "full":
-            due = omit_unsupported_ota(full_due_groups(), seen)
+            due = lead_neighbors(omit_unsupported_ota(full_due_groups(), seen))
         elif manual_job == "sync":
             due = sync_due_groups()
     apply_after = manual_job in ("sync", "full")

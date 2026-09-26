@@ -133,7 +133,7 @@ def _seed_auto_work(
     """Queue due GET/apply. Busy units keep their GET lane; apply is spliced in."""
     from envybot.full_sync import full_sync_is_due
     from envybot.history import get_last_seen
-    from envybot.poll import full_due_groups, omit_unsupported_ota
+    from envybot.poll import full_due_groups, lead_neighbors, omit_unsupported_ota
 
     queued = 0
     for target in auto_targets:
@@ -143,7 +143,7 @@ def _seed_auto_work(
         apply_after_poll = False
         if do_poll and full_sync_is_due(conn, target.key, node_row, now=now):
             seen = get_last_seen(conn, target.key)
-            due = omit_unsupported_ota(full_due_groups(), seen)
+            due = lead_neighbors(omit_unsupported_ota(full_due_groups(), seen))
             apply_after_poll = True
         elif do_poll:
             due = due_groups(conn, target.key, policy=policy, now=now)
@@ -994,7 +994,7 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         default=DEFAULT_MIN_POLL_INTERVAL,
         metavar="SECS",
-        help="Live GET interval for status/telemetry (default 3600). Neighbors stay 24h.",
+        help="Live GET interval for status, telemetry, and neighbors (default 3600).",
     )
     parser.add_argument(
         "--full-sync",

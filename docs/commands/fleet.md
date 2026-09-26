@@ -10,8 +10,9 @@ Localhost fleet manager. Serves the dashboard UI, GETs telemetry into
 Default: UI at `http://127.0.0.1:8787/` (`?unit=me0032` restores the open
 card; `?map=1` reopens the map modal) plus live GET (status/telemetry),
 fw/bl/`ota self` every 7 days, and apply when the profile hash misses.
-OTA session (`ota status` + delayed `ota ls`) and neighbors stay on a 24h
-auto cadence; Pull fetches them now. Neighbor GET
+OTA session (`ota status` + delayed `ota ls`) stays on a 24h auto cadence.
+Neighbors share the 1h live interval with status/telemetry and run right
+after login. Neighbor GET
 sends remote `discover.neighbors`, waits 12s, then reads the table. Heard
 rows show approximate miles (book display GPS for fleet peers, companion
 advert GPS for community nodes). Polls every
@@ -55,9 +56,8 @@ sites until names are shortened.
 
 | Mode | Groups | When |
 |------|--------|------|
-| periodic | `status`, `telemetry` | `--min-interval` (default 1h) |
+| periodic | `status`, `telemetry`, `neighbors` | `--min-interval` (default 1h). Neighbors first after login |
 | periodic | `ota_status`, `ota_ls` | 24h (`ota status` + delayed `ota ls`). Skip after `Unknown command` until firmware changes |
-| periodic | `neighbors` | 24h, or 1h when no hear is still inside 7 days |
 | inventory | `firmware`, `bootloader`, `ota` | 7d (`ver`, bootloader, `ota self` base hash) |
 | audit | `name`, `lat`, `lon`, `advert`, `flood_advert`, `acl` | weekly when stamped; **Pull** or `--group` forces now (3 attempts max) |
 
@@ -70,9 +70,8 @@ Firmware has no TTL, so ghosts stay in sqlite history.
 A long-running `fleet` (not `--once`) re-checks due groups about every 60s
 while idle, and after each swim-lane batch so a missing profile can SET
 while other units are still GETting. No extra radio traffic unless
-status/telemetry is ≥1h stale, OTA ≥24h, neighbors are ≥24h or the stored
-table has no hear inside 7 days (then 1h), or apply is due. UI
-freshness stays 24h.
+status/telemetry/neighbors are ≥1h stale, OTA ≥24h, or apply is due.
+Sync always fetches neighbors right after login. UI freshness stays 24h.
 
 Default runs never GET sticky identity fields unless the weekly audit
 interval elapsed. UI ``due`` follows per-field apply stamps. Audit GET
@@ -168,7 +167,7 @@ While the companion worker is live:
 
 | Action | GET | SET |
 |--------|-----|-----|
-| **Sync** | status, telemetry | SET fields whose book desired differs from apply stamp |
+| **Sync** | neighbors, then status, telemetry | SET fields whose book desired differs from apply stamp |
 | **Full sync** | all GET groups (incl. OTA, neighbors, profile audit) | SET dirty fields after reconcile |
 
 Unit detail: **Active** (auto poll/apply), **Sync**, **Full sync** + interval dropdown (`full_sync_interval`: 24h, 7d, 30d, off). **Profile** edits radio prefs and credentials in the book; **ACL** is a read-only table (2-byte prefix, role, person) with per-row status vs last `get acl` (✓ in sync, ⚠ book-only, ! unknown on radio). Edit `nodes.yaml` trust and `keys.yaml` offline, then Sync when `acl` is dirty. CLI `--full-sync` forces GET policy on a headless run.
@@ -222,8 +221,7 @@ console. The header icon also toggles.
 - Tracked poll CLI replies (`ota status`, `ota stats`, `ota self`, `ota ls`,
   `ver`, `get bootloader.ver`, `get name` / `lat` / `lon` / advert intervals,
   `get acl`) also stamp sqlite last-seen like a poll. Binary status and
-  telemetry still need Refresh. Neighbors stay on the 24h auto cadence
-  (or Pull).
+  telemetry still need Refresh. Neighbors follow the 1h live interval.
 
 ## Apply
 

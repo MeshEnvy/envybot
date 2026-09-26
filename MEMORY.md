@@ -112,10 +112,10 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   (no audit GETs on the same pass).
   UI ``due`` is that stamp (apply needed). ``leak`` is a later pull that
   still shows advert or flood advert on. Name or GPS is not an advert.
-  A last-seen interval older than the apply stamp is ignored. Poll default: status/telemetry every 1h
-  (`--min-interval`); neighbors and OTA (`ota status` + delayed `ota ls`)
-  stay 24h (`discover.neighbors` + wait + GET; sooner, after 1h, when no
-  hear is still inside 7d from now). UI drops a neighbor when
+  A last-seen interval older than the apply stamp is ignored. Poll default: status/telemetry/neighbors every 1h
+  (`--min-interval`). Neighbors lead after login (`discover.neighbors` + wait + GET).
+  OTA (`ota status` + delayed `ota ls`) stays 24h. Sync always pulls neighbors first after
+  login. UI drops a neighbor when
   radio `secs_ago` plus time since that pull is over 7d from now. `Unknown command` on any OTA CLI pins `ota` / `ota_status` /
   `ota_ls` to that `firmware_version` (no refresh until `ver` changes).
   Long-running fleet re-checks due groups about every 60s
@@ -263,7 +263,8 @@ companions skip. Not re-run on BLE recover.
   `initiatives/envybot-monitor-ota.md`.
   `unreachable` is only after login/GET give up (`--attempts`) or a hard
   fail. A login or SET timeout parks the unit and keeps the stage.
-- Long BLE apply can drop the companion link; fleet reconnects transport,
-  re-syncs clock/contacts, and clears cached logins before retrying.
+- Long BLE apply or laptop sleep can drop the companion link. Recover
+  hard-resets the transport, rescans BLE, re-syncs clock/contacts, and
+  clears cached logins. Failed recover waits 15s before another storm.
 
 Last updated: 2026-09-19 (favorite-route next; still path/flood/direct today)

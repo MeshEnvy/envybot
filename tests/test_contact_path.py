@@ -11,6 +11,7 @@ from meshcore import EventType
 
 from envybot.radio import (
     RouterTarget,
+    binary_req_once,
     contact_out_path_label,
     contact_route_audit_label,
     contact_route_hop_labels,
@@ -277,6 +278,52 @@ class PrepareRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("path was:" in line for line in lines))
         self.assertIn("  → aabb", lines)
         self.assertIn("  → ccdd", lines)
+
+    async def test_single_shot_binary_timeouts_flood_after_three(self) -> None:
+        contact = {
+            "public_key": "b2f84713d830" + "0" * 52,
+            "out_path_len": 2,
+            "out_path_hash_mode": 1,
+            "out_path": "a52ffe3b",
+        }
+        client = MagicMock()
+        client.get_contact_by_key_prefix.return_value = contact
+        client.commands.reset_path = AsyncMock(
+            return_value=MagicMock(type=EventType.OK, payload={})
+        )
+        extra: dict[str, Any] = {}
+
+        async def fetch(_wait: float) -> None:
+            return None
+
+        for attempt in (1, 2):
+            await binary_req_once(
+                "GET_NEIGHBOURS",
+                fetch,
+                client=client,
+                target=_target(),
+                log=PollLog(),
+                attempt_num=attempt,
+                attempt_cap=10,
+                route_extra=extra,
+            )
+            self.assertEqual(extra["path_failures"], attempt)
+            client.commands.reset_path.assert_not_awaited()
+            self.assertEqual(contact["out_path_len"], 2)
+
+        await binary_req_once(
+            "GET_NEIGHBOURS",
+            fetch,
+            client=client,
+            target=_target(),
+            log=PollLog(),
+            attempt_num=3,
+            attempt_cap=10,
+            route_extra=extra,
+        )
+        client.commands.reset_path.assert_awaited()
+        self.assertEqual(contact["out_path_len"], -1)
+        self.assertEqual(extra["path_failures"], 0)
 
 
 if __name__ == "__main__":

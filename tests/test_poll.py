@@ -69,9 +69,9 @@ class ManualDueGroupsTests(unittest.TestCase):
     def test_refresh_is_live_only(self) -> None:
         from envybot.poll import DAILY_GROUPS, GET_GROUP_ORDER, LIVE_GROUPS, refresh_due_groups
 
-        self.assertEqual(refresh_due_groups(), list(LIVE_GROUPS))
-        self.assertEqual(set(LIVE_GROUPS), {"status", "telemetry"})
-        self.assertEqual(set(DAILY_GROUPS), {"ota_status", "ota_ls", "neighbors"})
+        self.assertEqual(refresh_due_groups(), ["neighbors", "status", "telemetry"])
+        self.assertEqual(set(LIVE_GROUPS), {"status", "telemetry", "neighbors"})
+        self.assertEqual(set(DAILY_GROUPS), {"ota_status", "ota_ls"})
         for group in refresh_due_groups():
             self.assertIn(group, GET_GROUP_ORDER)
             self.assertNotIn(group, DAILY_GROUPS)
@@ -133,7 +133,7 @@ class PollCadenceTests(unittest.TestCase):
         self.assertFalse(group_is_due(seen, "status", policy=policy, now=now))
         self.assertTrue(group_is_due(seen, "status", policy=policy, now=now + 4000))
 
-    def test_status_hourly_neighbors_daily(self) -> None:
+    def test_status_telemetry_neighbors_hourly(self) -> None:
         policy = PollPolicy(min_interval=3600.0)
         now = 1_700_000_000
         seen = {
@@ -143,8 +143,9 @@ class PollCadenceTests(unittest.TestCase):
         }
         self.assertTrue(group_is_due(seen, "status", policy=policy, now=now))
         self.assertTrue(group_is_due(seen, "telemetry", policy=policy, now=now))
-        self.assertFalse(group_is_due(seen, "neighbors", policy=policy, now=now))
-        self.assertTrue(group_is_due(seen, "neighbors", policy=policy, now=now + 86400))
+        self.assertTrue(group_is_due(seen, "neighbors", policy=policy, now=now))
+        fresh = {**seen, "neighbors_at": now - 100}
+        self.assertFalse(group_is_due(fresh, "neighbors", policy=policy, now=now))
 
     def test_ota_daily_like_neighbors(self) -> None:
         policy = PollPolicy(min_interval=3600.0)
@@ -226,41 +227,29 @@ class PollCadenceTests(unittest.TestCase):
             self.assertFalse(group_is_due(seen, "ota", policy=policy, now=now + 86400))
             self.assertTrue(group_is_due(seen, "ota", policy=policy, now=now + 8 * 86400))
 
-    def test_neighbors_due_early_when_none_fresh(self) -> None:
+    def test_empty_neighbors_lead_due_groups(self) -> None:
+        from envybot.poll import due_groups
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            due = due_groups(conn, "me0001", policy=PollPolicy(), now=10)
+            self.assertEqual(due[0], "neighbors")
+
+    def test_neighbors_lead_due_groups_when_queued(self) -> None:
         from envybot.poll import due_groups
 
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
             now = 1_700_000_000
-            policy = PollPolicy()
-            stale = [{"pubkey": "ab" * 8, "secs_ago": 8 * 86400, "snr": 1}]
             fresh = [{"pubkey": "cd" * 8, "secs_ago": 30, "snr": 1}]
             record_poll(
                 conn,
                 unit="me0001",
-                res=_Res(neighbors=stale, polled_groups=frozenset({"neighbors"})),
-                ts=now - 2 * 3600,
-            )
-            due = due_groups(conn, "me0001", policy=policy, now=now)
-            self.assertIn("neighbors", due)
-
-            record_poll(
-                conn,
-                unit="me0001",
-                res=_Res(neighbors=stale, polled_groups=frozenset({"neighbors"})),
-                ts=now - 60,
-            )
-            due = due_groups(conn, "me0001", policy=policy, now=now)
-            self.assertNotIn("neighbors", due)
-
-            record_poll(
-                conn,
-                unit="me0001",
                 res=_Res(neighbors=fresh, polled_groups=frozenset({"neighbors"})),
-                ts=now - 2 * 3600,
+                ts=now - 86400,
             )
-            due = due_groups(conn, "me0001", policy=policy, now=now)
-            self.assertNotIn("neighbors", due)
+            due = due_groups(conn, "me0001", policy=PollPolicy(), now=now)
+            self.assertEqual(due[0], "neighbors")
 
 
 class TrustStampTests(unittest.TestCase):
@@ -700,6 +689,31 @@ class BuildPollJobsTests(unittest.TestCase):
         self.assertIn("apply:name", kinds)
         self.assertLess(kinds.index("apply:name"), kinds.index("get:status"))
         self.assertLess(kinds.index("apply:clock"), kinds.index("get:status"))
+
+    def test_empty_neighbors_run_right_after_login(self) -> None:
+        from envybot.fleet_worker import build_poll_jobs
+
+        target = RouterTarget(
+            key="me0001",
+            unit_id="ME0001",
+            name="Test",
+            site=None,
+            pubkey_hex="a" * 64,
+            admin_password="secret",
+        )
+        jobs = build_poll_jobs(
+            target,
+            ["neighbors", "firmware", "status"],
+            do_apply=True,
+            apply_due=True,
+            force_apply=False,
+            skip_discover=False,
+        )
+        kinds = [j.kind for j in jobs]
+        self.assertEqual(kinds[0], "login")
+        self.assertEqual(kinds[1], "get:neighbors_discover")
+        self.assertLess(kinds.index("get:neighbors"), kinds.index("apply:name"))
+        self.assertLess(kinds.index("get:neighbors"), kinds.index("get:firmware"))
 
 
 if __name__ == "__main__":

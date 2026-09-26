@@ -77,6 +77,24 @@ def load_sites(sites_path: Path) -> dict[str, dict[str, Any]]:
     return {str(k): v for k, v in sites.items() if isinstance(v, dict)}
 
 
+def load_book_links(book_dir: Path) -> list[Any]:
+    """Site link rows from ``links.json``, else ``links.yaml``, else legacy ``sites.yaml`` ``links:``."""
+    json_path = book_dir / "links.json"
+    if json_path.is_file():
+        import json
+
+        doc = json.loads(json_path.read_text(encoding="utf-8"))
+        raw = doc.get("links") if isinstance(doc, dict) else None
+        return raw if isinstance(raw, list) else []
+    links_path = book_dir / "links.yaml"
+    if links_path.is_file():
+        raw = load_sites_doc(links_path).get("links")
+        return raw if isinstance(raw, list) else []
+    sites_path = book_dir / "sites.yaml"
+    raw = load_sites_doc(sites_path).get("links")
+    return raw if isinstance(raw, list) else []
+
+
 def site_node_key(site: dict[str, Any] | None) -> str | None:
     if not site:
         return None

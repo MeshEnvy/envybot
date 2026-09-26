@@ -12,7 +12,6 @@ from envybot.nodes_doc import is_paused
 from envybot.radio import (
     AUDIT_POLL_INTERVAL,
     DEFAULT_MIN_POLL_INTERVAL,
-    NEIGHBOR_POLL_INTERVAL,
     OTA_POLL_INTERVAL,
     PollResult,
     RouterTarget,
@@ -53,7 +52,7 @@ GET_GROUPS: dict[str, PullGroupSpec] = {
     "ota_ls": PullGroupSpec("periodic", "ota_ls_at", interval=OTA_POLL_INTERVAL),
     "status": PullGroupSpec("periodic", "status_at"),
     "telemetry": PullGroupSpec("periodic", "telemetry_at"),
-    "neighbors": PullGroupSpec("periodic", "neighbors_at", interval=NEIGHBOR_POLL_INTERVAL),
+    "neighbors": PullGroupSpec("periodic", "neighbors_at"),
 }
 
 GET_GROUP_ORDER = tuple(GET_GROUPS.keys())
@@ -126,8 +125,8 @@ _STAGE_LABELS = {
 
 
 def sync_due_groups() -> list[str]:
-    """Live GET groups for manual Sync (status/telemetry)."""
-    return list(LIVE_GROUPS)
+    """Manual Sync: neighbors first, then the rest of the live 1h groups."""
+    return lead_neighbors(list(LIVE_GROUPS))
 
 
 def full_due_groups() -> list[str]:
@@ -293,34 +292,11 @@ def group_interval(group: str, policy: PollPolicy) -> float:
     return policy.min_interval
 
 
-# Idle recheck is ~60s. A unit with no fresh neighbors must not rediscover
-# on every pass. One hour is sooner than the 24h neighbor cadence.
-NEIGHBOR_EMPTY_RETRY_S = 3600.0
-
-
-def neighbors_lack_fresh(conn: sqlite3.Connection, unit: str, *, now: int) -> bool:
-    """True when the latest neighbor GET has no hear still inside 7 days.
-
-    Age is ``secs_ago`` at GET plus time since that pull. A pull newer than
-    ``NEIGHBOR_EMPTY_RETRY_S`` does not count, so a still-empty result waits
-    an hour instead of queueing again immediately.
-    """
-    from envybot.history import latest_neighbors
-    from envybot.web.snapshot import neighbor_age_secs, neighbor_is_fresh
-
-    pulled = latest_neighbors(conn, unit)
-    if pulled is None:
-        return False
-    ts, rows = pulled
-    if now - ts < NEIGHBOR_EMPTY_RETRY_S:
-        return False
-    for item in rows:
-        if not isinstance(item, dict):
-            continue
-        age = neighbor_age_secs(item.get("secs_ago"), pulled_at=ts, now=now)
-        if neighbor_is_fresh(age):
-            return False
-    return True
+def lead_neighbors(groups: list[str]) -> list[str]:
+    """Put neighbors first when this poll includes them."""
+    if "neighbors" not in groups:
+        return list(groups)
+    return ["neighbors"] + [g for g in groups if g != "neighbors"]
 
 
 def due_groups(
@@ -332,18 +308,15 @@ def due_groups(
 ) -> list[str]:
     now = now or int(time.time())
     seen = get_last_seen(conn, unit)
-    return omit_unsupported_ota(
+    groups = omit_unsupported_ota(
         [
             group
             for group in GET_GROUP_ORDER
             if group_is_due(seen, group, policy=policy, now=now)
-            or (
-                group == "neighbors"
-                and neighbors_lack_fresh(conn, unit, now=now)
-            )
         ],
         seen,
     )
+    return lead_neighbors(groups)
 
 
 def partition_due(
@@ -486,6 +459,7 @@ __all__ = [
     "PollPolicy",
     "PollResult",
     "due_groups",
+    "lead_neighbors",
     "group_interval",
     "group_is_due",
     "manual_job_session_state",

@@ -6,10 +6,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Fixed
+
+- Fleet companion reconnect after laptop sleep now drops the stale BLE
+  handle, rescans, and reconnects. The old path reused the pre-sleep
+  device object and spun `reconnect 1/5` until you restarted the process.
+- Auto path now discards a stale hop cache after three timeouts on
+  single-shot fleet jobs (neighbors, status, CLI). Those retries used to
+  keep the same path for all `--attempts` because fail counting only ran
+  inside the old inner retry loop.
+
 ### Changed
 
-- Fleet neighbor GET is due after 1 hour when the stored table has no hear
-  still inside 7 days, instead of waiting out the 24-hour cadence.
+- Fleet neighbor GET is on the same 1h live interval as status and
+  telemetry (`--min-interval`). Sync and auto poll both run it first after
+  login. The 24h neighbor cadence is gone.
 - Fleet map active path includes the leg from the ingestor pin to the first hop.
 - Fleet re-fetches firmware version, bootloader, and `ota self` every 7 days.
   Those GETs used to stop after the first successful stamp.

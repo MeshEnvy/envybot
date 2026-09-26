@@ -150,7 +150,7 @@ Companion flags match `cmd`: `--ble`, `--serial`, `--tcp`, `--timeout`, `--login
 
 | Action | GET | SET |
 |--------|-----|-----|
-| **Sync** | status, telemetry | dirty fields only |
+| **Sync** | neighbors, then status, telemetry | dirty fields only |
 | **Full sync** | all GET groups (audit reconciles) | dirty fields only |
 
 `paused: true` skips auto poll/apply; manual Sync/Full still work. Node card **Profile** section edits the book; dirty rows until Sync.

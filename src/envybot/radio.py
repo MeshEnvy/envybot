@@ -62,8 +62,7 @@ CLOCK_CLI_RE = re.compile(
     r"(\d{1,2}):(\d{2})\s*-\s*(\d{1,2})/(\d{1,2})/(\d{4})\s*UTC", re.I
 )
 
-DEFAULT_MIN_POLL_INTERVAL = 3600.0  # status + telemetry
-NEIGHBOR_POLL_INTERVAL = 86400.0  # discover is airtime-heavy
+DEFAULT_MIN_POLL_INTERVAL = 3600.0  # status, telemetry, neighbors
 OTA_POLL_INTERVAL = 86400.0  # ota status + ls; auto + Pull, not Refresh
 AUDIT_POLL_INTERVAL = 7 * 86400.0  # name/gps/advert/acl reconcile GETs
 AUDIT_GET_ATTEMPTS = 3
@@ -72,6 +71,8 @@ OTA_LS_WAIT_S = 5.0  # after first `ota ls` (queryAll), before second catalog re
 POST_INSTALL_WAIT_S = 20.0  # after `ota install`, before liveness GET
 DEFAULT_MESH_ATTEMPTS = 10
 COMPANION_RECONNECT_ATTEMPTS = 5
+COMPANION_RECOVER_COOLDOWN_S = 15.0
+HOST_SLEEP_GAP_S = 30.0  # wall-vs-monotonic drift after the laptop slept
 CLOCK_SKEW_MAX = 300  # seconds; sync when *live login* RTC vs host exceeds this
 FLEET_DUTYCYCLE_PCT = 50.0
 FLEET_OTA_AUTOFETCH = "off"
@@ -193,6 +194,10 @@ class FleetSession:
     _register_binary_orig: Any = None
     _recovery_client: MeshCore | None = field(default=None, repr=False)
     _recovery_targets: list[Any] = field(default_factory=list, repr=False)
+    _recover_lock_obj: asyncio.Lock | None = field(default=None, repr=False)
+    _recover_fail_until: float = 0.0
+    _watch_wall: float = field(default_factory=time.time)
+    _watch_mono: float = field(default_factory=time.monotonic)
     audit_source: str | None = None
     audit_push: Any = field(default=None, repr=False)
 
@@ -201,17 +206,50 @@ class FleetSession:
         self._recovery_client = client
         self._recovery_targets = list(targets)
 
+    def _recover_lock(self) -> asyncio.Lock:
+        if self._recover_lock_obj is None:
+            self._recover_lock_obj = asyncio.Lock()
+        return self._recover_lock_obj
+
+    def host_slept(self, *, min_gap: float = HOST_SLEEP_GAP_S) -> bool:
+        """True when wall time jumped ahead of monotonic (laptop sleep)."""
+        wall = time.time()
+        mono = time.monotonic()
+        drift = (wall - self._watch_wall) - (mono - self._watch_mono)
+        self._watch_wall = wall
+        self._watch_mono = mono
+        return drift >= min_gap
+
     async def ensure_companion_connected(self, *, log: PollLog) -> bool:
         client = self._recovery_client
         if client is None:
             return True
-        if client.is_connected:
+        slept = self.host_slept()
+        if slept:
+            log.step("host sleep gap, resetting companion transport")
+        elif client.is_connected:
             return True
         if not self._recovery_targets:
             return False
-        return await recover_companion(
-            client, session=self, targets=self._recovery_targets, log=log
-        )
+        now = time.monotonic()
+        if not slept and now < self._recover_fail_until:
+            return False
+        async with self._recover_lock():
+            if not slept and client.is_connected:
+                return True
+            if not slept and time.monotonic() < self._recover_fail_until:
+                return False
+            ok = await recover_companion(
+                client,
+                session=self,
+                targets=self._recovery_targets,
+                log=log,
+                force=slept,
+            )
+            self._recover_fail_until = (
+                0.0 if ok else time.monotonic() + COMPANION_RECOVER_COOLDOWN_S
+            )
+            return ok
 
     def dest_slack(self, unit: str) -> float:
         return self.wait_slack.get(unit, 0.0)
@@ -2071,6 +2109,66 @@ async def refresh_fleet_paths(
     return cleared
 
 
+async def _hard_reset_transport(client: MeshCore) -> None:
+    """Drop a zombie BLE/USB session. Sleep leaves the handle connected-looking."""
+    cm = getattr(client, "connection_manager", None)
+    if cm is None:
+        return
+    cx = getattr(cm, "connection", None)
+    bleak = getattr(cx, "client", None) if cx is not None else None
+    if bleak is not None and callable(getattr(bleak, "disconnect", None)):
+        try:
+            result = bleak.disconnect()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            pass
+    disconnect = getattr(cm, "disconnect", None)
+    if callable(disconnect):
+        try:
+            result = disconnect()
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            pass
+    if cx is not None:
+        for attr in ("device", "_user_provided_device", "client", "_user_provided_client"):
+            if hasattr(cx, attr):
+                setattr(cx, attr, None)
+    if hasattr(cm, "_is_connected"):
+        cm._is_connected = False
+
+
+async def _refresh_ble_device(client: MeshCore, *, log: PollLog) -> None:
+    """Replace a pre-sleep BLEDevice with a fresh scan hit for the same address."""
+    cm = getattr(client, "connection_manager", None)
+    cx = getattr(cm, "connection", None) if cm is not None else None
+    if cx is None:
+        return
+    addr = getattr(cx, "_user_provided_address", None) or getattr(cx, "address", None)
+    if not isinstance(addr, str) or not addr:
+        return
+    try:
+        from bleak import BleakScanner
+    except ImportError:
+        return
+    try:
+        devices = await BleakScanner.discover(timeout=4.0, service_uuids=[NUS_SERVICE_UUID])
+    except TypeError:
+        devices = await BleakScanner.discover(timeout=4.0)
+    except Exception as exc:
+        log.detail(f"recover BLE scan: {exc}")
+        return
+    want = addr.lower()
+    for dev in devices:
+        found = (getattr(dev, "address", None) or "").lower()
+        if found == want or (want and want in found):
+            cx.device = dev
+            cx.address = dev.address
+            return
+    log.detail("recover BLE scan: companion not advertising yet")
+
+
 async def recover_companion(
     client: MeshCore,
     *,
@@ -2078,14 +2176,18 @@ async def recover_companion(
     targets: list[Any],
     log: PollLog,
     attempts: int = COMPANION_RECONNECT_ATTEMPTS,
+    force: bool = False,
 ) -> bool:
-    """Reconnect companion transport after an unexpected drop (common on long BLE apply)."""
-    if client.is_connected:
+    """Reconnect companion transport after an unexpected drop (sleep, BLE stall)."""
+    if client.is_connected and not force:
         return True
+
+    await _hard_reset_transport(client)
 
     for attempt in range(1, attempts + 1):
         log.step(f"companion disconnected — reconnect {attempt}/{attempts} …")
         try:
+            await _refresh_ble_device(client, log=log)
             if not client.dispatcher.running:
                 await client.dispatcher.start()
             result = await client.connection_manager.connect()
@@ -2913,12 +3015,12 @@ async def send_cmd_sync(
             await handle_path_success(client, target, route_extra)
             return text
         _audit_finish(session, audit_id, ok=False, outcome="timeout")
-        if single or (attempts and attempt >= attempts):
-            log.substep(f"send {framed!r} {n_of}: timeout after {wait_s:.0f}s")
-            break
         await handle_path_timeout(client, target, route_extra, log=log)
         if target.routing is RoutingMode.FLOOD:
             await reset_to_flood(client, target, log=log)
+        if single or (attempts and attempt >= attempts):
+            log.substep(f"send {framed!r} {n_of}: timeout after {wait_s:.0f}s")
+            break
         log.substep(f"send {framed!r} {n_of}: timeout after {wait_s:.0f}s, retrying …")
 
     return None
@@ -3014,15 +3116,6 @@ async def retry_binary_req(
             return success(val)
         return val is not None
 
-    async def default_on_retry(_attempt: int) -> None:
-        if target is None:
-            return
-        await handle_path_timeout(client, target, route_extra, log=log)
-        if target.routing is RoutingMode.FLOOD:
-            await reset_to_flood(client, target, log=log)
-
-    retry_hook = on_retry if on_retry is not None else default_on_retry
-
     attempt = 0
     single = attempt_num is not None
     max_attempts = 1 if single else attempts
@@ -3082,10 +3175,15 @@ async def retry_binary_req(
                 await handle_path_success(client, target, route_extra)
             return result
         _audit_finish(session, audit_id, ok=False, outcome="timeout")
+        if target is not None:
+            await handle_path_timeout(client, target, route_extra, log=log)
+            if target.routing is RoutingMode.FLOOD:
+                await reset_to_flood(client, target, log=log)
         if single or (attempts and attempt >= attempts):
             log.step(f"{label} {n_of}: no response")
             break
-        await retry_hook(attempt)
+        if on_retry is not None:
+            await on_retry(attempt)
         log.step(f"{label} {n_of}: no response, retrying …")
     return None
 
