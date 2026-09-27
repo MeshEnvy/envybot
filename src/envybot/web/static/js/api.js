@@ -265,6 +265,15 @@ export async function fetchPolls(unit, hours = 72, limit = 80) {
   return res.json()
 }
 
+/** @param {string} unit @param {{ limit?: number, beforeTs?: number }} [opts] @returns {Promise<{ unit: string, rows: unknown[], has_more: boolean }>} */
+export async function fetchPollLog(unit, opts = {}) {
+  const q = new URLSearchParams({ limit: String(opts.limit ?? 10) })
+  if (opts.beforeTs != null) q.set('before_ts', String(opts.beforeTs))
+  const res = await fetch(`/api/poll-log/${encodeURIComponent(unit)}?${q}`)
+  if (!res.ok) throw new Error(`poll-log ${res.status}`)
+  return res.json()
+}
+
 /** @typedef {{ id: number, ts: number, kind: string, label?: string | null, attempt?: number | null, path: string, wait_s?: number | null, ok: boolean, outcome: string, reply?: string | null, error?: string | null, source?: string | null, duration_s?: number | null }} AuditRow */
 
 /** @param {string} unit @param {{ limit?: number, beforeId?: number }} [opts] @returns {Promise<{ unit: string, rows: AuditRow[], has_more: boolean }>} */

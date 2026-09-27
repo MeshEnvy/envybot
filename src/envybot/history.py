@@ -1419,22 +1419,36 @@ def poll_snapshots(
     *,
     limit: int = 48,
     hours: int = 72,
+    before_ts: int | None = None,
 ) -> list[dict[str, Any]]:
     """Merged status+telemetry polls, newest-first.
 
     Each row has absolute values and ``delta_*`` vs the prior poll. Missing
     gauges (temperature, voltage, noise) are straight-line interpolated from
     neighboring samples, including off-timestamp telemetry. No extrapolation.
+
+    ``hours <= 0`` means no lower time bound (full book history). ``before_ts``
+    pages older rows (strictly before that timestamp).
     """
-    since = int(time.time()) - max(1, hours) * 3600
+    unit = unit.lower()
+    clauses = ["unit = ?"]
+    args: list[Any] = [unit]
+    since: int | None = None
+    if hours > 0:
+        since = int(time.time()) - max(1, hours) * 3600
+        clauses.append("ts >= ?")
+        args.append(since)
+    if before_ts is not None:
+        clauses.append("ts < ?")
+        args.append(int(before_ts))
     status_rows = conn.execute(
-        "SELECT ts, payload FROM status WHERE unit = ? AND ts >= ? ORDER BY ts ASC",
-        (unit, since),
+        f"SELECT ts, payload FROM status WHERE {' AND '.join(clauses)} ORDER BY ts ASC",
+        args,
     ).fetchall()
     if not status_rows:
         return []
 
-    tele_since = since - 7 * 86400
+    tele_since = (since - 7 * 86400) if since is not None else 0
     tele_rows = conn.execute(
         "SELECT ts, type, value FROM telemetry WHERE unit = ? AND ts >= ? "
         "AND type IN ('voltage', 'temperature')",
@@ -1489,6 +1503,24 @@ def poll_snapshots(
     _apply_poll_deltas(chronological)
     chronological.reverse()
     return chronological[:limit]
+
+
+def list_poll_log(
+    conn: sqlite3.Connection,
+    unit: str,
+    *,
+    limit: int = 10,
+    before_ts: int | None = None,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Newest-first poll log for auditing; no rolling hours cap."""
+    cap = max(1, min(int(limit), 200))
+    rows = poll_snapshots(
+        conn, unit, hours=0, before_ts=before_ts, limit=cap + 1
+    )
+    has_more = len(rows) > cap
+    if has_more:
+        rows = rows[:cap]
+    return rows, has_more
 
 
 def history_series(

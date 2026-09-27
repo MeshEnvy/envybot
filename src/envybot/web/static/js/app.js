@@ -13,6 +13,7 @@ import {
   fetchAudit,
   fetchFleet,
   fetchPolls,
+  fetchPollLog,
   installUnit,
   patchUnit,
   postUnitPath,
@@ -274,22 +275,75 @@ const App = {
     const consoleCopied = ref(false);
     let consoleCopyTimer = 0;
 
-    /** @param {'polls'} source */
-    function logSlice(source) {
-      const list = unitHistory.value?.[source];
-      if (!Array.isArray(list)) return [];
-      return list.slice(0, logShown[source]);
+    /** @type {import('vue').Ref<Record<string, unknown>[]>} */
+    const pollLogRows = ref([]);
+    const pollLogHasMore = ref(false);
+    const pollLogLoading = ref(false);
+
+    function clearPollLog() {
+      pollLogRows.value = [];
+      pollLogHasMore.value = false;
     }
 
-    /** @param {'polls'} source */
-    function logHasMore(source) {
-      const list = unitHistory.value?.[source];
-      return Array.isArray(list) && list.length > logShown[source];
+    /** @param {string} key */
+    async function loadPollLogFirstPage(key) {
+      pollLogLoading.value = true;
+      try {
+        const res = await fetchPollLog(key, { limit: LOG_PAGE });
+        pollLogRows.value = Array.isArray(res.rows) ? res.rows : [];
+        pollLogHasMore.value = !!res.has_more;
+      } catch {
+        clearPollLog();
+      } finally {
+        pollLogLoading.value = false;
+      }
     }
 
-    /** @param {'polls'} source */
-    function loadMoreLog(source) {
-      logShown[source] += LOG_PAGE;
+    async function loadMorePollLog() {
+      logShown.polls += LOG_PAGE;
+      const key = selectedKey.value;
+      if (!key || logShown.polls <= pollLogRows.value.length || !pollLogHasMore.value) {
+        return;
+      }
+      const tail = pollLogRows.value[pollLogRows.value.length - 1];
+      if (!tail || tail.ts == null) return;
+      pollLogLoading.value = true;
+      try {
+        const res = await fetchPollLog(key, {
+          limit: LOG_PAGE,
+          beforeTs: Number(tail.ts),
+        });
+        pollLogRows.value = [
+          ...pollLogRows.value,
+          ...(Array.isArray(res.rows) ? res.rows : []),
+        ];
+        pollLogHasMore.value = !!res.has_more;
+      } finally {
+        pollLogLoading.value = false;
+      }
+    }
+
+    const pollLogTableRows = computed(() => pollLogRows.value.slice(0, logShown.polls));
+
+    const pollLogCanLoadMore = computed(() => {
+      if (logShown.polls < pollLogRows.value.length) return true;
+      return pollLogHasMore.value;
+    });
+
+    /** @param {string} key */
+    function syncPollLogLiveHead(key) {
+      if (key !== selectedKey.value) return;
+      const head = fleet.units[key]?.history?.polls?.[0];
+      if (!head || head.ts == null) return;
+      const rows = pollLogRows.value;
+      if (!rows.length) return;
+      if (rows[0].ts === head.ts) {
+        Object.assign(rows[0], head);
+        return;
+      }
+      if (Number(head.ts) > Number(rows[0].ts)) {
+        pollLogRows.value = [{ ...head }, ...rows];
+      }
     }
 
     const METRIC_ROWS = [
@@ -1659,6 +1713,7 @@ const App = {
       if (fly && mapCtrl) mapCtrl.flyTo(key, fleet);
       pushMap();
       clearAuditForUnitSwitch();
+      clearPollLog();
       try {
         const snap = await fetchFleet();
         if (snap.poll) patchSession(snap.poll);
@@ -1669,6 +1724,7 @@ const App = {
       }
       await loadHistoriesFor(key);
       await loadAuditFirstPage(key);
+      await loadPollLogFirstPage(key);
       restoreDetailScroll();
     }
 
@@ -2893,6 +2949,7 @@ const App = {
         },
         onUnit: (unit) => {
           applyUnit(unit);
+          syncPollLogLiveHead(String(unit.key));
           pushMap();
         },
         onSession: (poll) => {
@@ -3023,9 +3080,10 @@ const App = {
       formatPollTemp,
       voltageStock,
       tempStock,
-      logSlice,
-      logHasMore,
-      loadMoreLog,
+      pollLogTableRows,
+      pollLogCanLoadMore,
+      pollLogLoading,
+      loadMorePollLog,
       auditRows,
       auditHasMore,
       auditLoading,
@@ -4242,8 +4300,8 @@ const App = {
             </button>
             <div v-show="detailSectionOpen('polls')" class="detail-disclosure-body">
             <div class="poll-log">
-              <p v-if="!unitHistory?.polls?.length" class="audit-empty">No poll history yet.</p>
-              <table v-if="unitHistory?.polls?.length" class="poll-table poll-table-wide">
+              <p v-if="!pollLogTableRows.length && !pollLogLoading" class="audit-empty">No poll history yet.</p>
+              <table v-if="pollLogTableRows.length" class="poll-table poll-table-wide">
                 <thead>
                   <tr>
                     <th>When</th>
@@ -4257,7 +4315,7 @@ const App = {
                 </thead>
                 <tbody>
                   <tr
-                    v-for="(row, pi) in logSlice('polls')"
+                    v-for="(row, pi) in pollLogTableRows"
                     :key="'pl-' + pi"
                     :class="{ 'poll-reboot': row.reboot }"
                   >
@@ -4331,10 +4389,11 @@ const App = {
                 </tbody>
               </table>
               <button
-                v-if="logHasMore('polls')"
+                v-if="pollLogCanLoadMore"
                 type="button"
                 class="load-more"
-                @click="loadMoreLog('polls')"
+                :disabled="pollLogLoading"
+                @click="loadMorePollLog"
               >
                 Load more
               </button>

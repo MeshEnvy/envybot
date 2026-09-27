@@ -20,6 +20,7 @@ from envybot.history import (
     insert_apply,
     interval_traffic,
     last_ok_apply,
+    list_poll_log,
     latest_status,
     migrate_legacy,
     open_history,
@@ -666,6 +667,39 @@ class HistoryTests(unittest.TestCase):
             self.assertAlmostEqual(polls[0]["temperature"], 23.0)
             self.assertEqual(polls[0]["since_prev_secs"], 3000)
             self.assertNotIn("since_prev_secs", polls[1])
+
+    def test_list_poll_log_all_time_and_page(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            now = int(time.time())
+            for i, age in enumerate([90 * 86400, 60 * 86400, 30 * 86400, 86400]):
+                record_poll(
+                    conn,
+                    unit="me0099",
+                    res=_Res(
+                        status={
+                            "battery_mv": 4000 + i * 10,
+                            "packets_recv": i,
+                            "packets_sent": 0,
+                            "uptime_secs": 100 + i,
+                        },
+                        polled_groups=frozenset({"status"}),
+                    ),
+                    ts=now - age,
+                )
+            windowed = poll_snapshots(conn, "me0099", hours=72, limit=10)
+            self.assertEqual(len(windowed), 1)
+            page1, more1 = list_poll_log(conn, "me0099", limit=2)
+            self.assertTrue(more1)
+            self.assertEqual(len(page1), 2)
+            self.assertEqual(page1[0]["ts"], now - 86400)
+            page2, more2 = list_poll_log(
+                conn, "me0099", limit=2, before_ts=page1[-1]["ts"]
+            )
+            self.assertFalse(more2)
+            self.assertEqual(len(page2), 2)
+            self.assertEqual(page2[0]["ts"], now - 60 * 86400)
+            self.assertLess(page2[-1]["ts"], page1[-1]["ts"])
 
     def test_poll_snapshots_interpolates_temperature(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

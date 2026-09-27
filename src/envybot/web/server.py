@@ -23,6 +23,7 @@ from envybot.history import (
     get_last_seen,
     history_series,
     list_mesh_audit,
+    list_poll_log,
     open_history,
     source_histories,
 )
@@ -758,6 +759,28 @@ async def _handle_polls(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+async def _handle_poll_log(request: web.Request) -> web.Response:
+    unit = request.match_info["unit"]
+    limit_raw = request.query.get("limit")
+    before_raw = request.query.get("before_ts")
+    limit = int(limit_raw) if limit_raw and limit_raw.isdigit() else 10
+    before_ts = int(before_raw) if before_raw and before_raw.isdigit() else None
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    if not web_ctx.unit_visible(unit):
+        return web.json_response({"error": "unknown unit"}, status=404)
+    conn = open_history(web_ctx.nodes_path.parent)
+    try:
+        rows, has_more = list_poll_log(conn, unit, limit=limit, before_ts=before_ts)
+        loc = _site_loc_for_polls(web_ctx, unit)
+        attach_sun(rows, loc=loc)
+        attach_weather(conn, rows, loc=loc)
+    finally:
+        conn.close()
+    payload = {"unit": unit, "rows": rows, "has_more": has_more}
+    assert_no_secrets(payload)
+    return web.json_response(payload)
+
+
 async def _handle_audit(request: web.Request) -> web.Response:
     unit = request.match_info["unit"]
     limit_raw = request.query.get("limit")
@@ -1230,6 +1253,7 @@ def make_app(web_ctx: MonitorWeb) -> web.Application:
     app.router.add_delete("/api/console/{tab_id}/pending", _handle_console_pending_delete)
     app.router.add_get("/api/history/{unit}", _handle_history)
     app.router.add_get("/api/polls/{unit}", _handle_polls)
+    app.router.add_get("/api/poll-log/{unit}", _handle_poll_log)
     app.router.add_get("/api/audit/{unit}", _handle_audit)
     app.router.add_get("/events", _handle_events)
     app.router.add_get("/", _handle_index)
