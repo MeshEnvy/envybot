@@ -90,3 +90,4 @@ def stamp_full_sync(conn: sqlite3.Connection, unit: str, *, ts: int | None = Non
         "updated_at = excluded.updated_at",
         (unit.lower(), now, now),
     )
+    conn.commit()

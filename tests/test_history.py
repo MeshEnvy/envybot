@@ -8,6 +8,7 @@ import time
 import unittest
 from pathlib import Path
 
+from envybot.full_sync import stamp_full_sync
 from envybot.history import (
     _backfill_sample_loc_from_sites,
     _backfill_sample_loc_v2,
@@ -24,6 +25,7 @@ from envybot.history import (
     latest_status,
     migrate_legacy,
     open_history,
+    save_community_locs,
     poll_snapshots,
     record_poll,
     source_histories,
@@ -791,6 +793,31 @@ class HistoryTests(unittest.TestCase):
             self.assertNotIn("temperature", oldest.get("synthetic") or [])
             self.assertAlmostEqual(mid["temperature"], 14.9)
             self.assertIn("temperature", mid.get("synthetic") or [])
+
+    def test_stamp_full_sync_releases_write_lock(self) -> None:
+        """A second connection must be able to write after a full-sync stamp.
+
+        The fleet connection is long-lived. The UI snapshot opens another
+        connection and writes community locs. An uncommitted stamp deadlocks
+        that write on this thread (sqlite3 isolation is deferred).
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            conn = open_history(book)
+            try:
+                stamp_full_sync(conn, "me0001", ts=1)
+                other = open_history(book)
+                try:
+                    save_community_locs(other, {"abcd": (39.5, -119.8)})
+                    seen = other.execute(
+                        "SELECT full_sync_at FROM last_seen WHERE unit = ?",
+                        ("me0001",),
+                    ).fetchone()
+                finally:
+                    other.close()
+            finally:
+                conn.close()
+        self.assertEqual(seen[0], 1)
 
 
 if __name__ == "__main__":

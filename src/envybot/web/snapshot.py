@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 import time
 from pathlib import Path
 from typing import Any
@@ -735,11 +736,18 @@ def build_fleet_snapshot(
             if acl_ts is not None:
                 acl_heard_at_map[key] = acl_ts
         if reported_locs:
-            save_community_locs(conn, reported_locs)
+            try:
+                save_community_locs(conn, reported_locs)
+            except sqlite3.OperationalError:
+                # Fleet's long-lived connection can still hold a write
+                # transaction. Skipping the loc cache must not kill the run.
+                pass
         else:
             reported_locs = load_community_locs(conn)
-    except OSError:
+    except (OSError, sqlite3.Error):
         seen_map = seen_map or {}
+        if conn is not None:
+            conn.close()
         conn = None
 
     try:
