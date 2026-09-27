@@ -53,6 +53,7 @@ from envybot.jobs import (
     UnitQueue,
     drop_ota_poll_jobs,
 )
+from envybot.silence_bail import GET_REPLY_UNPARSED
 from envybot.keys_doc import UnknownPerson, parse_serial_acl, resolve_node_acl
 from envybot.passwords import normalize_password, password_is_strong
 from envybot.poll import (
@@ -1389,7 +1390,7 @@ async def _execute_get_cli(
     if cli_error_reply(raw):
         return JobOutcome.HARD_FAIL, raw
     if not _apply_cli_poll_reply(group, raw, acc=acc, ctx=ctx, target=target):
-        return JobOutcome.TIMEOUT, None
+        return JobOutcome.TIMEOUT, GET_REPLY_UNPARSED
     if group == "firmware":
         return JobOutcome.HEARD, acc.fw
     if group == "bootloader":
@@ -1404,7 +1405,7 @@ async def _execute_get_cli(
         return JobOutcome.HEARD, acc.advert_min
     if group == "flood_advert":
         return JobOutcome.HEARD, acc.flood_h
-    return JobOutcome.TIMEOUT, None
+    return JobOutcome.HEARD, None
 
 
 async def _execute_apply(

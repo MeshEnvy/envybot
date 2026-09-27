@@ -14,10 +14,12 @@ from envybot.fleet_worker import (
     PollAccumulator,
     WorkerContext,
     _execute_apply,
+    _execute_get_cli,
     build_apply_jobs,
     build_poll_jobs,
 )
 from envybot.radio import AUDIT_GET_ATTEMPTS
+from envybot.silence_bail import GET_REPLY_UNPARSED
 from envybot.apply import applicable_field_desireds
 from envybot.history import last_ok_apply, open_history, source_histories, stamp_apply
 from envybot.jobs import JobOutcome, RadioJob, UnitQueue
@@ -86,6 +88,76 @@ class RecordGroupTests(unittest.TestCase):
             hist = source_histories(conn, "me0001", hours=72, limit=10)
             self.assertEqual(len(hist["status"]), 1)
             self.assertNotIn("delta_packets_recv", hist["status"][0])
+
+
+class GetCliOutcomeTests(unittest.IsolatedAsyncioTestCase):
+    def _ctx(self, tmp: str) -> WorkerContext:
+        return WorkerContext(
+            client=MagicMock(),
+            conn=open_history(Path(tmp)),
+            nodes_path=Path(tmp) / "nodes.yaml",
+            nodes={"me0044": {}},
+            sites={},
+            doc={"nodes": {"me0044": {}}},
+            keys={},
+            session=MagicMock(),
+            log=PollLog(progress=False),
+            cmd_timeout=9.0,
+            login_timeout=11.0,
+            discover_wait=0.0,
+            skip_discover=True,
+            do_poll=True,
+            do_apply=False,
+        )
+
+    def _queue(self) -> tuple[RadioJob, UnitQueue]:
+        target = RouterTarget(
+            key="me0044",
+            unit_id="ME0044",
+            name="ME0044",
+            site=None,
+            pubkey_hex="aa" * 32,
+            admin_password="AdminOneStrong1",
+        )
+        job = RadioJob(kind="get:hop_retry", unit_key="me0044", attempt_cap=AUDIT_GET_ATTEMPTS)
+        return job, UnitQueue(target=target, jobs=deque([job]))
+
+    async def test_parsed_hop_retry_stops(self) -> None:
+        job, uq = self._queue()
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = self._ctx(tmp)
+            with patch(
+                "envybot.fleet_worker.send_cmd_once",
+                new=AsyncMock(return_value="> 0"),
+            ):
+                outcome, _payload = await _execute_get_cli(job, uq, ctx, "hop_retry", 2, 3)
+        self.assertEqual(outcome, JobOutcome.HEARD)
+
+    async def test_unparsed_reply_is_not_silence(self) -> None:
+        job, uq = self._queue()
+        job.kind = "get:firmware"
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = self._ctx(tmp)
+            with patch(
+                "envybot.fleet_worker.send_cmd_once",
+                new=AsyncMock(return_value="not a version string"),
+            ):
+                outcome, payload = await _execute_get_cli(job, uq, ctx, "firmware", 1, 3)
+        self.assertEqual(outcome, JobOutcome.TIMEOUT)
+        self.assertEqual(payload, GET_REPLY_UNPARSED)
+
+    async def test_silent_hop_retry_ms_retries(self) -> None:
+        job, uq = self._queue()
+        job.kind = "get:hop_retry_ms"
+        with tempfile.TemporaryDirectory() as tmp:
+            ctx = self._ctx(tmp)
+            with patch(
+                "envybot.fleet_worker.send_cmd_once",
+                new=AsyncMock(return_value=None),
+            ):
+                outcome, payload = await _execute_get_cli(job, uq, ctx, "hop_retry_ms", 3, 3)
+        self.assertEqual(outcome, JobOutcome.TIMEOUT)
+        self.assertIsNone(payload)
 
 
 class ApplyTimeoutTests(unittest.IsolatedAsyncioTestCase):

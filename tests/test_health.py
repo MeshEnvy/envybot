@@ -52,6 +52,32 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(health["summary"], "Healthy — all checks pass")
         self.assertEqual(health["issues"], [])
 
+    def test_refresh_gaps_warn(self) -> None:
+        health = compute_health(
+            freshness="fresh",
+            session={"state": "ok"},
+            drift=None,
+            status={"battery_mv": 4200, "packets_recv": 1000, "recv_errors": 10},
+            telemetry={"voltage": 4.2, "temperature": 25.0},
+            traffic_interval={
+                "packets_recv": 50,
+                "packets_sent": 10,
+                "recv_errors": 2,
+                "duration_secs": 3600,
+                "rx_airtime_pct": 5.0,
+            },
+            traffic_window=_traffic_window(),
+            status_rows=[
+                {"ts": 1, "battery_mv": 4200, "uptime_secs": 1000},
+            ],
+            reboot_count=0,
+            refresh_gaps=["hop_retry_ms", "fem_rxgain"],
+        )
+        self.assertEqual(health["headline"], "attention")
+        refresh = next(c for c in health["checks"] if c["name"] == "Refresh")
+        self.assertEqual(refresh["status"], "warn")
+        self.assertIn("hop_retry_ms", refresh["reason"] or "")
+
     def test_config_due_is_not_attention(self) -> None:
         health = compute_health(
             freshness="fresh",

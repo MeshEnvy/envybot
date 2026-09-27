@@ -144,9 +144,24 @@ def compute_health(
     drift_detail: str | None = None,
     last_heard: int | None = None,
     now: int = 0,
+    refresh_gaps: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return grade + component checks for a fleet unit."""
     checks: list[dict[str, Any]] = []
+
+    gaps = [g for g in (refresh_gaps or []) if g]
+    if gaps:
+        shown = ", ".join(gaps[:5])
+        if len(gaps) > 5:
+            shown = f"{shown} (+{len(gaps) - 5} more)"
+        checks.append(
+            _check(
+                "Refresh",
+                "warn",
+                f"Incomplete refresh ({shown})",
+                fix="Automatic retry waits out the miss cooldown (about 1 hour). Use Sync to retry sooner.",
+            )
+        )
 
     heard_age: int | None = None
     if last_heard is not None and now:

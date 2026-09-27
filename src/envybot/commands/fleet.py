@@ -57,6 +57,7 @@ from envybot.poll import (
     poll_summary,
 )
 from envybot.position import site_loc_for_unit
+from envybot.silence_bail import BAIL_PAYLOAD, apply_silence_outcome
 from envybot.radio import (
     DEFAULT_MIN_POLL_INTERVAL,
     FleetSession,
@@ -642,7 +643,11 @@ async def run(args: argparse.Namespace) -> int:
             and not apply_job
             and (
                 outcome == JobOutcome.HARD_FAIL
-                or (outcome == JobOutcome.TIMEOUT and not uq.jobs)
+                or (
+                    outcome == JobOutcome.TIMEOUT
+                    and not uq.jobs
+                    and payload != BAIL_PAYLOAD
+                )
             )
         ):
             session_states[target.key] = {
@@ -671,9 +676,13 @@ async def run(args: argparse.Namespace) -> int:
                 queued=True,
             )
             if not args.quiet and outcome == JobOutcome.TIMEOUT:
+                if payload == BAIL_PAYLOAD:
+                    print("  refresh bailed after 3 radio silences; retry after cooldown")
                 still = job_still_queued(uq, job)
                 if still and uq.jobs[0].kind == job.kind:
                     if is_login_job(job):
+                        pass
+                    elif payload == BAIL_PAYLOAD:
                         pass
                     elif payload:
                         print(f"  retrying: {payload}")
@@ -769,7 +778,16 @@ async def run(args: argparse.Namespace) -> int:
         uq.session_extra["force_apply"] = bool(args.full_sync)
         if worker_ctx.force_path is not None and "forced_path" not in uq.session_extra:
             uq.session_extra["forced_path"] = worker_ctx.force_path.to_extra()
-        return await execute_job(job, uq, worker_ctx)
+        outcome, payload = await execute_job(job, uq, worker_ctx)
+        return apply_silence_outcome(
+            uq,
+            job,
+            outcome,
+            payload,
+            conn=conn,
+            unit=uq.target.key,
+            log=log,
+        )
 
     async def pause_watch() -> None:
         while not scheduler._stop:

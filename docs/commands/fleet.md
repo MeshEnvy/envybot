@@ -129,7 +129,13 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
   `--round-delay` pauses between scheduler retry rounds. On drop: `gave up after N,
   continuing` (actual attempts, and only when that job was dropped). A
   displaced in-flight login is not a give-up. Failed login drops remaining
-  console CLI (`stopping`, not `continuing`). On unit done with gaps: `partial OK`.
+  console CLI (`stopping`, not `continuing`).   On unit done with gaps: `partial OK`.
+- **Three radio silences in a row** (no reply frame) on a unit during auto
+  poll/apply **bails** the rest of that pass: remaining GET/SET jobs are dropped,
+  the unit gets the usual miss cooldown, and unstamped field names are stored in
+  sqlite `last_seen.refresh_gaps`. A text reply (even `??: …` or unparsed CLI)
+  resets the silence streak. The dashboard shows **Refresh** under attention until
+  those fields are stamped. Manual Sync clears cooldown and retries sooner.
 - Per-attempt mesh audit rows land in sqlite `mesh_audit` (unit, kind, label,
   path, wait, outcome, reply snippet). Detail card **Audit** table,
   `GET /api/audit/{unit}?limit=40&before_id=` (newest first, **Load older**),

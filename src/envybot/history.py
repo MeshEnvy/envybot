@@ -399,7 +399,61 @@ def _ensure_last_seen_columns(conn: sqlite3.Connection) -> None:
     ):
         if col not in cols:
             conn.execute(f"ALTER TABLE last_seen ADD COLUMN {col} INTEGER")
+    if "refresh_gaps" not in cols:
+        conn.execute("ALTER TABLE last_seen ADD COLUMN refresh_gaps TEXT")
     _backfill_last_seen_promoted_fields(conn)
+
+
+def parse_refresh_gaps(raw: Any | None) -> list[str]:
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [str(x) for x in raw if x]
+    text = str(raw).strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [str(x) for x in parsed if x]
+    except json.JSONDecodeError:
+        pass
+    return [part.strip() for part in text.split(",") if part.strip()]
+
+
+def merge_refresh_gaps(conn: sqlite3.Connection, unit: str, new_gaps: list[str]) -> None:
+    if not new_gaps:
+        return
+    seen = get_last_seen(conn, unit) or {}
+    merged = list(parse_refresh_gaps(seen.get("refresh_gaps")))
+    for gap in new_gaps:
+        if gap not in merged:
+            merged.append(gap)
+    _upsert_last_seen(
+        conn,
+        unit,
+        {"refresh_gaps": json.dumps(merged), "updated_at": int(time.time())},
+    )
+    conn.commit()
+
+
+def clear_refresh_gap(conn: sqlite3.Connection, unit: str, group: str) -> None:
+    seen = get_last_seen(conn, unit)
+    if not seen:
+        return
+    gaps = parse_refresh_gaps(seen.get("refresh_gaps"))
+    if group not in gaps:
+        return
+    gaps = [g for g in gaps if g != group]
+    _upsert_last_seen(
+        conn,
+        unit,
+        {
+            "updated_at": int(time.time()),
+            "refresh_gaps": json.dumps(gaps) if gaps else None,
+        },
+    )
+    conn.commit()
 
 
 def _backfill_last_seen_promoted_fields(conn: sqlite3.Connection) -> None:
@@ -1649,6 +1703,7 @@ def _upsert_last_seen(conn: sqlite3.Connection, unit: str, fields: dict[str, Any
         "agc_reset_interval_at",
         "rxgain_at",
         "ota_autofetch_at",
+        "refresh_gaps",
     ]
     placeholders = ", ".join("?" for _ in cols)
     col_sql = ", ".join(cols)
@@ -1805,6 +1860,14 @@ def record_poll(
     ):
         if group in groups:
             fields[col] = now
+    if groups:
+        seen_row = get_last_seen(conn, unit) or {}
+        gaps = parse_refresh_gaps(seen_row.get("refresh_gaps"))
+        if gaps:
+            for group in groups:
+                if group in gaps:
+                    gaps.remove(group)
+            fields["refresh_gaps"] = json.dumps(gaps) if gaps else None
     _upsert_last_seen(conn, unit, fields)
     conn.commit()
 

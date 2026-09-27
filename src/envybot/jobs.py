@@ -155,6 +155,31 @@ def drop_ota_poll_jobs(uq: UnitQueue, *, keep_head: bool = True) -> list[str]:
     return dropped
 
 
+def drop_remaining_poll_apply(uq: UnitQueue, *, skip_job: RadioJob | None = None) -> list[str]:
+    """Drop queued login/get/apply/cmd jobs. Returns dropped job kinds."""
+    dropped: list[str] = []
+    kept: list[RadioJob] = []
+    for job in uq.jobs:
+        if skip_job is not None and job is skip_job:
+            kept.append(job)
+            continue
+        if is_console_job(job) or is_path_job(job):
+            kept.append(job)
+            continue
+        if (
+            job.kind == "login"
+            or job.kind.startswith("get:")
+            or job.kind.startswith("apply:")
+            or job.kind.startswith("cmd:")
+        ):
+            dropped.append(job.kind)
+            continue
+        kept.append(job)
+    uq.jobs.clear()
+    uq.jobs.extend(kept)
+    return dropped
+
+
 def drop_remaining_apply(uq: UnitQueue) -> list[str]:
     """Drop queued SET jobs after a hard apply fail or exhausted retries."""
     dropped: list[str] = []
@@ -437,6 +462,21 @@ class FleetScheduler:
                 uq.jobs.clear()
                 uq.apply_aborted = True
         else:
+            if payload == "bail":
+                uq.jobs.popleft()
+                job.attempt = 0
+                bail_dropped = uq.session_extra.pop("bail_dropped", [])
+                if bail_dropped:
+                    dropped = uq.session_extra.setdefault("dropped_jobs", [])
+                    if isinstance(dropped, list):
+                        for kind in bail_dropped:
+                            if kind not in dropped:
+                                dropped.append(kind)
+                if job.future and not job.future.done() and not defer:
+                    job.future.set_exception(TimeoutError("refresh bailed after radio silences"))
+                if _auto_retry_policy(job, uq) and self.miss_cooldown > 0:
+                    uq.cooldown_until = time.monotonic() + self.miss_cooldown
+                return
             job.attempt += 1
             cap = job.attempt_cap or self.max_attempts
             if cap and job.attempt >= cap:

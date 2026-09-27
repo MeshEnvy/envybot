@@ -149,6 +149,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   ride the learned path (`mesh_audit.path` = hop hashes, `direct`, or `flood`).
   Auto flood-discovers when cache is empty; timeout on cached path (3x)
   discards cache and re-floods. Locked path re-applies book `route:`.
+  Three consecutive **radio silences** (no reply) bail the rest of that pass,
+  set miss cooldown, and record gap names in `last_seen.refresh_gaps` (health
+  **Refresh** warn until stamped). Any text reply resets the silence streak.
   Neighbor discover wait (default 12s) is a background timer, not radio hold.
   Manual Refresh/Pull/Deploy replace that unit's remaining jobs except a
   queued console send (stays in front). A click mid-GET supersedes the

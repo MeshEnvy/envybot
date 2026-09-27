@@ -13,6 +13,7 @@ from envybot.web.profile_fields import build_profile_rows, build_radio_prefs, pr
 from envybot.health import compute_health
 from envybot.history import (
     all_last_seen,
+    parse_refresh_gaps,
     latest_acl_snapshot,
     compact_sparks,
     interval_traffic,
@@ -795,6 +796,7 @@ def build_fleet_snapshot(
                 audit_path=audit_path_map.get(key),
             )
             status_rows = status_rows_map.get(key, [])
+            seen_row = seen_map.get(key) or {}
             units[key]["health"] = compute_health(
                 freshness=units[key]["freshness"],
                 session=states.get(key),
@@ -809,6 +811,7 @@ def build_fleet_snapshot(
                 stability_ack_ts=_stability_ack_ts(node),
                 last_heard=units[key].get("last_heard"),
                 now=now,
+                refresh_gaps=parse_refresh_gaps(seen_row.get("refresh_gaps")),
             )
             units[key]["sparks"] = compact_sparks(status_rows, conn=conn, unit=key, now=now)
         attach_neighbor_miles(units, reported_locs)

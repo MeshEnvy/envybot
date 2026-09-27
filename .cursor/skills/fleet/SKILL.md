@@ -144,6 +144,8 @@ Fleet UI: set **Route** to **Path**, paste the same log text (names and `{lora.s
 | `--retry-delay SEC` | Auto backoff after timeout (default 60) |
 | `--deployed-only` | Site-bound units only |
 
+Three consecutive **radio silences** (no reply) on auto poll/apply bail the rest of that unit's pass, apply miss cooldown, and store unstamped groups in sqlite `refresh_gaps` (dashboard **Refresh** under attention). Text replies reset the streak. Manual Sync clears cooldown.
+
 Companion flags match `cmd`: `--ble`, `--serial`, `--tcp`, `--timeout`, `--login-timeout`, `-v`.
 
 ## UI manual jobs (companion worker live)
