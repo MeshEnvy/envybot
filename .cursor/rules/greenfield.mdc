@@ -1,6 +1,6 @@
 ---
 description: EnvyBot is unshipped greenfield — no migrations, dual-read, or leftover keys
-alwaysApply: true
+alwaysApply: false
 ---
 
 # Greenfield
