@@ -23,7 +23,10 @@ Idempotent on identity, creds, radio, name, and GPS:
    otherwise silently drops mesh login.
 4. Set USA/Canada radio (`910.525`, BW 62.5, SF7, CR 4/5), dutycycle 50%
    (`set af 1` on MeshCore before 1.15), `path.hash.mode` 1 (2-byte),
-   `ota config autofetch off`, advert 0 / flood advert 0.
+   `ota config autofetch off`, advert 0 / flood advert 0, `repeat off`.
+   Writes `repeat: false` on the book row when that key is absent, so a
+   later site bind does not turn repeat on. An existing `repeat: true`
+   is left alone and the radio is set to match.
 5. Bench mask: name `ME####` (reserved before USB SETs) and GPS `0,0`.
    Book `name` is not set. No `public` key (private default).
 6. Write the book row (identity, creds). Then stamp fleet ACL from
@@ -49,11 +52,34 @@ Idempotent on identity, creds, radio, name, and GPS:
 The **DUT** on USB. Not the BLE companion used by [`fleet`](fleet.md).
 Not the USB OTA seeder used by [`seed`](seed.md).
 
+## Flash then onboard
+
+For a blank or old-bootloader unit, flash EnvyOS bench artifacts before the
+CLI sequence:
+
+```bash
+./envybot onboard --with-flash-bootloader --with-flash-firmware \
+  --target xiao-nrf52-repeater-slim
+```
+
+Requires a built envyos bench tree (`./envyos build bootloader` and meshcore
+for the target). See [`flash`](flash.md). `--target` is required when either
+flash flag is set. `--envyos` and `--flash-wait` pass through to the flash
+step.
+
+Bootloader-only (`--with-flash-bootloader` without firmware) exits after the
+recovery zip because the app is wiped.
+
 ## Flags
 
 | Flag | Default | Meaning |
 |------|---------|---------|
 | `port` | autodetect | USB path, or `usbmodemNNNN` |
+| `--with-flash-bootloader` | off | Flash OTAFIX recovery zip first |
+| `--with-flash-firmware` | off | Flash MeshCore firmware zip first |
+| `--target SLUG` | | Required with flash flags (e.g. `xiao-nrf52-repeater-slim`) |
+| `--envyos DIR` | `../envyos` | Bench artifact root |
+| `--flash-wait SEC` | 120 | USB wait during flash |
 | `--unit KEY` | allocate | Bind this book key (create if missing) |
 | `--admin-pw` | generated or yaml | Admin password |
 | `--guest-pw` | generated or yaml | Guest password (`''` for blank) |

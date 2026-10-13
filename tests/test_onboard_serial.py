@@ -15,6 +15,7 @@ from envybot.commands.onboard import (
     apply_admin_password,
     apply_ota_autofetch_policy,
     apply_path_hash_policy,
+    register,
     resolve_unit,
     stamp_fleet_ready,
     wait_usb_gone,
@@ -213,3 +214,44 @@ class StampFleetReadyTests(unittest.TestCase):
             pid = stamp_fleet_ready(nodes_path, "me0051")
             self.assertIsNotNone(pid)
             self.assertFalse(apply_is_due(conn, "me0051", node, None))
+
+
+class InitialRepeatTests(unittest.TestCase):
+    def _result(self) -> dict:
+        return {
+            "pubkey": "bb" * 32,
+            "secret": "cc" * 64,
+            "admin_password": "AdminOneStrong1",
+            "guest_password": "",
+            "admin_changed": False,
+            "guest_changed": False,
+            "firmware_platform": "meshcore",
+            "firmware_version": "1.17.1-ev1",
+            "bootloader_version": "0.9.2-ev2",
+            "base_hash": None,
+            "node_clock": None,
+            "neighbors": None,
+        }
+
+    def test_register_pins_repeat_off_when_unset(self) -> None:
+        from envybot.nodes_doc import load_nodes_doc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            nodes_path = Path(tmp) / "nodes.yaml"
+            write_nodes_doc(nodes_path, {"next_unit": 54, "nodes": {"me0053": {"unit_id": "ME0053"}}})
+            register(nodes_path, self._result(), unit="me0053")
+            node = load_nodes_doc(nodes_path)["nodes"]["me0053"]
+            self.assertIs(node["repeat"], False)
+
+    def test_register_keeps_explicit_repeat_on(self) -> None:
+        from envybot.nodes_doc import load_nodes_doc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            nodes_path = Path(tmp) / "nodes.yaml"
+            write_nodes_doc(
+                nodes_path,
+                {"next_unit": 54, "nodes": {"me0053": {"unit_id": "ME0053", "repeat": True}}},
+            )
+            register(nodes_path, self._result(), unit="me0053")
+            node = load_nodes_doc(nodes_path)["nodes"]["me0053"]
+            self.assertIs(node["repeat"], True)

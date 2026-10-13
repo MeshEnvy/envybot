@@ -34,6 +34,7 @@ except ImportError as exc:  # pragma: no cover
 
 from envybot.apply import (
     board_allows_rxgain,
+    desired_repeat,
     desired_agc_reset_interval,
     desired_fem_rxgain,
     desired_ota_autofetch,
@@ -1005,14 +1006,21 @@ def onboard(
             raise CliError(f"advert verify failed: local={adv} flood={flood}")
         print("   local 0m / flood 0h")
 
-    print("5b. repeat off …")
+    repeat_on = desired_repeat(node or {}, None, key=key)
+    repeat_word = "on" if repeat_on else "off"
+    print(f"5b. repeat {repeat_word} …")
+
+    def _repeat_is(want_on: bool) -> bool:
+        heard = (parse_get_value(cli.cmd("get repeat")) or "").strip().lower()
+        return heard in ("on", "1", "true") if want_on else heard in ("off", "0", "false")
+
     apply_if_needed(
         cli,
-        step="set repeat off",
-        already=(parse_get_value(cli.cmd("get repeat")) or "").strip().lower() in ("off", "0", "false"),
-        setter="set repeat off",
-        verify=lambda: (parse_get_value(cli.cmd("get repeat")) or "").strip().lower() in ("off", "0", "false"),
-        ok_label="off",
+        step=f"set repeat {repeat_word}",
+        already=_repeat_is(repeat_on),
+        setter=f"set repeat {repeat_word}",
+        verify=lambda: _repeat_is(repeat_on),
+        ok_label=repeat_word,
         force=force,
     )
 
@@ -1149,6 +1157,8 @@ def register(nodes_path: Path, result: dict[str, Any], *, unit: str | None) -> t
     node.pop("site", None)
     node.pop("lat", None)
     node.pop("lon", None)
+    if "repeat" not in node:
+        node["repeat"] = False
     write_nodes_doc(nodes_path, doc)
     conn = open_history(nodes_path.parent)
     record_onboard_heard(
@@ -1206,7 +1216,80 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--baud", type=int, default=BAUD)
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument(
+        "--with-flash-bootloader",
+        action="store_true",
+        help="Flash EnvyOS OTAFIX bootloader from bench before onboard",
+    )
+    parser.add_argument(
+        "--with-flash-firmware",
+        action="store_true",
+        help="Flash EnvyOS MeshCore firmware from bench before onboard",
+    )
+    parser.add_argument(
+        "--target",
+        metavar="SLUG",
+        help="EnvyOS target slug (required with --with-flash-*)",
+    )
+    parser.add_argument(
+        "--envyos",
+        type=Path,
+        default=None,
+        help="EnvyOS repo root for flash artifacts (default ../envyos or ENVYOS_ROOT)",
+    )
+    parser.add_argument(
+        "--flash-wait",
+        type=float,
+        default=120.0,
+        metavar="SEC",
+        help="USB wait during flash steps (default 120)",
+    )
     args = parser.parse_args(argv)
+
+    if (args.with_flash_bootloader or args.with_flash_firmware) and not args.target:
+        parser.error("--target is required with --with-flash-bootloader or --with-flash-firmware")
+
+    flash_port = args.port
+    if args.with_flash_bootloader or args.with_flash_firmware:
+        from envybot.flash_program import (
+            default_envyos_root,
+            flash_bootloader_package,
+            flash_firmware_package,
+            resolve_bootloader_zip,
+            resolve_firmware_artifacts,
+            resolve_target,
+        )
+
+        spec = resolve_target(args.target or "")
+        envyos = (args.envyos or default_envyos_root()).resolve()
+        if args.with_flash_bootloader:
+            bl_zip = resolve_bootloader_zip(envyos, spec)
+            flash_bootloader_package(
+                bl_zip,
+                spec,
+                port=flash_port,
+                wait_s=args.flash_wait,
+                verbose=args.verbose,
+            )
+        if args.with_flash_firmware:
+            fw_zip, uf2 = resolve_firmware_artifacts(envyos, spec)
+            flash_firmware_package(
+                fw_zip,
+                spec,
+                uf2=uf2,
+                port=flash_port,
+                wait_s=args.flash_wait,
+                verbose=args.verbose,
+            )
+        elif args.with_flash_bootloader:
+            print(
+                "Bootloader flash wipes the app. Re-run with --with-flash-firmware "
+                "to install MeshCore, then onboard."
+            )
+            return 0
+        if args.with_flash_firmware:
+            print(f"waiting for app USB ({REBOOT_SETTLE_S:g}s) …")
+            time.sleep(REBOOT_SETTLE_S)
 
     port = pick_port(args.port, baud=args.baud, timeout=args.timeout, verbose=args.verbose)
     print(f"USB {port}")

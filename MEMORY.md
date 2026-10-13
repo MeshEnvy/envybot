@@ -8,7 +8,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | Repo | [MeshEnvy/envybot](https://github.com/MeshEnvy/envybot) |
 | Version | 0.1.0 |
 | Tooling | `uv` + `pyproject.toml` |
-| Commands | `fleet`, `trust`, `cmd`, `onboard`, `seed`, `weather` |
+| Commands | `fleet`, `trust`, `cmd`, `onboard`, `flash`, `seed`, `weather` |
 | Book | `--book` / `ENVYBOT_HOME` / cwd with `nodes.yaml` (+ `keys.yaml`, `channels.yaml`) |
 
 ## Layout
@@ -36,7 +36,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/commands/fleet.py` | Localhost manager |
 | `src/envybot/commands/trust.py` | Contacts + channels + keys.yaml / ACL login |
 | `src/envybot/commands/cmd.py` | Remote MeshCore CLI |
-| `src/envybot/commands/onboard.py` | USB repeater text CLI onboard (`path.hash.mode` 1, `get acl` is `ACL:` dump). Stamps private `applies` so fleet is ready. |
+| `src/envybot/commands/onboard.py` | USB repeater text CLI onboard (`path.hash.mode` 1, `get acl` is `ACL:` dump). Sets `repeat off` and writes `repeat: false` when the book key is absent. Stamps private `applies` so fleet is ready. Optional `--with-flash-bootloader` / `--with-flash-firmware`. |
+| `src/envybot/flash_program.py` | Bench artifact discovery, 1200 touch, nrfutil serial DFU (injectable runner). v1 USB IDs: Xiao only. |
+| `src/envybot/commands/flash.py` | `flash bootloader|firmware --target` |
 | `src/envybot/mota.py` | Light `.mota` parse for USB seeder catalog |
 | `src/envybot/seeder.py` | mota-seeder host (COUNT / DESCRIBE / READ); sets `dutycycle 10` on launch |
 | `src/envybot/commands/seed.py` | USB OTA folder relay (`envybot seed`) |

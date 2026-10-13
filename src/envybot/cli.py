@@ -51,6 +51,12 @@ def cmd_seed(book: Path, argv: list[str]) -> int:
     return seed.main(argv)
 
 
+def cmd_flash(book: Path, argv: list[str]) -> int:
+    from envybot.commands import flash
+
+    return flash.main(argv)
+
+
 def cmd_weather(book: Path, argv: list[str]) -> int:
     from envybot.commands import weather
 
@@ -63,6 +69,7 @@ COMMANDS: dict[str, tuple[str, Command]] = {
     "onboard": ("USB-serial onboard a repeater (idempotent)", cmd_onboard),
     "cmd": ("Run remote MeshCore CLI on one unit", cmd_cmd),
     "seed": ("USB-serial OTA seeder (.mota folder relay)", cmd_seed),
+    "flash": ("USB flash EnvyOS bootloader or firmware", cmd_flash),
     "weather": ("Open-Meteo cache for fleet poll history", cmd_weather),
 }
 
