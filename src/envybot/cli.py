@@ -63,6 +63,12 @@ def cmd_weather(book: Path, argv: list[str]) -> int:
     return weather.main(book, argv)
 
 
+def cmd_range(book: Path, argv: list[str]) -> int:
+    from envybot.commands import range as range_cmd
+
+    return range_cmd.main(book, argv)
+
+
 COMMANDS: dict[str, tuple[str, Command]] = {
     "fleet": ("Localhost fleet manager (map, poll, apply)", cmd_fleet),
     "trust": ("Companion contacts and keys.yaml ACL grant", cmd_trust),
@@ -71,6 +77,7 @@ COMMANDS: dict[str, tuple[str, Command]] = {
     "seed": ("USB-serial OTA seeder (.mota folder relay)", cmd_seed),
     "flash": ("USB flash EnvyOS bootloader or firmware", cmd_flash),
     "weather": ("Open-Meteo cache for fleet poll history", cmd_weather),
+    "range": ("USB shootout of two repeaters (discover SNR)", cmd_range),
 }
 
 

@@ -8,7 +8,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | Repo | [MeshEnvy/envybot](https://github.com/MeshEnvy/envybot) |
 | Version | 0.1.0 |
 | Tooling | `uv` + `pyproject.toml` |
-| Commands | `fleet`, `trust`, `cmd`, `onboard`, `flash`, `seed`, `weather` |
+| Commands | `fleet`, `trust`, `cmd`, `onboard`, `flash`, `seed`, `weather`, `range` |
 | Book | `--book` / `ENVYBOT_HOME` / cwd with `nodes.yaml` (+ `keys.yaml`, `channels.yaml`) |
 
 ## Layout
@@ -43,6 +43,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/seeder.py` | mota-seeder host (COUNT / DESCRIBE / READ); sets `dutycycle 10` on launch |
 | `src/envybot/commands/seed.py` | USB OTA folder relay (`envybot seed`) |
 | `src/envybot/commands/weather.py` | Open-Meteo cache backfill (`envybot weather backfill`) |
+| `src/envybot/commands/range.py` | USB shootout (`envybot range`). Two repeaters alternate `discover.neighbors`. Table is local `rx` and remote `in` SNR. |
 | `src/envybot/web/` | Fleet UI (`:8787`); header **Console** (tabbed priority CLI) |
 
 ## Contract

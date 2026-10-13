@@ -21,6 +21,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 try:
@@ -306,6 +307,30 @@ class RepeaterSerial:
             shown = reply.replace("\n", " | ")
             print(f"    <- {shown}")
         return reply
+
+    def read_for(self, seconds: float, stop: Callable[[], bool] | None = None) -> str:
+        deadline = time.monotonic() + seconds
+        chunks: list[str] = []
+        while time.monotonic() < deadline:
+            if stop is not None and stop():
+                break
+            chunk = self.ser.read(512)
+            if chunk:
+                chunks.append(chunk.decode("utf-8", errors="replace"))
+            else:
+                time.sleep(0.05)
+        return "".join(chunks)
+
+    def capture(self, command: str, seconds: float, stop: Callable[[], bool] | None = None) -> str:
+        """Send one CLI line and keep every byte for ``seconds``, including late prints."""
+        self._drain()
+        if self.verbose:
+            print(f"    > {command}")
+        self._write_raw((command + "\r").encode("ascii", errors="strict"))
+        text = self.read_for(seconds, stop)
+        if self.verbose and text:
+            print(text.rstrip())
+        return text
 
     @staticmethod
     def _normalize_buf(buf: str) -> str:
