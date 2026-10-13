@@ -41,11 +41,22 @@ class FlashTarget:
     app_vid: int
     app_pid: int
     bl_vid: int
-    bl_pid: int
+    bl_pids: tuple[int, ...]
     uf2_volume: str
 
 
 TARGETS: dict[str, FlashTarget] = {
+    "rak4631-repeater-slim": FlashTarget(
+        slug="rak4631-repeater-slim",
+        bootloader_glob="rak4631_bootloader-*.recovery.zip",
+        firmware_prefix="meshcore-rak4631-repeater-slim-",
+        app_vid=0x239A,
+        app_pid=0x8029,
+        bl_vid=0x239A,
+        # 0x0029 is UF2+CDC. A 1200 touch uses serial-only DFU, which is 0x002A.
+        bl_pids=(0x0029, 0x002A),
+        uf2_volume="RAK4631",
+    ),
     "xiao-nrf52-repeater-slim": FlashTarget(
         slug="xiao-nrf52-repeater-slim",
         bootloader_glob="xiao_nrf52840_ble_bootloader-*.recovery.zip",
@@ -53,7 +64,7 @@ TARGETS: dict[str, FlashTarget] = {
         app_vid=0x2886,
         app_pid=0x8044,
         bl_vid=0x2886,
-        bl_pid=0x0044,
+        bl_pids=(0x0044,),
         uf2_volume="XIAO-BOOT",
     ),
 }
@@ -187,14 +198,20 @@ def _port_vid_pid(port: str) -> tuple[int | None, int | None]:
     return None, None
 
 
-def _ports_matching(vid: int, pid: int) -> list[str]:
+def _ports_matching(vid: int, pids: tuple[int, ...]) -> list[str]:
     if list_ports is None:
         return []
+    want = set(pids)
     out: list[str] = []
     for info in list_ports.comports():
-        if info.vid == vid and info.pid == pid and info.device:
+        if info.vid == vid and info.pid in want and info.device:
             out.append(info.device)
     return sorted(out)
+
+
+def _cdc_label(spec: FlashTarget) -> str:
+    pids = ",".join(f"{spec.bl_vid:04x}:{pid:04x}" for pid in spec.bl_pids)
+    return pids
 
 
 def uf2_mount_path(volume: str) -> Path | None:
@@ -206,7 +223,7 @@ def uf2_mount_path(volume: str) -> Path | None:
 
 def classify_usb(spec: FlashTarget, *, hint_port: str | None = None) -> tuple[UsbPhase, str | None]:
     # CDC and the UF2 disk enumerate together. The recovery zip needs the serial port.
-    bl_ports = _ports_matching(spec.bl_vid, spec.bl_pid)
+    bl_ports = _ports_matching(spec.bl_vid, spec.bl_pids)
     if bl_ports:
         if hint_port and hint_port in bl_ports:
             return UsbPhase.BOOTLOADER, hint_port
@@ -215,7 +232,7 @@ def classify_usb(spec: FlashTarget, *, hint_port: str | None = None) -> tuple[Us
     if uf2_mount_path(spec.uf2_volume):
         return UsbPhase.UF2_VOLUME, None
 
-    app_ports = _ports_matching(spec.app_vid, spec.app_pid)
+    app_ports = _ports_matching(spec.app_vid, (spec.app_pid,))
     if app_ports:
         if hint_port and hint_port in app_ports:
             return UsbPhase.APP, hint_port
@@ -223,7 +240,7 @@ def classify_usb(spec: FlashTarget, *, hint_port: str | None = None) -> tuple[Us
 
     if hint_port and Path(hint_port).exists():
         vid, pid = _port_vid_pid(hint_port)
-        if vid == spec.bl_vid and pid == spec.bl_pid:
+        if vid == spec.bl_vid and pid in spec.bl_pids:
             return UsbPhase.BOOTLOADER, hint_port
         if vid == spec.app_vid and pid == spec.app_pid:
             return UsbPhase.APP, hint_port
@@ -350,7 +367,7 @@ def ensure_bootloader_port(
     if phase == UsbPhase.UF2_VOLUME:
         print(
             f"   {spec.uf2_volume} is mounted. Waiting up to {wait_s:g}s for bootloader CDC "
-            f"({spec.bl_vid:04x}:{spec.bl_pid:04x})."
+            f"({_cdc_label(spec)})."
         )
         deadline = time.monotonic() + wait_s
         while time.monotonic() < deadline:
@@ -360,7 +377,7 @@ def ensure_bootloader_port(
                 return found
         raise SystemExit(
             f"Timed out after {wait_s:g}s waiting for bootloader USB "
-            f"(CDC {spec.bl_vid:04x}:{spec.bl_pid:04x}). {spec.uf2_volume} is still the only USB device."
+            f"(CDC {_cdc_label(spec)}). {spec.uf2_volume} is still the only USB device."
         )
 
     if phase == UsbPhase.APP and found:
@@ -399,7 +416,7 @@ def ensure_bootloader_port(
         return found
 
     raise SystemExit(
-        f"Timed out after {wait_s:g}s waiting for bootloader USB (CDC {spec.bl_vid:04x}:{spec.bl_pid:04x})."
+        f"Timed out after {wait_s:g}s waiting for bootloader USB (CDC {_cdc_label(spec)})."
     )
 
 

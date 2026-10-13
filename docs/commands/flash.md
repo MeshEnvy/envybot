@@ -1,8 +1,7 @@
 # `envybot flash`
 
-USB programming for EnvyOS bench artifacts on nRF52 OTAFIX boards. v1
-autodetects USB by VID/PID for the Seeed XIAO nRF52840 slim repeater target
-only.
+USB programming for EnvyOS bench artifacts on nRF52 OTAFIX boards.
+Autodetects USB by VID/PID for the targets below.
 
 Does not write `nodes.yaml`. Use [`onboard`](onboard.md) after firmware is
 on the chip.
@@ -16,10 +15,12 @@ on the chip.
 
 Discovery reads the sibling EnvyOS repo (`../envyos` or `ENVYOS_ROOT`):
 
-| Subcommand | Default artifact |
-|------------|------------------|
-| `bootloader` | Newest `xiao_nrf52840_ble_bootloader-*.recovery.zip` under `build/*/bench/adafruit-nrf52-bootloader-*` |
-| `firmware` | Newest `meshcore-xiao-nrf52-repeater-slim-*.zip` (and matching `.uf2`) under `build/*/bench/meshcore-*/xiao-nrf52-repeater-slim/` |
+| `--target` | Bootloader zip | Firmware zip / UF2 | App | Bootloader CDC | Volume |
+|------------|----------------|------------------|-----|----------------|--------|
+| `xiao-nrf52-repeater-slim` | `xiao_nrf52840_ble_bootloader-*.recovery.zip` | `meshcore-xiao-nrf52-repeater-slim-*` | `2886:8044` | `2886:0044` | `XIAO-BOOT` |
+| `rak4631-repeater-slim` | `rak4631_bootloader-*.recovery.zip` | `meshcore-rak4631-repeater-slim-*` | `239A:8029` | `239A:0029` or `239A:002A` | `RAK4631` |
+
+Bootloader zips are the newest match under `build/*/bench/adafruit-nrf52-bootloader-*`. Firmware files are the newest match under `build/*/bench/meshcore-*/<slug>/`.
 
 Override paths with `--bootloader`, `--firmware`, or `--uf2`.
 
@@ -37,9 +38,9 @@ reset; `flash` waits up to `--wait` seconds (default 120).
 
 ## USB flow
 
-1. **App running** (`2886:8044`): open the port at 1200 baud and drop DTR
-   (Adafruit 1200 touch). Wait for the app port to disappear and bootloader
-   CDC (`2886:0044`) or the `XIAO-BOOT` UF2 volume to appear.
+1. **App running** (the App VID:PID in the table): open the port at 1200 baud
+   and drop DTR (Adafruit 1200 touch). Wait for the app port to disappear and
+   bootloader CDC or the UF2 volume to appear.
 2. **Bootloader CDC already up**: run `adafruit-nrfutil dfu serial` immediately.
    Do not pass `--touch` to nrfutil.
 3. **UF2 volume only** (`firmware` + `.uf2`): copy the UF2 onto the volume.
@@ -54,7 +55,7 @@ reset; `flash` waits up to `--wait` seconds (default 120).
 
 | Flag | Meaning |
 |------|---------|
-| `--target SLUG` | Required. e.g. `xiao-nrf52-repeater-slim` |
+| `--target SLUG` | Required. `xiao-nrf52-repeater-slim` or `rak4631-repeater-slim` |
 | `port` | Optional USB path; VID/PID wins when omitted |
 | `--envyos DIR` | EnvyOS root for bench discovery |
 | `--wait SEC` | Bootloader wait (default 120) |

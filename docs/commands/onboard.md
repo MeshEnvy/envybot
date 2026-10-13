@@ -77,7 +77,7 @@ recovery zip because the app is wiped.
 | `port` | autodetect | USB path, or `usbmodemNNNN` |
 | `--with-flash-bootloader` | off | Flash OTAFIX recovery zip first |
 | `--with-flash-firmware` | off | Flash MeshCore firmware zip first |
-| `--target SLUG` | | Required with flash flags (e.g. `xiao-nrf52-repeater-slim`) |
+| `--target SLUG` | | Required with flash flags (`xiao-nrf52-repeater-slim`, `rak4631-repeater-slim`) |
 | `--envyos DIR` | `../envyos` | Bench artifact root |
 | `--flash-wait SEC` | 120 | USB wait during flash |
 | `--unit KEY` | allocate | Bind this book key (create if missing) |

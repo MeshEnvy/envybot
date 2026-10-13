@@ -21,6 +21,7 @@ from envybot.commands.onboard import CliError
 
 
 XIAO = resolve_target("xiao-nrf52-repeater-slim")
+RAK = resolve_target("rak4631-repeater-slim")
 
 
 class ArtifactDiscoveryTests(unittest.TestCase):
@@ -69,13 +70,20 @@ class ArtifactDiscoveryTests(unittest.TestCase):
             self.assertEqual(got_z, zpath)
             self.assertEqual(got_u, uf2)
 
+    def test_rak_identity(self) -> None:
+        self.assertEqual(RAK.bootloader_glob, "rak4631_bootloader-*.recovery.zip")
+        self.assertEqual(RAK.firmware_prefix, "meshcore-rak4631-repeater-slim-")
+        self.assertEqual(RAK.uf2_volume, "RAK4631")
+        self.assertEqual((RAK.app_vid, RAK.app_pid), (0x239A, 0x8029))
+        self.assertEqual(RAK.bl_pids, (0x0029, 0x002A))
+
 
 class UsbPhaseTests(unittest.TestCase):
     def test_classify_bootloader_vid_pid(self) -> None:
         fake = mock.Mock()
         fake.device = "/dev/cu.usbmodem1"
         fake.vid = XIAO.bl_vid
-        fake.pid = XIAO.bl_pid
+        fake.pid = XIAO.bl_pids[0]
         with mock.patch("envybot.flash_program.list_ports") as lp:
             lp.comports.return_value = [fake]
             with mock.patch("envybot.flash_program.uf2_mount_path", return_value=None):
@@ -83,11 +91,23 @@ class UsbPhaseTests(unittest.TestCase):
         self.assertEqual(phase, UsbPhase.BOOTLOADER)
         self.assertEqual(port, "/dev/cu.usbmodem1")
 
+    def test_rak_serial_only_dfu_is_bootloader(self) -> None:
+        fake = mock.Mock()
+        fake.device = "/dev/cu.usbmodem1"
+        fake.vid = RAK.bl_vid
+        fake.pid = 0x002A
+        with mock.patch("envybot.flash_program.list_ports") as lp:
+            lp.comports.return_value = [fake]
+            with mock.patch("envybot.flash_program.uf2_mount_path", return_value=None):
+                phase, port = classify_usb(RAK)
+        self.assertEqual(phase, UsbPhase.BOOTLOADER)
+        self.assertEqual(port, "/dev/cu.usbmodem1")
+
     def test_classify_prefers_cdc_when_uf2_volume_is_mounted(self) -> None:
         fake = mock.Mock()
         fake.device = "/dev/cu.usbmodem1"
         fake.vid = XIAO.bl_vid
-        fake.pid = XIAO.bl_pid
+        fake.pid = XIAO.bl_pids[0]
         with mock.patch("envybot.flash_program.list_ports") as lp:
             lp.comports.return_value = [fake]
             with mock.patch("envybot.flash_program.uf2_mount_path", return_value=Path("/Volumes/XIAO-BOOT")):
