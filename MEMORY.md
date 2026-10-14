@@ -24,7 +24,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/history.py` | `data/fleet/history.sqlite` (+ `mesh_audit` per send; `list_mesh_audit`) |
 | `src/envybot/health.py` | Per-node health checks (snapshot + UI grade) |
 | `src/envybot/position.py` | Map pin: site → node `loc`. Sun/history: + `bench_loc` (ingestor). Apply: site only |
-| `src/envybot/links.py` | Peaky book: `load_manual_links` (`links.json`), `read_link_status` (`links/<a>/<b>.json`) |
+| `src/envybot/links.py` | Peaky book: `load_manual_links` (`links/` files with `manual: true`), `read_link_status` (`links/<a>/<b>.json`) |
 | `src/envybot/sun.py` | Clear-sky elev: ☀️/🌙 + 72h elevation sparkline |
 | `src/envybot/weather.py` | Open-Meteo cache + attach on poll history |
 | `src/envybot/radio.py` | Companion session, login, CLI/binary |

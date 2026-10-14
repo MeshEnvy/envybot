@@ -1,4 +1,4 @@
-"""Peaky book link overrides (``links.json``) and per-pair RF cache (``links/``)."""
+"""Peaky book manual link overrides and per-pair RF records under ``links/``."""
 
 from __future__ import annotations
 
@@ -13,25 +13,25 @@ def _canonical_pair(a: str, b: str) -> tuple[str, str]:
 
 
 def load_manual_links(book_dir: Path) -> list[tuple[str, str]]:
-    """Manual override pairs from ``links.json`` only."""
-    path = book_dir / "links.json"
-    if not path.is_file():
-        return []
-    doc = json.loads(path.read_text(encoding="utf-8"))
-    raw = doc.get("links") if isinstance(doc, dict) else None
-    if not isinstance(raw, list):
+    """Manual override pairs from ``links/<a>/<b>.json`` with ``manual: true``."""
+    root = book_dir / "links"
+    if not root.is_dir():
         return []
     out: list[tuple[str, str]] = []
-    for item in raw:
-        if isinstance(item, list) and len(item) == 2:
-            a, b = str(item[0]), str(item[1])
-        elif isinstance(item, dict):
-            a = str(item.get("a") or "")
-            b = str(item.get("b") or "")
-        else:
+    for slug_dir in sorted(root.iterdir()):
+        if not slug_dir.is_dir():
             continue
-        if a and b and a != b:
-            out.append(_canonical_pair(a, b))
+        for path in sorted(slug_dir.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(data, dict) or not data.get("manual"):
+                continue
+            a = str(data.get("a") or slug_dir.name)
+            b = str(data.get("b") or path.stem)
+            if a and b and a != b:
+                out.append(_canonical_pair(a, b))
     return out
 
 
