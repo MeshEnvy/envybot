@@ -54,7 +54,11 @@ except ImportError as exc:  # pragma: no cover
         "  ./envybot fleet"
     ) from exc
 
-VER_RE = re.compile(r"^([0-9]+(?:\.[0-9]+)*)\s*\(Build:", re.I)
+VER_RE = re.compile(r"^(v?[0-9]+(?:\.[0-9]+)*)\s*\(Build:", re.I)
+FW_SUFFIX_RE = re.compile(
+    r"^(v[0-9]+(?:\.[0-9]+)+(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?)(?:\s|$)",
+    re.I,
+)
 BL_RE = re.compile(r"^>\s*(.+)$")
 OTA_SELF_HASH_RE = re.compile(r"base_hash=([0-9A-Fa-f]{16})", re.I)
 VERSION_POLL_NOTE_RE = re.compile(r"(?:\s*[—–-]\s*)?version poll (\d{4}-\d{2}-\d{2})", re.I)
@@ -730,11 +734,10 @@ def airtime_factor_for_dutycycle(pct: float) -> float:
 
 def parse_firmware(text: str) -> tuple[str | None, str | None]:
     text = text.strip()
-    m = VER_RE.match(text)
-    if m:
-        return m.group(1), "meshcore"
-    if text:
-        return text.split()[0], "meshcore"
+    for pat in (VER_RE, FW_SUFFIX_RE):
+        m = pat.match(text)
+        if m:
+            return m.group(1), "meshcore"
     return None, None
 
 
