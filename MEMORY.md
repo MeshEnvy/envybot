@@ -8,7 +8,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | Repo | [MeshEnvy/envybot](https://github.com/MeshEnvy/envybot) |
 | Version | 0.1.0 |
 | Tooling | `uv` + `pyproject.toml` |
-| Commands | `fleet`, `trust`, `cmd`, `onboard`, `flash`, `seed`, `weather`, `range` |
+| Commands | `fleet`, `trust`, `cmd`, `onboard`, `flash`, `seed`, `weather`, `range`, `export` |
 | Book | `--book` / `ENVYBOT_HOME` / cwd with `nodes.yaml` (+ `keys.yaml`, `channels.yaml`) |
 
 ## Layout
@@ -44,6 +44,8 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/commands/seed.py` | USB OTA folder relay (`envybot seed`) |
 | `src/envybot/commands/weather.py` | Open-Meteo cache backfill (`envybot weather backfill`) |
 | `src/envybot/commands/range.py` | USB shootout (`envybot range`). Two repeaters alternate `discover.neighbors`. Table is local `rx` and remote `in` SNR. |
+| `src/envybot/book_export.py` | Book → CSV rows (`export sites`; credentials for trusted admins). |
+| `src/envybot/commands/export.py` | `export sites [--tags]` → stdout CSV. |
 | `src/envybot/web/` | Fleet UI (`:8787`); header **Console** (tabbed priority CLI) |
 
 ## Contract

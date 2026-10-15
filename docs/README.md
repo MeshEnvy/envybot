@@ -14,6 +14,7 @@ Command manuals and operator notes. Agents: read [`.cursor/skills/fleet/SKILL.md
 | `seed` | [commands/seed.md](commands/seed.md) |
 | `weather` | [commands/weather.md](commands/weather.md) |
 | `range` | [commands/range.md](commands/range.md) |
+| `export` | [commands/export.md](commands/export.md) |
 
 ## Book layout
 

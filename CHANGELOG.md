@@ -6,6 +6,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Added
+
+- `envybot export sites` writes a CSV of `sites.yaml` rows plus bound
+  MeshCore node credentials to stdout. Skips decommissioned and Meshtastic
+  binds. Optional `--tags` filters with AND semantics (every listed tag
+  must appear on the site).
+
 ### Fixed
 
 - Fleet companion reconnect after laptop sleep now drops the stale BLE

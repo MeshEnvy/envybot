@@ -32,6 +32,7 @@ Agents: [`.cursor/skills/fleet/SKILL.md`](.cursor/skills/fleet/SKILL.md).
 | [`seed`](docs/commands/seed.md) | [docs/commands/seed.md](docs/commands/seed.md) | USB OTA seeder — relay a folder of `.mota` to a repeater. |
 | [`weather`](docs/commands/weather.md) | [docs/commands/weather.md](docs/commands/weather.md) | One-time Open-Meteo cache backfill for poll history. |
 | [`range`](docs/commands/range.md) | [docs/commands/range.md](docs/commands/range.md) | USB shootout of two repeaters. Side-by-side discover SNR. |
+| [`export`](docs/commands/export.md) | [docs/commands/export.md](docs/commands/export.md) | Trusted-admin CSV of sites (+ bound node creds). |
 
 Global flags (before the command): `--book DIR`.
 
