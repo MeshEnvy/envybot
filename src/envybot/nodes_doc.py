@@ -82,6 +82,8 @@ NODES_YAML_HEADER = (
     "#   rxgain is SX1262 boosted gain. Apply ignores it unless board is\n"
     "#   heltec-t096 (or t096). Temporary off is firmware try, not apply.\n"
     "# board: heltec-t096 | rak4631. Leave blank if unverified.\n"
+    "# onboarded_at: unix epoch when USB onboard first wrote the row.\n"
+    "# onboard_neighbors: neighbor snapshot from post-onboard discover.\n"
     "#   Missing CLI stamps done.\n"
     "# trust.admin / trust.guest: people from keys.yaml (MeshCore ACL).\n"
     "# admin1_pubkey / admin1_secret: Meshtastic remote-admin. Not MC ACL.\n"

@@ -8,13 +8,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+from envybot.commands.onboard import pick_port
 from envybot.flash_program import (
     DEFAULT_WAIT_S,
     flash_bootloader_package,
     flash_firmware_package,
     resolve_bootloader_zip,
     resolve_firmware_artifacts,
-    resolve_target,
+    pick_flash_target,
     default_envyos_root,
 )
 
@@ -26,9 +27,8 @@ def main(argv: list[str] | None = None) -> int:
     def add_common(p: argparse.ArgumentParser) -> None:
         p.add_argument(
             "--target",
-            required=True,
             metavar="SLUG",
-            help="EnvyOS target slug (e.g. xiao-nrf52-repeater-slim)",
+            help="EnvyOS target slug (prompt on TTY when omitted)",
         )
         p.add_argument(
             "port",
@@ -65,7 +65,9 @@ def main(argv: list[str] | None = None) -> int:
     fw.add_argument("--uf2", type=Path, metavar="UF2", help="Optional UF2 for drag-drop path")
 
     args = parser.parse_args(argv)
-    spec = resolve_target(args.target)
+    port = pick_port(args.port, baud=115200, timeout=5.0, verbose=args.verbose)
+    print(f"USB {port}")
+    spec = pick_flash_target(args.target)
     envyos = (args.envyos or default_envyos_root()).resolve()
 
     try:
@@ -76,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
             flash_bootloader_package(
                 package,
                 spec,
-                port=args.port,
+                port=port,
                 wait_s=args.wait,
                 verbose=args.verbose,
             )
@@ -91,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
                 package,
                 spec,
                 uf2=uf2,
-                port=args.port,
+                port=port,
                 wait_s=args.wait,
                 verbose=args.verbose,
             )

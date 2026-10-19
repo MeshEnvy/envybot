@@ -20,6 +20,8 @@ import argparse
 import re
 import sys
 import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any
@@ -110,6 +112,8 @@ REBOOT_SETTLE_S = 4.0
 REBOOT_FLUSH_S = 0.4
 USB_DROP_TIMEOUT_S = 8.0
 RECONNECT_TIMEOUT_S = 25.0
+ONBOARD_CMD_WAIT_DEADLINE_S = 45.0
+ONBOARD_CMD_RETRY_DELAY_S = 0.4
 PUB_HEX_LEN = 64
 PRV_HEX_LEN = 128
 HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
@@ -184,6 +188,79 @@ def read_ota_self(cli: "RepeaterSerial") -> tuple[str | None, str]:
     return parsed, raw
 
 
+def board_token_from_flash_target(slug: str | None) -> str | None:
+    """Map flash ``--target`` slug to book ``board`` token when known."""
+    if not slug:
+        return None
+    key = slug.strip().lower()
+    if key.startswith("rak4631"):
+        return "rak4631"
+    if "sensecap" in key or "p1pro" in key:
+        return "heltec-t096"
+    return None
+
+
+def merge_onboard_notes(
+    node: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    ts: int,
+) -> str | None:
+    """Append a short onboard stamp to freeform ``notes`` (does not replace operator text)."""
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    bits = [f"Onboard {dt}"]
+    fw = result.get("firmware_version")
+    if fw:
+        bits.append(f"fw {fw}")
+    bl = result.get("bootloader_version")
+    if bl:
+        bits.append(f"bl {bl}")
+    base = result.get("base_hash")
+    if base:
+        bits.append(f"base {base}")
+    neighbors = result.get("neighbors")
+    if neighbors is not None:
+        bits.append(f"neighbors {format_neighbors(neighbors)}")
+    line = "; ".join(bits)
+    prev = str(node.get("notes") or "").strip()
+    if not prev:
+        return line
+    if line in prev:
+        return prev or None
+    first, _, rest = prev.partition("\n")
+    if first.startswith("Onboard ") and neighbors is not None and "neighbors " not in first:
+        upgraded = f"{first}; neighbors {format_neighbors(neighbors)}"
+        return upgraded if not rest else f"{upgraded}\n{rest}"
+    if first.startswith("Onboard "):
+        return prev
+    return f"{prev}\n{line}"
+
+
+def apply_onboard_book_fields(
+    node: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    ts: int,
+    flash_target: str | None,
+) -> None:
+    fw = result.get("firmware_version")
+    if fw:
+        node["firmware_version"] = fw
+    bl = result.get("bootloader_version")
+    if bl:
+        node["bootloader_version"] = bl
+    board = result.get("board") or board_token_from_flash_target(flash_target)
+    if board and not str(node.get("board") or "").strip():
+        node["board"] = board
+    if node.get("onboarded_at") in (None, ""):
+        node["onboarded_at"] = ts
+    neighbors = result.get("neighbors")
+    if neighbors is not None:
+        node["onboard_neighbors"] = neighbors
+    merged = merge_onboard_notes(node, result, ts=ts)
+    node["notes"] = merged or None
+
+
 def new_node(unit_id: str) -> dict[str, Any]:
     return {
         "unit_id": unit_id,
@@ -191,6 +268,8 @@ def new_node(unit_id: str) -> dict[str, Any]:
         "firmware_version": None,
         "bootloader_version": None,
         "board": None,
+        "onboarded_at": None,
+        "onboard_neighbors": None,
         "last_admin_roll": None,
         "last_guest_roll": None,
         "last_key_roll": None,
@@ -245,6 +324,7 @@ class RepeaterSerial:
         self.port = port
         self.timeout = timeout
         self.verbose = verbose
+        self.wait_for_reply = False
         self.ser = serial.Serial()
         self.ser.port = port
         self.ser.baudrate = baud
@@ -279,7 +359,81 @@ class RepeaterSerial:
             chunks.append(chunk)
         return b"".join(chunks).decode("utf-8", errors="replace")
 
-    def cmd(self, command: str, *, expect_reply: bool = True, timeout: float | None = None) -> str:
+    def send_command(
+        self,
+        command: str,
+        *,
+        should_wait: bool | None = None,
+        expect_reply: bool = True,
+        timeout: float | None = None,
+        wait_deadline_s: float | None = None,
+    ) -> str:
+        """Send one CR-terminated CLI line. When ``should_wait``, retry until a reply or deadline."""
+        if not expect_reply:
+            self._drain()
+            if self.verbose:
+                print(f"    > {command}")
+            self._write_raw((command + "\r").encode("ascii", errors="strict"))
+            return ""
+
+        wait = self.wait_for_reply if should_wait is None else should_wait
+        deadline = (
+            time.monotonic() + (wait_deadline_s or ONBOARD_CMD_WAIT_DEADLINE_S)
+            if wait
+            else None
+        )
+        delay = ONBOARD_CMD_RETRY_DELAY_S
+        last_err: CliError | None = None
+        while True:
+            try:
+                return self._cmd_once(command, expect_reply=True, timeout=timeout)
+            except CliError as exc:
+                if "no CLI reply" not in str(exc):
+                    raise
+                last_err = exc
+                if not wait:
+                    raise
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise last_err
+                if self.verbose:
+                    print("    (no reply, retry …)")
+                time.sleep(delay)
+                delay = min(delay * 1.5, 2.0)
+
+    def cmd(
+        self,
+        command: str,
+        *,
+        expect_reply: bool = True,
+        timeout: float | None = None,
+        should_wait: bool | None = None,
+        wait_deadline_s: float | None = None,
+        attempts: int | None = None,
+    ) -> str:
+        """Alias for :meth:`send_command` (legacy ``attempts`` maps to a short fixed retry cap)."""
+        if attempts is not None and should_wait is None and expect_reply:
+            if attempts <= 1:
+                should_wait = False
+            else:
+                wait_deadline_s = wait_deadline_s or (
+                    ONBOARD_CMD_RETRY_DELAY_S * attempts + (self.timeout * attempts)
+                )
+                should_wait = True
+        return self.send_command(
+            command,
+            should_wait=should_wait,
+            expect_reply=expect_reply,
+            timeout=timeout,
+            wait_deadline_s=wait_deadline_s,
+        )
+
+    def _cmd_once(
+        self,
+        command: str,
+        *,
+        expect_reply: bool = True,
+        timeout: float | None = None,
+    ) -> str:
         self._drain()
         if self.verbose:
             print(f"    > {command}")
@@ -325,10 +479,7 @@ class RepeaterSerial:
 
     def capture(self, command: str, seconds: float, stop: Callable[[], bool] | None = None) -> str:
         """Send one CLI line and keep every byte for ``seconds``, including late prints."""
-        self._drain()
-        if self.verbose:
-            print(f"    > {command}")
-        self._write_raw((command + "\r").encode("ascii", errors="strict"))
+        self.send_command(command, should_wait=False, expect_reply=False)
         text = self.read_for(seconds, stop)
         if self.verbose and text:
             print(text.rstrip())
@@ -351,7 +502,7 @@ class RepeaterSerial:
     @classmethod
     def _extract_reply(cls, buf: str) -> str | None:
         text = cls._normalize_buf(buf)
-        idx = text.find("->")
+        idx = text.rfind("->")
         if idx >= 0:
             return text[idx + 2 :].strip()
         idx = text.find("ACL:")
@@ -360,46 +511,103 @@ class RepeaterSerial:
         return None
 
 
-def probe_repeater(port: str, *, baud: int, timeout: float, verbose: bool) -> str | None:
+@dataclass(frozen=True)
+class PortProbe:
+    ver: str | None = None
+    note: str | None = None
+
+
+def probe_repeater(port: str, *, baud: int, timeout: float, verbose: bool) -> PortProbe:
+    from envybot.flash_program import serial_port_busy
+
     try:
         with RepeaterSerial(port, baud=baud, timeout=timeout, verbose=verbose) as cli:
             reply = cli.cmd("ver")
-    except (CliError, serial.SerialException, OSError):
-        return None
+    except serial.SerialException as exc:
+        if serial_port_busy(exc):
+            return PortProbe(note="port busy (close other serial sessions)")
+        return PortProbe(note=f"open failed: {exc}")
+    except (CliError, OSError):
+        return PortProbe(note="no repeater CLI on `ver`")
     if not reply or reply_failed(reply):
-        return None
-    return reply
+        return PortProbe(note="no repeater CLI on `ver`")
+    return PortProbe(ver=reply)
+
+
+def _probe_unusable(probe: PortProbe) -> bool:
+    if not probe.note:
+        return False
+    if "port busy" in probe.note:
+        return True
+    return probe.note.startswith("open failed")
+
+
+def _usb_port_choice_label(port: str, probe: PortProbe) -> str:
+    if probe.ver:
+        return f"{port}  ({probe.ver})"
+    if probe.note:
+        return f"{port}  ({probe.note})"
+    return f"{port}  (no repeater CLI on `ver`)"
+
+
+def _prompt_usb_port(candidates: list[tuple[str, PortProbe]]) -> str:
+    if not candidates:
+        raise SystemExit("No USB ports to pick from")
+    if not sys.stdin.isatty():
+        listed = "\n".join(f"  {_usb_port_choice_label(p, pr)}" for p, pr in candidates)
+        raise SystemExit(
+            "Pass the USB path: ./envybot onboard /dev/cu.usbmodem…\n" + listed
+        )
+    print("Pick USB port:", file=sys.stderr)
+    for i, (port, probe) in enumerate(candidates, 1):
+        print(f"  {i}. {_usb_port_choice_label(port, probe)}", file=sys.stderr)
+    while True:
+        try:
+            raw = input(f"Pick port [1-{len(candidates)}]: ").strip()
+        except EOFError:
+            raise SystemExit("USB port pick cancelled") from None
+        if not raw:
+            continue
+        try:
+            idx = int(raw)
+        except ValueError:
+            print("Enter a number from the list.", file=sys.stderr)
+            continue
+        if 1 <= idx <= len(candidates):
+            port, probe = candidates[idx - 1]
+            if _probe_unusable(probe):
+                print(
+                    f"  {port} is not available — pick a port that opened during probe.",
+                    file=sys.stderr,
+                )
+                continue
+            return port
+        print(f"Enter 1–{len(candidates)}.", file=sys.stderr)
 
 
 def pick_port(arg: str | None, *, baud: int, timeout: float, verbose: bool) -> str:
+    from envybot.flash_program import ensure_serial_port_available
+
     if arg:
         port = resolve_port_arg(arg)
         if not port:
             raise SystemExit(f"USB port not found: {arg}")
-        return port
+        return ensure_serial_port_available(port, baud=baud)
     ports = serial_port_candidates()
     if not ports:
         raise SystemExit("No USB modem ports found (cu.usbmodem* / ttyACM* / ttyUSB*).")
-    if len(ports) == 1:
-        return ports[0]
     print(f"Probing {len(ports)} USB port(s) for repeater CLI …")
-    hits: list[tuple[str, str]] = []
+    probed: list[tuple[str, PortProbe]] = []
     for port in ports:
-        ver = probe_repeater(port, baud=baud, timeout=min(timeout, 2.5), verbose=verbose)
-        if ver:
-            print(f"  {port}: {ver}")
-            hits.append((port, ver))
+        result = probe_repeater(port, baud=baud, timeout=min(timeout, 2.5), verbose=verbose)
+        if result.ver:
+            print(f"  {port}: {result.ver}")
         elif verbose:
-            print(f"  {port}: skip")
-    if len(hits) == 1:
-        return hits[0][0]
-    if not hits:
-        raise SystemExit(
-            "Multiple USB ports, none answered repeater CLI (`ver`).\n"
-            "Pass the path: ./envybot onboard /dev/cu.usbmodem…"
-        )
-    listed = "\n".join(f"  {p}  ({v})" for p, v in hits)
-    raise SystemExit(f"Multiple repeaters on USB. Pass one path:\n{listed}")
+            print(f"  {port}: {result.note or 'skip'}")
+        probed.append((port, result))
+        time.sleep(0.08)
+    chosen = _prompt_usb_port(probed)
+    return ensure_serial_port_available(chosen, baud=baud)
 
 
 def apply_serial_acl(
@@ -522,7 +730,7 @@ def wait_usb_gone(port: str, *, timeout: float = USB_DROP_TIMEOUT_S) -> bool:
 def send_reboot(cli: RepeaterSerial) -> bool:
     """CLI ``reboot``. Returns True if the USB node dropped after close."""
     port = cli.port
-    cli.cmd("reboot", expect_reply=False)
+    cli.send_command("reboot", should_wait=False, expect_reply=False)
     time.sleep(REBOOT_FLUSH_S)
     try:
         cli.__exit__(None, None, None)
@@ -531,10 +739,33 @@ def send_reboot(cli: RepeaterSerial) -> bool:
     return wait_usb_gone(port)
 
 
-def open_repeater(port: str, *, baud: int, timeout: float, verbose: bool) -> RepeaterSerial:
+def open_repeater(
+    port: str,
+    *,
+    baud: int,
+    timeout: float,
+    verbose: bool,
+    wait_for_reply: bool = False,
+) -> RepeaterSerial:
     cli = RepeaterSerial(port, baud=baud, timeout=timeout, verbose=verbose)
+    cli.wait_for_reply = wait_for_reply
     cli.__enter__()
     return cli
+
+
+def prompt_reboot_after_flash(step: str) -> None:
+    """TTY pause so the operator can power-cycle before the next DFU or CLI step."""
+    if not sys.stdin.isatty():
+        return
+    print(
+        f"\n{step} programmed. Reboot the board (unplug/replug or reset), "
+        "then press Enter to continue …",
+        file=sys.stderr,
+    )
+    try:
+        input()
+    except EOFError:
+        raise SystemExit("Flash pause cancelled") from None
 
 
 def reconnect_after_reboot(
@@ -543,24 +774,41 @@ def reconnect_after_reboot(
     baud: int,
     timeout: float,
     verbose: bool,
+    usb_identity: str | None = None,
+    wait_for_reply: bool = False,
 ) -> tuple[RepeaterSerial, str]:
-    print(f"   waiting for USB …")
+    from envybot.flash_program import find_port_by_usb_identity, port_usb_identity
+
+    print(f"   waiting for USB (up to {RECONNECT_TIMEOUT_S:g}s) …")
     time.sleep(REBOOT_SETTLE_S)
     deadline = time.monotonic() + RECONNECT_TIMEOUT_S
     last_err: Exception | None = None
     while time.monotonic() < deadline:
-        ports = []
+        ports: list[str] = []
+        if usb_identity:
+            found = find_port_by_usb_identity(usb_identity)
+            if found:
+                ports.append(found)
         resolved = resolve_port_arg(preferred)
-        if resolved:
+        if resolved and resolved not in ports:
             ports.append(resolved)
-        for cand in serial_port_candidates():
-            if cand not in ports:
-                ports.append(cand)
+        if not usb_identity:
+            for cand in serial_port_candidates():
+                if cand not in ports:
+                    ports.append(cand)
+        else:
+            ports = [p for p in ports if port_usb_identity(p) == usb_identity]
         for port in ports:
             try:
-                cli = open_repeater(port, baud=baud, timeout=timeout, verbose=verbose)
+                cli = open_repeater(
+                    port,
+                    baud=baud,
+                    timeout=timeout,
+                    verbose=verbose,
+                    wait_for_reply=wait_for_reply,
+                )
                 try:
-                    ver = cli.cmd("ver")
+                    ver = cli.send_command("ver", should_wait=wait_for_reply)
                 except Exception:
                     cli.__exit__(None, None, None)
                     raise
@@ -1146,7 +1394,13 @@ def onboard(
     }
 
 
-def register(nodes_path: Path, result: dict[str, Any], *, unit: str | None) -> tuple[str, bool]:
+def register(
+    nodes_path: Path,
+    result: dict[str, Any],
+    *,
+    unit: str | None,
+    flash_target: str | None = None,
+) -> tuple[str, bool]:
     doc, nodes = load_registry(nodes_path)
     pubkey = result["pubkey"]
     existing = find_unit_by_pubkey(nodes, pubkey)
@@ -1200,6 +1454,7 @@ def register(nodes_path: Path, result: dict[str, Any], *, unit: str | None) -> t
     node.pop("lon", None)
     if "repeat" not in node:
         node["repeat"] = False
+    apply_onboard_book_fields(node, result, ts=now, flash_target=flash_target)
     write_nodes_doc(nodes_path, doc)
     conn = open_history(nodes_path.parent)
     record_onboard_heard(
@@ -1270,7 +1525,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--target",
         metavar="SLUG",
-        help="EnvyOS target slug (required with --with-flash-*)",
+        help="EnvyOS target slug (prompt when omitted with --with-flash-*)",
     )
     parser.add_argument(
         "--envyos",
@@ -1285,58 +1540,95 @@ def main(argv: list[str] | None = None) -> int:
         metavar="SEC",
         help="USB wait during flash steps (default 120)",
     )
+    parser.add_argument(
+        "--no-flash-pause",
+        action="store_true",
+        help="Do not prompt Enter after each DFU step (default: pause on a TTY)",
+    )
     args = parser.parse_args(argv)
 
-    if (args.with_flash_bootloader or args.with_flash_firmware) and not args.target:
-        parser.error("--target is required with --with-flash-bootloader or --with-flash-firmware")
-
-    flash_port = args.port
+    port = pick_port(args.port, baud=args.baud, timeout=args.timeout, verbose=args.verbose)
+    usb_identity: str | None = None
     if args.with_flash_bootloader or args.with_flash_firmware:
         from envybot.flash_program import (
             default_envyos_root,
             flash_bootloader_package,
             flash_firmware_package,
+            flash_usb_poll,
+            pick_flash_target,
+            port_usb_identity,
+            prepare_serial_port,
             resolve_bootloader_zip,
             resolve_firmware_artifacts,
-            resolve_target,
+            settle_after_dfu,
         )
 
-        spec = resolve_target(args.target or "")
+        usb_identity = port_usb_identity(port)
+        spec = pick_flash_target(args.target)
+        port = prepare_serial_port(port, usb_identity, baud=args.baud)
+        poll = flash_usb_poll(spec, port)
         envyos = (args.envyos or default_envyos_root()).resolve()
         if args.with_flash_bootloader:
             bl_zip = resolve_bootloader_zip(envyos, spec)
-            flash_bootloader_package(
+            port = flash_bootloader_package(
                 bl_zip,
                 spec,
-                port=flash_port,
+                port=port,
                 wait_s=args.flash_wait,
+                poll=poll,
                 verbose=args.verbose,
             )
+            if not args.no_flash_pause:
+                prompt_reboot_after_flash("Bootloader")
+            if args.with_flash_firmware:
+                port = settle_after_dfu(
+                    spec,
+                    port,
+                    usb_identity=usb_identity,
+                    wait_s=args.flash_wait,
+                    poll=flash_usb_poll(spec, port),
+                    verbose=args.verbose,
+                )
         if args.with_flash_firmware:
             fw_zip, uf2 = resolve_firmware_artifacts(envyos, spec)
             flash_firmware_package(
                 fw_zip,
                 spec,
                 uf2=uf2,
-                port=flash_port,
+                port=port,
                 wait_s=args.flash_wait,
+                poll=flash_usb_poll(spec, port),
                 verbose=args.verbose,
             )
+            if not args.no_flash_pause:
+                prompt_reboot_after_flash("Firmware")
         elif args.with_flash_bootloader:
             print(
                 "Bootloader flash wipes the app. Re-run with --with-flash-firmware "
                 "to install MeshCore, then onboard."
             )
             return 0
-        if args.with_flash_firmware:
-            print(f"waiting for app USB ({REBOOT_SETTLE_S:g}s) …")
-            time.sleep(REBOOT_SETTLE_S)
-
-    port = pick_port(args.port, baud=args.baud, timeout=args.timeout, verbose=args.verbose)
-    print(f"USB {port}")
     cli: RepeaterSerial | None = None
     try:
-        cli = open_repeater(port, baud=args.baud, timeout=args.timeout, verbose=args.verbose)
+        if args.with_flash_firmware:
+            cli, port = reconnect_after_reboot(
+                port,
+                baud=args.baud,
+                timeout=args.timeout,
+                verbose=args.verbose,
+                usb_identity=usb_identity,
+                wait_for_reply=True,
+            )
+        else:
+            print(f"USB {port}")
+            cli = open_repeater(
+                port,
+                baud=args.baud,
+                timeout=args.timeout,
+                verbose=args.verbose,
+                wait_for_reply=True,
+            )
+        print(f"USB {port}")
         pub = normalize_hex(parse_get_value(cli.cmd("get public.key")) or "", PUB_HEX_LEN, "public.key")
         _doc, nodes = load_registry(args.nodes)
         unit_key, existing, created = ensure_onboard_unit(
@@ -1366,7 +1658,9 @@ def main(argv: list[str] | None = None) -> int:
             key=unit_key,
         )
         if not args.no_write:
-            unit_key, created = register(args.nodes, result, unit=unit_key)
+            unit_key, created = register(
+                args.nodes, result, unit=unit_key, flash_target=args.target
+            )
             result["admin_changed"] = False
             result["guest_changed"] = False
             print(f"nodes.yaml {'created' if created else 'updated'} {unit_key.upper()}")
@@ -1410,13 +1704,23 @@ def main(argv: list[str] | None = None) -> int:
             print(f"11. neighbor baseline ({args.discover_rounds}×, {args.discover_wait:g}s) …")
             if cli is None:
                 cli, port = reconnect_after_reboot(
-                    port, baud=args.baud, timeout=args.timeout, verbose=args.verbose
+                    port,
+                    baud=args.baud,
+                    timeout=args.timeout,
+                    verbose=args.verbose,
+                    usb_identity=usb_identity,
+                    wait_for_reply=True,
                 )
             result["neighbors"] = discover_baseline(
                 cli, rounds=args.discover_rounds, wait_s=args.discover_wait
             )
             if not args.no_write:
-                register(args.nodes, result, unit=unit_key or args.unit)
+                register(
+                    args.nodes,
+                    result,
+                    unit=unit_key or args.unit,
+                    flash_target=args.target,
+                )
                 print(f"nodes.yaml neighbors {format_neighbors(result['neighbors'])}")
     except (CliError, serial.SerialException, OSError) as exc:
         print(f"onboard failed: {exc}", file=sys.stderr)

@@ -7,9 +7,13 @@ Does not write `nodes.yaml`. Use [`onboard`](onboard.md) after firmware is
 on the chip.
 
 ```
-./envybot flash bootloader --target SLUG [port] [flags]
-./envybot flash firmware --target SLUG [port] [flags]
+./envybot flash bootloader [--target SLUG] [port] [flags]
+./envybot flash firmware [--target SLUG] [port] [flags]
 ```
+
+Omit `port` to probe USB and pick the device on a TTY first (pass an explicit
+path to skip). Omit `--target` on a TTY to pick the board slug next.
+Non-interactive runs must pass both `port` and `--target`.
 
 ## Artifacts
 

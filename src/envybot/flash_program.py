@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import pty
+import select
 import shutil
 import subprocess
 import sys
@@ -22,6 +24,7 @@ except ImportError:  # pragma: no cover
 NrfutilRunner = Callable[[list[str]], None]
 
 DEFAULT_WAIT_S = 120.0
+DFU_POST_SETTLE_S = 2.0
 TOUCH_BAUD = 1200
 DFU_BAUD = 115200
 
@@ -84,14 +87,46 @@ TARGET_ALIASES: dict[str, str] = {
 }
 
 
+def flash_target_slugs() -> list[str]:
+    return sorted(TARGETS)
+
+
 def resolve_target(slug: str) -> FlashTarget:
     key = slug.strip().lower()
     key = TARGET_ALIASES.get(key, key)
     spec = TARGETS.get(key)
     if spec is None:
-        known = ", ".join(sorted(TARGETS))
+        known = ", ".join(flash_target_slugs())
         raise SystemExit(f"Unknown --target {slug!r}. v1 USB flash supports: {known}")
     return spec
+
+
+def pick_flash_target(slug: str | None) -> FlashTarget:
+    """Resolve --target, or list slugs and prompt on a TTY when omitted."""
+    if slug and slug.strip():
+        return resolve_target(slug)
+    slugs = flash_target_slugs()
+    if not sys.stdin.isatty():
+        listed = "\n".join(f"  {s}" for s in slugs)
+        raise SystemExit(f"Pass --target SLUG. v1 USB flash supports:\n{listed}")
+    print("Pick flash target:", file=sys.stderr)
+    for i, name in enumerate(slugs, 1):
+        print(f"  {i}. {name}", file=sys.stderr)
+    while True:
+        try:
+            raw = input(f"Pick target [1-{len(slugs)}]: ").strip()
+        except EOFError:
+            raise SystemExit("Target pick cancelled") from None
+        if not raw:
+            continue
+        try:
+            idx = int(raw)
+        except ValueError:
+            print("Enter a number from the list.", file=sys.stderr)
+            continue
+        if 1 <= idx <= len(slugs):
+            return resolve_target(slugs[idx - 1])
+        print(f"Enter 1–{len(slugs)}.", file=sys.stderr)
 
 
 def default_envyos_root() -> Path:
@@ -199,9 +234,98 @@ def resolve_nrfutil() -> list[str]:
     )
 
 
+def _nrfutil_unbuffered_cmd(cmd: list[str]) -> list[str]:
+    if len(cmd) >= 2 and str(cmd[1]).endswith(".py"):
+        return [cmd[0], "-u", *cmd[1:]]
+    return cmd
+
+
+def _stream_nrfutil_pipe(cmd: list[str]) -> tuple[int, str]:
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env=env,
+    )
+    chunks: list[bytes] = []
+    assert proc.stdout is not None
+    while True:
+        block = proc.stdout.read(256)
+        if not block:
+            break
+        chunks.append(block)
+        sys.stdout.buffer.write(block)
+        sys.stdout.buffer.flush()
+    return proc.wait(), b"".join(chunks).decode("utf-8", errors="replace")
+
+
+def _stream_nrfutil_pty(cmd: list[str]) -> tuple[int, str]:
+    """Run nrfutil on a pseudo-TTY so click progress `#` chars flush (pipe = block chunks)."""
+    master, slave = pty.openpty()
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=slave,
+            stderr=slave,
+            stdin=subprocess.DEVNULL,
+            env=env,
+        )
+    finally:
+        os.close(slave)
+    chunks: list[bytes] = []
+    try:
+        while True:
+            if proc.poll() is not None:
+                while True:
+                    try:
+                        block = os.read(master, 4096)
+                    except OSError:
+                        break
+                    if not block:
+                        break
+                    chunks.append(block)
+                    sys.stdout.buffer.write(block)
+                    sys.stdout.buffer.flush()
+                break
+            ready, _, _ = select.select([master], [], [], 0.05)
+            if master not in ready:
+                continue
+            try:
+                block = os.read(master, 4096)
+            except OSError:
+                break
+            if not block:
+                break
+            chunks.append(block)
+            sys.stdout.buffer.write(block)
+            sys.stdout.buffer.flush()
+    finally:
+        os.close(master)
+    return proc.wait(), b"".join(chunks).decode("utf-8", errors="replace")
+
+
+def _stream_nrfutil_output(cmd: list[str]) -> tuple[int, str]:
+    if sys.platform == "win32":
+        return _stream_nrfutil_pipe(cmd)
+    return _stream_nrfutil_pty(cmd)
+
+
 def default_nrfutil_runner(cmd: list[str]) -> None:
     print("   $", " ".join(cmd))
-    subprocess.run(cmd, check=True)
+    cmd = _nrfutil_unbuffered_cmd(cmd)
+    # adafruit-nrfutil often exits 0 even when DFU fails; parse banner lines after stream ends.
+    code, combined = _stream_nrfutil_output(cmd)
+    if code != 0 or "Failed to upgrade target" in combined:
+        raise SystemExit(
+            "DFU failed (no ack from the bootloader — often instant if the port is "
+            "busy or the chip is not in serial DFU). Close fleet/seed/monitor, "
+            "unplug/replug, and retry. Skip --with-flash-bootloader if EnvyBoot is "
+            "already flashed and use --with-flash-firmware only."
+        )
+    if "Device programmed." not in combined:
+        raise SystemExit("DFU finished without a success banner from nrfutil.")
 
 
 def _port_vid_pid(port: str) -> tuple[int | None, int | None]:
@@ -211,6 +335,57 @@ def _port_vid_pid(port: str) -> tuple[int | None, int | None]:
         if info.device == port:
             return info.vid, info.pid
     return None, None
+
+
+def port_usb_identity(port: str) -> str | None:
+    """Stable id for the same physical USB device across cu.* re-enumeration."""
+    if list_ports is None:
+        return None
+    for info in list_ports.comports():
+        if info.device != port:
+            continue
+        for attr in ("serial_number", "location", "hwid"):
+            val = getattr(info, attr, None)
+            if val and str(val).strip():
+                return str(val).strip()
+    return None
+
+
+def find_port_by_usb_identity(identity: str) -> str | None:
+    if list_ports is None or not identity:
+        return None
+    for info in list_ports.comports():
+        if not info.device:
+            continue
+        if port_usb_identity(info.device) == identity:
+            return info.device
+    return None
+
+
+def _ports_for_identity(ports: list[str], usb_identity: str | None) -> list[str]:
+    if not usb_identity:
+        return ports
+    matched = [p for p in ports if port_usb_identity(p) == usb_identity]
+    # Do not fall back to other boards when the operator pinned a physical device.
+    return matched
+
+
+def _choose_one_port(
+    ports: list[str],
+    *,
+    hint_port: str | None,
+    kind: str,
+) -> str:
+    if not ports:
+        raise SystemExit(f"No {kind} USB port for this target")
+    if hint_port and hint_port in ports:
+        return hint_port
+    if len(ports) == 1:
+        return ports[0]
+    listed = "\n".join(f"  {p}" for p in ports)
+    raise SystemExit(
+        f"Multiple {kind} USB devices for this target — pass the port:\n{listed}"
+    )
 
 
 def _ports_matching(vid: int, pids: tuple[int, ...]) -> list[str]:
@@ -236,22 +411,31 @@ def uf2_mount_path(volume: str) -> Path | None:
     return None
 
 
-def classify_usb(spec: FlashTarget, *, hint_port: str | None = None) -> tuple[UsbPhase, str | None]:
+def classify_usb(
+    spec: FlashTarget,
+    *,
+    hint_port: str | None = None,
+    usb_identity: str | None = None,
+) -> tuple[UsbPhase, str | None]:
+    if hint_port and not usb_identity:
+        usb_identity = port_usb_identity(hint_port)
     # CDC and the UF2 disk enumerate together. The recovery zip needs the serial port.
-    bl_ports = _ports_matching(spec.bl_vid, spec.bl_pids)
+    bl_ports = _ports_for_identity(
+        _ports_matching(spec.bl_vid, spec.bl_pids), usb_identity
+    )
     if bl_ports:
-        if hint_port and hint_port in bl_ports:
-            return UsbPhase.BOOTLOADER, hint_port
-        return UsbPhase.BOOTLOADER, bl_ports[0]
+        return UsbPhase.BOOTLOADER, _choose_one_port(
+            bl_ports, hint_port=hint_port, kind="bootloader"
+        )
 
     if uf2_mount_path(spec.uf2_volume):
         return UsbPhase.UF2_VOLUME, None
 
-    app_ports = _ports_matching(spec.app_vid, (spec.app_pid,))
+    app_ports = _ports_for_identity(
+        _ports_matching(spec.app_vid, (spec.app_pid,)), usb_identity
+    )
     if app_ports:
-        if hint_port and hint_port in app_ports:
-            return UsbPhase.APP, hint_port
-        return UsbPhase.APP, app_ports[0]
+        return UsbPhase.APP, _choose_one_port(app_ports, hint_port=hint_port, kind="app")
 
     if hint_port and Path(hint_port).exists():
         vid, pid = _port_vid_pid(hint_port)
@@ -264,16 +448,123 @@ def classify_usb(spec: FlashTarget, *, hint_port: str | None = None) -> tuple[Us
     return UsbPhase.NONE, None
 
 
-def touch_1200(port: str) -> None:
+def flash_usb_poll(
+    spec: FlashTarget,
+    port: str | None,
+) -> Callable[[], tuple[UsbPhase, str | None]]:
+    """Pin flash autodetect to the operator-chosen port / USB identity."""
+    identity = port_usb_identity(port) if port else None
+
+    def poll() -> tuple[UsbPhase, str | None]:
+        hint = port if port and Path(port).exists() else None
+        if not hint and identity:
+            hint = find_port_by_usb_identity(identity)
+        return classify_usb(spec, hint_port=hint, usb_identity=identity)
+
+    return poll
+
+
+def serial_port_busy(exc: BaseException) -> bool:
+    if serial is not None and isinstance(exc, serial.SerialException):
+        if getattr(exc, "errno", None) == 16:
+            return True
+    text = str(exc).lower()
+    return "busy" in text or "resource busy" in text
+
+
+def serial_port_transient(exc: BaseException) -> bool:
+    if serial_port_busy(exc):
+        return True
+    if isinstance(exc, OSError) and exc.errno == 2:
+        return True
+    if serial is not None and isinstance(exc, serial.SerialException):
+        if getattr(exc, "errno", None) == 2:
+            return True
+    return False
+
+
+def resolve_serial_port(port: str, usb_identity: str | None = None) -> str:
+    if port and Path(port).exists():
+        return port
+    if usb_identity:
+        found = find_port_by_usb_identity(usb_identity)
+        if found:
+            return found
+    raise SystemExit(
+        f"USB device went away ({port!r}). Re-plug the board and restart, "
+        "or pass the new /dev/cu path on the command line."
+    )
+
+
+def ensure_serial_port_available(
+    port: str,
+    *,
+    usb_identity: str | None = None,
+    baud: int = DFU_BAUD,
+    timeout: float = 15.0,
+) -> str:
+    """Open and close the port; retry busy / re-enumeration gaps. Returns current path."""
+    if serial is None:  # pragma: no cover
+        raise SystemExit("pyserial required for USB serial")
+    deadline = time.monotonic() + timeout
+    last: BaseException | None = None
+    while time.monotonic() < deadline:
+        path = resolve_serial_port(port, usb_identity)
+        try:
+            ser = serial.Serial(path, baud, timeout=0.5)
+            ser.close()
+            time.sleep(0.08)
+            return path
+        except (serial.SerialException, OSError) as exc:
+            last = exc
+            if serial_port_transient(exc):
+                time.sleep(0.35)
+                continue
+            raise SystemExit(f"Cannot open USB port {path}: {exc}") from exc
+    raise SystemExit(
+        f"USB port {port!r} is not available after {timeout:g}s.\n"
+        "Close other serial sessions (fleet, screen, PlatformIO monitor) and retry."
+    ) from last
+
+
+def prepare_serial_port(
+    port: str,
+    usb_identity: str | None,
+    *,
+    baud: int = DFU_BAUD,
+    timeout: float = 15.0,
+) -> str:
+    """Re-resolve cu.* after menus and confirm the device opens."""
+    return ensure_serial_port_available(
+        port, usb_identity=usb_identity, baud=baud, timeout=timeout
+    )
+
+
+def touch_1200(port: str, *, usb_identity: str | None = None) -> None:
     if serial is None:  # pragma: no cover
         raise SystemExit("pyserial required for 1200 touch")
-    ser = serial.Serial(port, TOUCH_BAUD, timeout=0.5)
-    try:
-        ser.dtr = True
-        time.sleep(0.05)
-        ser.dtr = False
-    finally:
-        ser.close()
+    deadline = time.monotonic() + 15.0
+    last: BaseException | None = None
+    while time.monotonic() < deadline:
+        path = resolve_serial_port(port, usb_identity)
+        try:
+            ser = serial.Serial(path, TOUCH_BAUD, timeout=0.5)
+            try:
+                ser.dtr = True
+                time.sleep(0.05)
+                ser.dtr = False
+            finally:
+                ser.close()
+            return
+        except (serial.SerialException, OSError) as exc:
+            last = exc
+            if serial_port_transient(exc):
+                time.sleep(0.35)
+                continue
+            raise SystemExit(f"1200 touch failed on {path}: {exc}") from exc
+    raise SystemExit(
+        f"1200 touch failed: USB port {port!r} not available after 15s."
+    ) from last
 
 
 def wait_port_gone(port: str, *, timeout: float) -> bool:
@@ -320,13 +611,46 @@ def wait_for_any_usb(
     return UsbPhase.NONE, None
 
 
+def settle_after_dfu(
+    spec: FlashTarget,
+    port: str,
+    *,
+    usb_identity: str | None = None,
+    wait_s: float = DEFAULT_WAIT_S,
+    poll: Callable[[], tuple[UsbPhase, str | None]] | None = None,
+    verbose: bool = False,
+) -> str:
+    """After nrfutil finishes the device resets; wait for bootloader CDC again."""
+    print(f"   waiting for USB after DFU ({DFU_POST_SETTLE_S:g}s settle) …")
+    if wait_port_gone(port, timeout=min(8.0, wait_s)):
+        time.sleep(DFU_POST_SETTLE_S)
+    else:
+        print(f"   note: {port} still present (DFU may have failed or USB did not reset)")
+        time.sleep(DFU_POST_SETTLE_S)
+    poll = poll or flash_usb_poll(spec, port)
+    bl_port = ensure_bootloader_port(
+        spec,
+        port=port,
+        wait_s=wait_s,
+        poll=poll,
+        verbose=verbose,
+        usb_identity=usb_identity,
+    )
+    return ensure_serial_port_available(bl_port, usb_identity=usb_identity)
+
+
 def run_dfu_serial(
     port: str,
     package: Path,
     *,
     runner: NrfutilRunner | None = None,
+    usb_identity: str | None = None,
 ) -> None:
     runner = runner or default_nrfutil_runner
+    # Do not open the port here — nrfutil needs an exclusive handle for the DFU handshake.
+    port = resolve_serial_port(port, usb_identity)
+    if not Path(port).exists():
+        raise SystemExit(f"USB port {port!r} is not present.")
     cmd = [
         *resolve_nrfutil(),
         "dfu",
@@ -371,7 +695,14 @@ def ensure_bootloader_port(
     wait_s: float,
     poll: Callable[[], tuple[UsbPhase, str | None]] | None = None,
     verbose: bool = False,
+    usb_identity: str | None = None,
 ) -> str:
+    stick = usb_identity or (port_usb_identity(port) if port else None)
+
+    def touch(port_path: str) -> None:
+        print(f"   1200 touch on {port_path}")
+        touch_1200(port_path, usb_identity=stick)
+
     phase, found = _usb_phase(spec, port=port, poll=poll)
     if verbose:
         print(f"   USB phase: {phase.value}" + (f" ({found})" if found else ""))
@@ -396,8 +727,7 @@ def ensure_bootloader_port(
         )
 
     if phase == UsbPhase.APP and found:
-        print(f"   1200 touch on {found}")
-        touch_1200(found)
+        touch(found)
         phase, found = wait_for_bootloader_usb(
             spec, after_port=found, timeout=wait_s, poll=poll
         )
@@ -417,8 +747,7 @@ def ensure_bootloader_port(
         )
         phase, found = wait_for_any_usb(spec, timeout=wait_s, poll=poll)
         if phase == UsbPhase.APP and found:
-            print(f"   1200 touch on {found}")
-            touch_1200(found)
+            touch(found)
             phase, found = wait_for_bootloader_usb(
                 spec, after_port=found, timeout=wait_s, poll=poll
             )
@@ -446,11 +775,18 @@ def flash_bootloader_package(
     verbose: bool = False,
 ) -> str:
     print(f"bootloader package: {package}")
+    poll = poll or (flash_usb_poll(spec, port) if port else None)
+    stick = port_usb_identity(port) if port else None
     bl_port = ensure_bootloader_port(
-        spec, port=port, wait_s=wait_s, poll=poll, verbose=verbose
+        spec,
+        port=port,
+        wait_s=wait_s,
+        poll=poll,
+        verbose=verbose,
+        usb_identity=stick,
     )
     print(f"   dfu serial on {bl_port}")
-    run_dfu_serial(bl_port, package, runner=runner)
+    run_dfu_serial(bl_port, package, runner=runner, usb_identity=stick)
     print("bootloader flash done")
     return bl_port
 
@@ -467,6 +803,7 @@ def flash_firmware_package(
     verbose: bool = False,
 ) -> str | None:
     print(f"firmware package: {package}")
+    poll = poll or (flash_usb_poll(spec, port) if port else None)
     phase, found = _usb_phase(spec, port=port, poll=poll)
     if verbose:
         print(f"   USB phase: {phase.value}" + (f" ({found})" if found else ""))
@@ -476,10 +813,17 @@ def flash_firmware_package(
         print("firmware UF2 copy done (device will reboot)")
         return None
 
+    hint = port or found
+    stick = port_usb_identity(hint) if hint else None
     bl_port = ensure_bootloader_port(
-        spec, port=port or found, wait_s=wait_s, poll=poll, verbose=verbose
+        spec,
+        port=hint,
+        wait_s=wait_s,
+        poll=poll,
+        verbose=verbose,
+        usb_identity=stick,
     )
     print(f"   dfu serial on {bl_port}")
-    run_dfu_serial(bl_port, package, runner=runner)
+    run_dfu_serial(bl_port, package, runner=runner, usb_identity=stick)
     print("firmware flash done")
     return bl_port

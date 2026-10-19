@@ -27,10 +27,10 @@ def probe_repeater_text_cli(port: str, *, baud: int, verbose: bool) -> bool:
     from envybot.commands.onboard import CliError, probe_repeater
 
     try:
-        reply = probe_repeater(port, baud=baud, timeout=5.0, verbose=verbose)
+        probe = probe_repeater(port, baud=baud, timeout=5.0, verbose=verbose)
     except (CliError, OSError):
         return False
-    return bool(reply)
+    return bool(probe.ver)
 
 
 def detect_usb_role(port: str, *, baud: int = 115200, verbose: bool = False) -> UsbRole:

@@ -29,7 +29,10 @@ Idempotent on identity, creds, radio, name, and GPS:
    is left alone and the radio is set to match.
 5. Bench mask: name `ME####` (reserved before USB SETs) and GPS `0,0`.
    Book `name` is not set. No `public` key (private default).
-6. Write the book row (identity, creds). Then stamp fleet ACL from
+6. Write the book row (identity, creds, firmware/bootloader read from USB,
+   `board` when `--target` maps to a known token, `onboarded_at`, optional
+   `onboard_neighbors` after discover, and a one-line `notes` stamp). Then
+   stamp fleet ACL from
    `keys.yaml` + book/node `trust` (`get acl` + `setperm`). Skip ACL if
    there are no named people yet. MeshCore prints `ACL:` on serial and
    does not send a `->` reply for `get acl`. Then stamp sqlite `applies`
@@ -63,23 +66,44 @@ CLI sequence:
 ```
 
 Requires a built envyos bench tree (`./envyos build bootloader` and meshcore
-for the target). See [`flash`](flash.md). `--target` is required when either
-flash flag is set. `--envyos` and `--flash-wait` pass through to the flash
-step.
+for the target). See [`flash`](flash.md). Onboard always probes USB and prompts
+for the port first (unless you pass `port` on the CLI). With either flash
+flag, the flash-target list comes **after** that, then DFU runs. `--envyos` and
+`--flash-wait` pass through to the flash step.
 
 Bootloader-only (`--with-flash-bootloader` without firmware) exits after the
 recovery zip because the app is wiped.
+
+After firmware flash, onboard polls the **same physical USB device** (serial /
+location id captured at port pick) for up to **25s** until the repeater text CLI
+answers `ver`, then continues with `get public.key`. Flash steps also stay pinned
+to that device when two identical boards are plugged in.
+
+Bootloader then firmware in one run waits for USB to re-enumerate between the
+two DFU steps. If nrfutil fails mid-upload, onboard exits (it no longer continues
+into CLI setup). Close fleet/serial monitors and retry; unplug/replug if the port
+is stuck in bootloader.
+
+On a TTY, after **each** successful DFU (bootloader and/or firmware), onboard
+prompts you to **reboot the board** and press **Enter** before the next step.
+Use `--no-flash-pause` to skip (CI or scripted runs).
 
 ## Flags
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `port` | autodetect | USB path, or `usbmodemNNNN` |
+| `port` | autodetect | USB path, or `usbmodemNNNN`. Omitting it probes every candidate and prompts on a TTY (even when only one port or one repeater answer). |
 | `--with-flash-bootloader` | off | Flash OTAFIX recovery zip first |
 | `--with-flash-firmware` | off | Flash MeshCore firmware zip first |
-| `--target SLUG` | | Required with flash flags (`xiao-nrf52-repeater-slim`, `rak4631-repeater-slim`, `sensecap-p1pro-repeater-slim`) |
+| `--target SLUG` | prompt with flash flags | Board slug (`xiao-nrf52-repeater-slim`, `rak4631-repeater-slim`, `sensecap-p1pro-repeater-slim`) |
 | `--envyos DIR` | `../envyos` | Bench artifact root |
 | `--flash-wait SEC` | 120 | USB wait during flash |
+| `--no-flash-pause` | off | Skip Enter prompts after each DFU (on by default on a TTY) |
+
+During the USB onboard sequence, each CLI command goes through
+``send_command`` with **wait-for-reply** enabled: on missing ``->`` it retries
+with backoff for up to **45s** per command (including after post-reboot USB
+reconnect).
 | `--unit KEY` | allocate | Bind this book key (create if missing) |
 | `--admin-pw` | generated or yaml | Admin password |
 | `--guest-pw` | generated or yaml | Guest password (`''` for blank) |
@@ -113,7 +137,9 @@ recovery zip because the app is wiped.
 
 ## Writes
 
-- New or updated `nodes.yaml` row (unless `--no-write`)
+- New or updated `nodes.yaml` row (unless `--no-write`): identity, creds,
+  `firmware_version`, `bootloader_version`, `board` (when known), `onboarded_at`,
+  `onboard_neighbors` (after discover), `notes` onboard stamp
 - `next_unit` bump when a new `ME####` is allocated
 - Sqlite `applies` field stamps for the private profile (unless
   `--no-write` or `public: true`)

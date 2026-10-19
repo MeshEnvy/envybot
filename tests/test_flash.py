@@ -10,6 +10,7 @@ from unittest import mock
 from envybot.flash_program import (
     UsbPhase,
     _newest_file,
+    _ports_for_identity,
     classify_usb,
     ensure_bootloader_port,
     flash_bootloader_package,
@@ -121,6 +122,31 @@ class UsbPhaseTests(unittest.TestCase):
         self.assertEqual(phase, UsbPhase.BOOTLOADER)
         self.assertEqual(port, "/dev/cu.usbmodem1")
 
+    def test_ports_for_identity_does_not_fallback_to_other_boards(self) -> None:
+        all_ports = ["/dev/cu.a", "/dev/cu.b"]
+        with mock.patch("envybot.flash_program.port_usb_identity") as ident:
+            ident.side_effect = lambda p: {"/dev/cu.a": "SN-A", "/dev/cu.b": "SN-B"}.get(p)
+            matched = _ports_for_identity(all_ports, "SN-B")
+        self.assertEqual(matched, ["/dev/cu.b"])
+
+    def test_classify_multiple_app_ports_without_hint_exits(self) -> None:
+        a = mock.Mock()
+        a.device = "/dev/cu.a"
+        a.vid = XIAO.app_vid
+        a.pid = XIAO.app_pid
+        a.serial_number = "A"
+        b = mock.Mock()
+        b.device = "/dev/cu.b"
+        b.vid = XIAO.app_vid
+        b.pid = XIAO.app_pid
+        b.serial_number = "B"
+        with mock.patch("envybot.flash_program.list_ports") as lp:
+            lp.comports.return_value = [a, b]
+            with mock.patch("envybot.flash_program.uf2_mount_path", return_value=None):
+                with self.assertRaises(SystemExit) as ctx:
+                    classify_usb(XIAO)
+        self.assertIn("Multiple app USB devices", str(ctx.exception))
+
     def test_classify_prefers_cdc_when_uf2_volume_is_mounted(self) -> None:
         fake = mock.Mock()
         fake.device = "/dev/cu.usbmodem1"
@@ -159,12 +185,13 @@ class UsbPhaseTests(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".zip") as zf:
             path = Path(zf.name)
             path.write_bytes(b"x")
-            flash_bootloader_package(
-                path,
-                XIAO,
-                runner=runner,
-                poll=poll,
-            )
+            with mock.patch.object(Path, "exists", return_value=True):
+                flash_bootloader_package(
+                    path,
+                    XIAO,
+                    runner=runner,
+                    poll=poll,
+                )
         self.assertEqual(len(calls), 1)
         self.assertIn("dfu", calls[0])
         self.assertNotIn("--touch", calls[0])
@@ -180,7 +207,7 @@ class UsbPhaseTests(unittest.TestCase):
         def poll() -> tuple[UsbPhase, str | None]:
             return states.pop(0) if states else (UsbPhase.BOOTLOADER, "/dev/cu.bl")
 
-        def touch(port: str) -> None:
+        def touch(port: str, **_k: object) -> None:
             touched.append(port)
 
         runner_calls: list[list[str]] = []
@@ -201,11 +228,15 @@ class UsbPhaseTests(unittest.TestCase):
 
 
 class OnboardFlashOrderTests(unittest.TestCase):
-    def test_onboard_calls_bootloader_then_firmware_before_pick_port(self) -> None:
+    def test_onboard_picks_usb_before_flash_steps(self) -> None:
         order: list[str] = []
 
         def fake_bl(*_a: object, **_k: object) -> str:
             order.append("bootloader")
+            return "p"
+
+        def fake_settle(*_a: object, **_k: object) -> str:
+            order.append("settle")
             return "p"
 
         def fake_fw(*_a: object, **_k: object) -> str | None:
@@ -220,6 +251,11 @@ class OnboardFlashOrderTests(unittest.TestCase):
             "envybot.flash_program.flash_bootloader_package",
             side_effect=fake_bl,
         ), mock.patch(
+            "envybot.commands.onboard.prompt_reboot_after_flash",
+        ), mock.patch(
+            "envybot.flash_program.settle_after_dfu",
+            side_effect=fake_settle,
+        ), mock.patch(
             "envybot.flash_program.flash_firmware_package",
             side_effect=fake_fw,
         ), mock.patch(
@@ -231,6 +267,9 @@ class OnboardFlashOrderTests(unittest.TestCase):
         ), mock.patch(
             "envybot.commands.onboard.pick_port",
             side_effect=pick_port_ok,
+        ), mock.patch(
+            "envybot.flash_program.prepare_serial_port",
+            side_effect=lambda p, _i, **_: p,
         ), mock.patch(
             "envybot.commands.onboard.open_repeater",
             side_effect=CliError("stop"),
@@ -246,4 +285,21 @@ class OnboardFlashOrderTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(rc, 1)
-        self.assertEqual(order, ["bootloader", "firmware", "pick_port"])
+        self.assertEqual(order, ["pick_port", "bootloader", "settle", "firmware"])
+
+    def test_nrfutil_runner_fails_on_banner_or_exit(self) -> None:
+        from envybot.flash_program import default_nrfutil_runner
+
+        with mock.patch(
+            "envybot.flash_program._stream_nrfutil_output",
+            return_value=(0, "Failed to upgrade target. Error is: No data\n"),
+        ):
+            with self.assertRaises(SystemExit) as ctx:
+                default_nrfutil_runner(["nrfutil", "dfu", "serial"])
+        self.assertIn("DFU failed", str(ctx.exception))
+
+        with mock.patch(
+            "envybot.flash_program._stream_nrfutil_output",
+            return_value=(0, "Upgrading...\nDevice programmed.\n"),
+        ):
+            default_nrfutil_runner(["nrfutil", "dfu", "serial"])

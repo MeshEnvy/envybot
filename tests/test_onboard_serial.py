@@ -29,6 +29,39 @@ from envybot.nodes_doc import write_nodes_doc
 BEN = "aa" * 32
 
 
+class CmdRetryTests(unittest.TestCase):
+    def test_cmd_retries_transient_silence(self) -> None:
+        reads = iter([b"", b"", b"  -> 0\n"])
+
+        class FakePort:
+            def read(self, _n: int) -> bytes:
+                return next(reads, b"")
+
+            def reset_input_buffer(self) -> None:
+                pass
+
+            def write(self, _data: bytes) -> None:
+                pass
+
+            def flush(self) -> None:
+                pass
+
+            is_open = True
+
+            def close(self) -> None:
+                pass
+
+        cli = RepeaterSerial.__new__(RepeaterSerial)
+        cli.port = "/dev/fake"
+        cli.timeout = 1.0
+        cli.verbose = False
+        cli.wait_for_reply = True
+        cli.ser = FakePort()
+
+        reply = cli.send_command("get advert.interval")
+        self.assertEqual(reply, "0")
+
+
 class ExtractReplyTests(unittest.TestCase):
     def test_arrow_reply(self) -> None:
         buf = "ver\n  -> 1.17.1.1 (Build: 30Aug2026)\n"
@@ -37,6 +70,13 @@ class ExtractReplyTests(unittest.TestCase):
             "1.17.1.1 (Build: 30Aug2026)",
         )
         self.assertIsNotNone(RepeaterSerial._reply_start(buf))
+
+    def test_arrow_reply_uses_last_line_after_noise(self) -> None:
+        buf = "tail off\nver\n  -> 1.18.0.3 (Build: 18 Oct 2026)\n"
+        self.assertEqual(
+            RepeaterSerial._extract_reply(buf),
+            "1.18.0.3 (Build: 18 Oct 2026)",
+        )
 
     def test_acl_dump_without_arrow(self) -> None:
         buf = f"get acl\nACL:\n03 {BEN}\n"
@@ -276,3 +316,40 @@ class InitialRepeatTests(unittest.TestCase):
             register(nodes_path, self._result(), unit="me0053")
             node = load_nodes_doc(nodes_path)["nodes"]["me0053"]
             self.assertIs(node["repeat"], True)
+
+    def test_register_writes_versions_board_and_onboard_stamp(self) -> None:
+        from envybot.nodes_doc import load_nodes_doc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            nodes_path = Path(tmp) / "nodes.yaml"
+            write_nodes_doc(nodes_path, {"next_unit": 54, "nodes": {}})
+            register(
+                nodes_path,
+                self._result(),
+                unit=None,
+                flash_target="rak4631-repeater-slim",
+            )
+            nodes = load_nodes_doc(nodes_path)["nodes"]
+            self.assertEqual(len(nodes), 1)
+            node = next(iter(nodes.values()))
+            self.assertEqual(node["firmware_version"], "1.17.1-ev1")
+            self.assertEqual(node["bootloader_version"], "0.9.2-ev2")
+            self.assertEqual(node["board"], "rak4631")
+            self.assertIsInstance(node.get("onboarded_at"), int)
+            self.assertIn("Onboard ", node.get("notes") or "")
+
+    def test_register_second_pass_adds_neighbors(self) -> None:
+        from envybot.nodes_doc import load_nodes_doc
+
+        with tempfile.TemporaryDirectory() as tmp:
+            nodes_path = Path(tmp) / "nodes.yaml"
+            write_nodes_doc(nodes_path, {"next_unit": 54, "nodes": {"me0053": {"unit_id": "ME0053"}}})
+            register(nodes_path, self._result(), unit="me0053")
+            result = self._result()
+            result["neighbors"] = [
+                {"pubkey": "aa" * 32, "snr": 8.0, "secs_ago": 3},
+            ]
+            register(nodes_path, result, unit="me0053")
+            node = load_nodes_doc(nodes_path)["nodes"]["me0053"]
+            self.assertEqual(len(node["onboard_neighbors"]), 1)
+            self.assertIn("neighbors ", node["notes"])
