@@ -35,6 +35,11 @@ STATUS_ERR = 0x01
 WRITE_MAX = 512
 LINK_TIMEOUT_S = 0.5
 SEEDER_DUTYCYCLE_PCT = 10  # standing cap; 1–2% is a manual daytime drip only
+DEFAULT_ANNOUNCE_INTERVAL_S = 60.0  # re-flood OTA beacon while seed holds the USB console
+DEFAULT_STATUS_INTERVAL_S = 45.0  # poll tag `ota folder` / `ota stats` over USB (0 = off)
+CLI_POLL_IDLE_S = 0.35
+CLI_REPLY_IDLE_S = 0.25  # match onboard RepeaterSerial
+CLI_CMD_TIMEOUT_S = 5.0
 
 
 def xor_bytes(data: bytes, seed: int = 0) -> int:
@@ -239,6 +244,76 @@ def send_response(ser: Any, op: int, status: int, payload: bytes) -> None:
     ser.flush()
 
 
+def format_tag_line(line: str) -> str:
+    """Highlight serial lines that often correlate with mesh OTA activity."""
+    low = line.lower()
+    if any(
+        k in low
+        for k in (
+            "ota",
+            "lora",
+            "mesh",
+            "query",
+            "have",
+            "advert",
+            "mota",
+            "folder",
+            "fetch",
+            "seeder",
+        )
+    ):
+        return f"[tag|ota] {line}"
+    return f"[tag] {line}"
+
+
+def _drain_serial(ser: Any, max_s: float = 0.12) -> None:
+    deadline = time.monotonic() + max_s
+    old_timeout = getattr(ser, "timeout", None)
+    try:
+        ser.timeout = 0.02
+        while time.monotonic() < deadline:
+            if not ser.read(256):
+                time.sleep(0.02)
+    finally:
+        if old_timeout is not None:
+            ser.timeout = old_timeout
+
+
+def cli_cmd_reply(ser: Any, command: str, *, timeout: float = CLI_CMD_TIMEOUT_S) -> str | None:
+    """One MeshCore CLI command; return text after ``->`` (same rules as onboard USB)."""
+    from envybot.commands.onboard import RepeaterSerial
+
+    _drain_serial(ser)
+    ser.write((command.strip() + "\r").encode("ascii", errors="replace"))
+    ser.flush()
+    deadline = time.monotonic() + timeout
+    ser.timeout = 0.05
+    buf = ""
+    saw = False
+    last = time.monotonic()
+    while time.monotonic() < deadline:
+        chunk = ser.read(512)
+        now = time.monotonic()
+        if chunk:
+            buf += chunk.decode("utf-8", errors="replace")
+            last = now
+            if RepeaterSerial._reply_start(buf) is not None:
+                saw = True
+        elif saw and now - last >= CLI_REPLY_IDLE_S:
+            break
+        else:
+            time.sleep(0.02)
+    return RepeaterSerial._extract_reply(buf)
+
+
+def poll_tag_cli(ser: Any, command: str, *, timeout: float = 2.5) -> list[str]:
+    """Send one CLI line on the tag console; collect reply lines until idle."""
+    reply = cli_cmd_reply(ser, command, timeout=timeout)
+    if not reply:
+        return []
+    return [ln.strip() for ln in reply.splitlines() if ln.strip()]
+
+
 def log_request(
     op: int,
     args: bytes,
@@ -272,6 +347,107 @@ def log_request(
     return f"op={op:#04x} {ok}"
 
 
+def _emit_identity_from_replies(
+    replies: dict[str, str | None],
+    *,
+    on_host: Callable[[str], None],
+) -> None:
+    on_host("seeder tag:")
+    for label in (
+        "name",
+        "public.key",
+        "radio",
+        "tx",
+        "dutycycle",
+        "radio.rxgain",
+        "radio.fem.rxgain",
+        "radio.fem.txgain",
+    ):
+        raw = replies.get(label)
+        if raw is None:
+            on_host(f"  {label}: (no reply)")
+        else:
+            on_host(f"  {label}: {_cli_setting(raw)}")
+
+
+def setup_seeder_tag_cli(
+    cli: Any,
+    *,
+    dutycycle_pct: int,
+    on_host: Callable[[str], None],
+) -> dict[str, str | None]:
+    """MeshCore USB setup via RepeaterSerial (``\\r`` lines, ``->`` replies)."""
+    from envybot.commands.onboard import CliError
+
+    def run(cmd: str) -> str | None:
+        try:
+            reply = cli.cmd(cmd)
+            on_host(f"cli `{cmd}` ok")
+            return reply
+        except CliError as exc:
+            on_host(f"cli `{cmd}` failed: {exc}")
+            return None
+
+    run("doctor gc")
+    run(f"set dutycycle {dutycycle_pct}")
+    run("log tail on")
+
+    identity_cmds = {
+        "name": "get name",
+        "public.key": "get public.key",
+        "radio": "get radio",
+        "tx": "get tx",
+        "dutycycle": "get dutycycle",
+        "radio.rxgain": "get radio.rxgain",
+        "radio.fem.rxgain": "get radio.fem.rxgain",
+        "radio.fem.txgain": "get radio.fem.txgain",
+    }
+    replies: dict[str, str | None] = {}
+    for label, cmd in identity_cmds.items():
+        try:
+            replies[label] = cli.cmd(cmd)
+        except CliError:
+            replies[label] = None
+    _emit_identity_from_replies(replies, on_host=on_host)
+    return replies
+
+
+def tag_cmd(ser: Any, command: str, *, timeout: float = CLI_CMD_TIMEOUT_S) -> str | None:
+    return cli_cmd_reply(ser, command, timeout=timeout)
+
+
+def _emit_status_poll(
+    ser: Any,
+    *,
+    on_host: Callable[[str], None],
+    ms_since_poll: dict[int, int],
+) -> None:
+    for cmd in ("ota folder", "ota stats"):
+        for line in poll_tag_cli(ser, cmd):
+            on_host(f"poll `{cmd}`: {line}")
+    parts = []
+    for op, label in (
+        (OP_COUNT, "COUNT"),
+        (OP_DESCRIBE, "DESCRIBE"),
+        (OP_READ, "READ"),
+    ):
+        n = ms_since_poll.get(op, 0)
+        if n:
+            parts.append(f"{label}={n}")
+    if parts:
+        on_host(
+            "usb-mota since last poll: "
+            + ", ".join(parts)
+            + " (mesh fetch pulls blocks over USB READ)"
+        )
+    else:
+        on_host(
+            "usb-mota since last poll: none — DUT `ota ls` is LoRa-only; "
+            "READ appears when a peer downloads from this folder"
+        )
+    ms_since_poll.clear()
+
+
 def serve_loop(
     ser: Any,
     core: SeederCore,
@@ -281,51 +457,65 @@ def serve_loop(
     on_tag_line: Callable[[str], None] | None = None,
     on_host_line: Callable[[str], None] | None = None,
     enable_folder: bool = False,
+    announce_interval_s: float = DEFAULT_ANNOUNCE_INTERVAL_S,
+    status_interval_s: float = DEFAULT_STATUS_INTERVAL_S,
+    announced: bool = False,
+    last_status_at: float = 0.0,
 ) -> None:
     """Run until `stop` is set or serial closes."""
     stop = stop or threading.Event()
     on_tag = on_tag_line or (lambda _s: None)
     on_host = on_host_line or (lambda _s: None)
     attach_folder = enable_folder
-    log_tail_pending = enable_folder
-    duty_pending = True
-    gc_pending = True
-    announced = False
+    last_announce_at = time.monotonic() if announced else 0.0
+    last_ms_at = 0.0
+    ms_since_poll: dict[int, int] = {}
     prev: int | None = None
     line = ""
 
+    def mesh_announce(label: str) -> None:
+        nonlocal announced, last_announce_at
+        tag_cmd(ser, "ota announce")
+        announced = True
+        last_announce_at = time.monotonic()
+        on_host(f"cli `ota announce` ({label})")
+
     while not stop.is_set():
-        if gc_pending:
-            gc_pending = False
-            doctor_gc(ser)
-            on_host("sent `doctor gc`")
-            time.sleep(0.4)
-            continue
-
-        if duty_pending:
-            duty_pending = False
-            set_dutycycle(ser, SEEDER_DUTYCYCLE_PCT)
-            on_host(f"sent `set dutycycle {SEEDER_DUTYCYCLE_PCT}`")
-            time.sleep(0.3)
-            continue
-
-        if log_tail_pending:
-            log_tail_pending = False
-            log_tail_on(ser)
-            on_host("sent `log tail on`")
-            time.sleep(0.3)
-            continue
-
         if attach_folder:
             attach_folder = False
-            folder_off(ser)
-            time.sleep(0.3)
-            folder_on(ser)
-            on_host("sent `ota folder on`")
+            tag_cmd(ser, "ota folder off")
+            time.sleep(0.2)
+            tag_cmd(ser, "ota folder on")
+            on_host("cli `ota folder on`")
+            time.sleep(0.4)
+            mesh_announce("after folder on")
+            if status_interval_s > 0 and last_status_at <= 0:
+                time.sleep(0.3)
+                _emit_status_poll(ser, on_host=on_host, ms_since_poll=ms_since_poll)
+                last_status_at = time.monotonic()
             continue
 
         b = read_byte(ser)
         if b is None:
+            now = time.monotonic()
+            if (
+                enable_folder
+                and announce_interval_s > 0
+                and last_announce_at > 0
+                and now - last_announce_at >= announce_interval_s
+            ):
+                mesh_announce("periodic")
+            if (
+                enable_folder
+                and status_interval_s > 0
+                and last_status_at > 0
+                and now - last_status_at >= status_interval_s
+                and now - last_ms_at >= 3.0
+            ):
+                prev = None
+                line = ""
+                _emit_status_poll(ser, on_host=on_host, ms_since_poll=ms_since_poll)
+                last_status_at = now
             continue
 
         if prev == ord("M") and b == ord("S"):
@@ -337,12 +527,15 @@ def serve_loop(
                 if handled is not None:
                     status, payload = handled
                     send_response(ser, op, status, payload)
-                    on_host(log_request(op, args, status, payload))
+                    ms_since_poll[op] = ms_since_poll.get(op, 0) + 1
+                    last_ms_at = time.monotonic()
+                    msg = log_request(op, args, status, payload)
+                    on_host(f"usb-mota {msg}")
+                    if verbose:
+                        on_host(f"(verbose) op={op:#04x} args={args.hex()}")
                     if enable_folder and not announced and op == OP_COUNT and status == STATUS_OK:
-                        announced = True
                         time.sleep(0.2)
-                        announce(ser)
-                        on_host("sent `ota announce`")
+                        mesh_announce("after folder COUNT")
             continue
 
         if prev is not None:
@@ -350,7 +543,7 @@ def serve_loop(
             if prev == ord("\n") or len(line) > 512:
                 trimmed = line.rstrip("\r\n")
                 if trimmed:
-                    on_tag(trimmed)
+                    on_tag(format_tag_line(trimmed))
                 line = ""
         prev = b
 
@@ -396,14 +589,27 @@ def print_catalog(folder: SeederFolder) -> None:
 
 
 def open_serial_port(port: str, baud: int) -> Any:
+    """Open like onboard RepeaterSerial (no DTR reset, short read timeout)."""
     import serial
 
-    return serial.Serial(
-        port=port,
-        baudrate=baud,
-        timeout=LINK_TIMEOUT_S,
-        write_timeout=LINK_TIMEOUT_S,
-    )
+    ser = serial.Serial()
+    ser.port = port
+    ser.baudrate = baud
+    ser.timeout = 0.05
+    ser.write_timeout = 2
+    ser.dsrdtr = False
+    ser.rtscts = False
+    ser.open()
+    return ser
+
+
+def _cli_setting(raw: str) -> str:
+    from envybot.commands.onboard import reply_failed
+    from envybot.radio import parse_get_value
+
+    if reply_failed(raw):
+        return "n/a"
+    return parse_get_value(raw) or raw.strip().replace("\n", " ")[:120]
 
 
 def run_seeder(
@@ -415,6 +621,9 @@ def run_seeder(
     only_globs: list[str] | None = None,
     verbose: bool = False,
     no_enable: bool = False,
+    announce_interval_s: float = DEFAULT_ANNOUNCE_INTERVAL_S,
+    status_interval_s: float = DEFAULT_STATUS_INTERVAL_S,
+    dutycycle_pct: int = SEEDER_DUTYCYCLE_PCT,
 ) -> int:
     """Scan folder, enable ota folder relay, serve until interrupt."""
 
@@ -434,13 +643,37 @@ def run_seeder(
     print(f"[host] {folder.count()} valid .mota in {directory}", flush=True)
     print_catalog(folder)
     print(
-        "[host] tag RX/TX mirrors here via `log tail on`; MS folder ops logged as [host] lines.",
+        "[host] DUT `ota ls` / QUERY / HAVE are LoRa — not shown unless `log tail` prints them.",
         flush=True,
     )
+    print(
+        "[host] Mesh download shows here as `[host] usb-mota READ …` when the tag pulls from this folder.",
+        flush=True,
+    )
+    if status_interval_s > 0:
+        print(
+            f"[host] Tag `ota folder` / `ota stats` polled every {status_interval_s:g}s "
+            "(`--status-interval 0` to disable).",
+            flush=True,
+        )
+    print(f"[host] USB {port} ({baud} baud)", flush=True)
 
-    ser = open_serial_port(port, baud)
+    from envybot.companion_seed import companion_folder_off, companion_setup
+    from envybot.seed_usb import detect_usb_role
+
+    role = detect_usb_role(port, baud=baud, verbose=verbose)
+    if role == "unknown":
+        print(
+            "error: port is not a MeshCore companion (appstart) or repeater text console.\n"
+            "  EnvyBot seed expects companion USB (e.g. RAK_WisMesh_Tag_bot_usb / EnvyBot).",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
+
     stop = threading.Event()
     core = SeederCore(folder)
+    on_host_line = lambda s: print(f"[host] {s}", flush=True)
 
     def on_sig(_signum: int, _frame: Any) -> None:
         stop.set()
@@ -448,30 +681,80 @@ def run_seeder(
     signal.signal(signal.SIGINT, on_sig)
     signal.signal(signal.SIGTERM, on_sig)
 
-    serve_thread = threading.Thread(
-        target=serve_loop,
-        kwargs={
-            "ser": ser,
-            "core": core,
-            "verbose": verbose,
-            "stop": stop,
-            "enable_folder": not no_enable,
-            "on_tag_line": lambda s: print(s, flush=True),
-            "on_host_line": lambda s: print(f"[host] {s}", flush=True),
-        },
-        daemon=True,
-    )
+    folder_already_on = False
+    repeater_cli: Any = None
+    if role == "companion":
+        print("[host] USB role: companion (CMD_RUN_CLI + raw mota-seeder)", flush=True)
+        if announce_interval_s > 0 or status_interval_s > 0:
+            print(
+                "[host] Companion raw MS phase: periodic announce/status USB polls are "
+                "off (ota announce sent once at start). Re-flash tag if `ota folder on` fails.",
+                flush=True,
+            )
+        try:
+            companion_setup(
+                port,
+                baud=baud,
+                dutycycle_pct=dutycycle_pct,
+                enable_folder=not no_enable,
+                verbose=verbose,
+                on_host=on_host_line,
+            )
+        except RuntimeError as exc:
+            print(f"error: {exc}", file=sys.stderr, flush=True)
+            return 1
+        folder_already_on = not no_enable
+        ser = open_serial_port(port, baud)
+    else:
+        print("[host] USB role: repeater text console (legacy motatool-style)", flush=True)
+        from envybot.commands.onboard import DEFAULT_TIMEOUT, RepeaterSerial
+
+        repeater_cli = RepeaterSerial(port, baud=baud, timeout=DEFAULT_TIMEOUT, verbose=verbose)
+        repeater_cli.__enter__()
+        setup_seeder_tag_cli(repeater_cli, dutycycle_pct=dutycycle_pct, on_host=on_host_line)
+        ser = repeater_cli.ser
 
     try:
-        time.sleep(0.3)
+        companion_raw = role == "companion"
+        serve_thread = threading.Thread(
+            target=serve_loop,
+            kwargs={
+                "ser": ser,
+                "core": core,
+                "verbose": verbose,
+                "stop": stop,
+                "enable_folder": not no_enable and not folder_already_on,
+                "announce_interval_s": 0.0 if companion_raw else announce_interval_s,
+                "status_interval_s": 0.0 if companion_raw else status_interval_s,
+                "announced": folder_already_on,
+                "last_status_at": 0.0,
+                "on_tag_line": lambda s: print(s, flush=True),
+                "on_host_line": on_host_line,
+            },
+            daemon=True,
+        )
         serve_thread.start()
         while not stop.is_set():
             serve_thread.join(timeout=0.5)
     finally:
         if not no_enable:
+            if role == "companion":
+                companion_folder_off(port, baud=baud, verbose=verbose)
+            elif repeater_cli is not None:
+                from envybot.commands.onboard import CliError
+
+                try:
+                    repeater_cli.cmd("ota folder off")
+                except (CliError, OSError):
+                    try:
+                        folder_off(ser)
+                    except OSError:
+                        pass
+        if repeater_cli is not None:
+            repeater_cli.__exit__(None, None, None)
+        else:
             try:
-                folder_off(ser)
+                ser.close()
             except OSError:
                 pass
-        ser.close()
     return 0

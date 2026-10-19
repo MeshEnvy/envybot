@@ -22,6 +22,7 @@ from envybot.commands.onboard import CliError
 
 XIAO = resolve_target("xiao-nrf52-repeater-slim")
 RAK = resolve_target("rak4631-repeater-slim")
+SENSECAP = resolve_target("sensecap-p1pro-repeater-slim")
 
 
 class ArtifactDiscoveryTests(unittest.TestCase):
@@ -76,6 +77,23 @@ class ArtifactDiscoveryTests(unittest.TestCase):
         self.assertEqual(RAK.uf2_volume, "RAK4631")
         self.assertEqual((RAK.app_vid, RAK.app_pid), (0x239A, 0x8029))
         self.assertEqual(RAK.bl_pids, (0x0029, 0x002A))
+
+    def test_sensecap_identity_and_alias(self) -> None:
+        self.assertEqual(
+            SENSECAP.bootloader_glob,
+            "sensecap_solar_p1_bootloader-*.recovery.zip",
+        )
+        self.assertEqual(
+            SENSECAP.firmware_prefix,
+            "meshcore-sensecap-p1pro-repeater-slim-",
+        )
+        self.assertEqual(SENSECAP.uf2_volume, "SENSECAP")
+        self.assertEqual((SENSECAP.app_vid, SENSECAP.app_pid), (0x2886, 0x0059))
+        self.assertEqual(SENSECAP.bl_pids, (0x0044,))
+        self.assertIs(
+            resolve_target("sensecap-solar-p1-repeater-slim"),
+            SENSECAP,
+        )
 
 
 class UsbPhaseTests(unittest.TestCase):

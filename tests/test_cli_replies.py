@@ -51,6 +51,9 @@ class FemRxgainMissingTests(unittest.TestCase):
     def test_old_firmware_unknown_config(self) -> None:
         self.assertTrue(fem_rxgain_cli_missing("unknown config: radio.fem.rxgain off"))
 
+    def test_get_unknown_config_marker(self) -> None:
+        self.assertTrue(fem_rxgain_cli_missing("??: radio.fem.rxgain"))
+
     def test_ok_is_present(self) -> None:
         self.assertFalse(fem_rxgain_cli_missing("OK - LoRa FEM RX gain off"))
 

@@ -13,6 +13,7 @@ from envybot.commands.onboard import (
     RepeaterSerial,
     antenna_ready,
     apply_admin_password,
+    apply_agc_reset_interval_policy,
     apply_ota_autofetch_policy,
     apply_path_hash_policy,
     register,
@@ -93,6 +94,26 @@ class PathHashPolicyTests(unittest.TestCase):
         cli = FakeCli({"get path.hash.mode": "UNKNOWN"})
         self.assertFalse(apply_path_hash_policy(cli, force=False))
         self.assertEqual(cli.sent, ["get path.hash.mode"])
+
+
+class AgcResetIntervalPolicyTests(unittest.TestCase):
+    def test_trusts_set_reply_without_verify_get(self) -> None:
+        cli = FakeCli(
+            {
+                "get agc.reset.interval": "> 0",
+                "set agc.reset.interval 4": "OK - interval rounded to 4",
+            }
+        )
+        self.assertTrue(apply_agc_reset_interval_policy(cli, {}, force=False))
+        self.assertEqual(
+            cli.sent,
+            ["get agc.reset.interval", "set agc.reset.interval 4"],
+        )
+
+    def test_already_at_four(self) -> None:
+        cli = FakeCli({"get agc.reset.interval": "> 4"})
+        self.assertFalse(apply_agc_reset_interval_policy(cli, {}, force=False))
+        self.assertEqual(cli.sent, ["get agc.reset.interval"])
 
 
 class OtaAutofetchPolicyTests(unittest.TestCase):

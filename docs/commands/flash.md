@@ -19,6 +19,7 @@ Discovery reads the sibling EnvyOS repo (`../envyos` or `ENVYOS_ROOT`):
 |------------|----------------|------------------|-----|----------------|--------|
 | `xiao-nrf52-repeater-slim` | `xiao_nrf52840_ble_bootloader-*.recovery.zip` | `meshcore-xiao-nrf52-repeater-slim-*` | `2886:8044` | `2886:0044` | `XIAO-BOOT` |
 | `rak4631-repeater-slim` | `rak4631_bootloader-*.recovery.zip` | `meshcore-rak4631-repeater-slim-*` | `239A:8029` | `239A:0029` or `239A:002A` | `RAK4631` |
+| `sensecap-p1pro-repeater-slim` | `sensecap_solar_p1_bootloader-*.recovery.zip` | `meshcore-sensecap-p1pro-repeater-slim-*` | `2886:0059` | `2886:0044` | `SENSECAP` |
 
 Bootloader zips are the newest match under `build/*/bench/adafruit-nrf52-bootloader-*`. Firmware files are the newest match under `build/*/bench/meshcore-*/<slug>/`.
 
@@ -30,6 +31,8 @@ Build artifacts in envyos first:
 cd ../envyos
 ./envyos build bootloader
 ./envyos build meshcore --target xiao-nrf52-repeater-slim
+# SenseCAP P1-Pro solar node:
+./envyos build meshcore --target sensecap-p1pro-repeater-slim
 ```
 
 EnvyBoot **0.9.2-ev2** keeps USB CDC up when the app slot is empty (after
@@ -55,7 +58,7 @@ reset; `flash` waits up to `--wait` seconds (default 120).
 
 | Flag | Meaning |
 |------|---------|
-| `--target SLUG` | Required. `xiao-nrf52-repeater-slim` or `rak4631-repeater-slim` |
+| `--target SLUG` | Required. `xiao-nrf52-repeater-slim`, `rak4631-repeater-slim`, or `sensecap-p1pro-repeater-slim` |
 | `port` | Optional USB path; VID/PID wins when omitted |
 | `--envyos DIR` | EnvyOS root for bench discovery |
 | `--wait SEC` | Bootloader wait (default 120) |

@@ -67,11 +67,26 @@ TARGETS: dict[str, FlashTarget] = {
         bl_pids=(0x0044,),
         uf2_volume="XIAO-BOOT",
     ),
+    "sensecap-p1pro-repeater-slim": FlashTarget(
+        slug="sensecap-p1pro-repeater-slim",
+        bootloader_glob="sensecap_solar_p1_bootloader-*.recovery.zip",
+        firmware_prefix="meshcore-sensecap-p1pro-repeater-slim-",
+        app_vid=0x2886,
+        app_pid=0x0059,
+        bl_vid=0x2886,
+        bl_pids=(0x0044,),
+        uf2_volume="SENSECAP",
+    ),
+}
+
+TARGET_ALIASES: dict[str, str] = {
+    "sensecap-solar-p1-repeater-slim": "sensecap-p1pro-repeater-slim",
 }
 
 
 def resolve_target(slug: str) -> FlashTarget:
     key = slug.strip().lower()
+    key = TARGET_ALIASES.get(key, key)
     spec = TARGETS.get(key)
     if spec is None:
         known = ", ".join(sorted(TARGETS))

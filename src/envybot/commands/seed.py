@@ -9,7 +9,13 @@ from pathlib import Path
 
 from envybot.commands.onboard import resolve_port_arg
 from envybot.radio import serial_port_candidates
-from envybot.seeder import open_serial_port, run_seeder
+from envybot.seeder import (
+    DEFAULT_ANNOUNCE_INTERVAL_S,
+    DEFAULT_STATUS_INTERVAL_S,
+    SEEDER_DUTYCYCLE_PCT,
+    open_serial_port,
+    run_seeder,
+)
 
 
 def pick_serial_port(hint: str | None) -> str:
@@ -82,7 +88,32 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="Do not send `ota folder on` at start",
     )
+    parser.add_argument(
+        "--announce-interval",
+        type=float,
+        default=DEFAULT_ANNOUNCE_INTERVAL_S,
+        metavar="SEC",
+        help="Re-send `ota announce` on the tag while seeding (0=only after folder on; default 60)",
+    )
+    parser.add_argument(
+        "--status-interval",
+        type=float,
+        default=DEFAULT_STATUS_INTERVAL_S,
+        metavar="SEC",
+        help="Poll tag `ota folder` / `ota stats` over USB (0=off; default 45)",
+    )
+    parser.add_argument(
+        "--dutycycle",
+        type=int,
+        default=SEEDER_DUTYCYCLE_PCT,
+        metavar="PCT",
+        help=f"Tag airtime cap via `set dutycycle` while seeding (1–100; default {SEEDER_DUTYCYCLE_PCT})",
+    )
     args = parser.parse_args(argv)
+
+    if not 1 <= args.dutycycle <= 100:
+        print("envybot seed: --dutycycle must be 1–100", file=sys.stderr)
+        return 1
 
     mota_dir = args.dir.expanduser().resolve()
     if not mota_dir.is_dir():
@@ -100,6 +131,9 @@ def main(argv: list[str]) -> int:
         only_globs=only,
         verbose=args.verbose,
         no_enable=args.no_enable,
+        announce_interval_s=max(0.0, args.announce_interval),
+        status_interval_s=max(0.0, args.status_interval),
+        dutycycle_pct=args.dutycycle,
     )
 
 

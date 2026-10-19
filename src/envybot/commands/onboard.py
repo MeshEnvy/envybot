@@ -82,6 +82,7 @@ from envybot.radio import (
     parse_int_get_value,
     parse_ota_autofetch,
     parse_ota_self,
+    cli_set_ok,
     fem_rxgain_cli_missing,
     serial_port_candidates,
 )
@@ -102,6 +103,7 @@ BAUD = 115200
 SETTLE_S = 2.5
 DEFAULT_TIMEOUT = 5.0
 REPLY_IDLE_S = 0.25
+AGC_INTERVAL_ROUNDED_RE = re.compile(r"rounded to (\d+)", re.I)
 DISCOVER_ROUNDS = 3
 DISCOVER_WAIT_S = 12.0
 REBOOT_SETTLE_S = 4.0
@@ -920,16 +922,30 @@ def apply_agc_reset_interval_policy(
         print("   skipped (unsupported)")
         return False
     got = parse_int_get_value(raw)
-    already = got == want
-    return apply_if_needed(
-        cli,
-        step="set agc.reset.interval",
-        already=already,
-        setter=f"set agc.reset.interval {want}",
-        verify=lambda: parse_int_get_value(cli.cmd("get agc.reset.interval")) == want,
-        ok_label=str(want),
-        force=force,
+    if got == want and not force:
+        print(f"   {want} (already)")
+        return False
+    set_reply = require_ok(
+        "set agc.reset.interval",
+        cli.cmd(f"set agc.reset.interval {want}"),
     )
+    if not cli_set_ok(set_reply):
+        raise CliError(f"set agc.reset.interval: {set_reply}")
+    match = AGC_INTERVAL_ROUNDED_RE.search(set_reply)
+    if match and int(match.group(1)) == want:
+        print(f"   {want}")
+        return True
+    verify_timeout = max(cli.timeout, 8.0)
+    for _ in range(3):
+        time.sleep(0.35)
+        try:
+            verify_raw = cli.cmd("get agc.reset.interval", timeout=verify_timeout)
+        except CliError:
+            continue
+        if parse_int_get_value(verify_raw) == want:
+            print(f"   {want}")
+            return True
+    raise CliError("set agc.reset.interval verify failed")
 
 
 def bench_radio_name(key: str | None, node: dict[str, Any] | None) -> str:

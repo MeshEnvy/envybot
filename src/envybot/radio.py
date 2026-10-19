@@ -1171,9 +1171,11 @@ class AgcResetUnsupported(Exception):
 
 
 def fem_rxgain_cli_missing(text: str | None) -> bool:
-    """RAK ``unsupported`` or older MeshCore ``unknown config``."""
+    """Board has no FEM CLI: RAK ``unsupported``, ``unknown config``, or GET ``??: cmd``."""
     if not text:
         return False
+    if text.strip().startswith("??"):
+        return True
     return "unsupported" in text.lower() or cli_unknown_reply(text)
 
 

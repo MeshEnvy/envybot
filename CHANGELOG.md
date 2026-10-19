@@ -8,6 +8,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- ``envybot seed`` sends ``ota announce`` on the tag after ``ota folder on`` and
+  every 60s by default (``--announce-interval``), since seed owns the USB port.
+- ``envybot seed --dutycycle PCT`` sets tag airtime cap at seed start (default 10).
+- ``envybot seed`` on companion USB: setup via ``run_cli_command``, then raw
+  mota-seeder (requires meshcore companion OTA folder + MS passthrough firmware).
+
+### Fixed
+
+- USB onboard skips ``radio.fem.rxgain`` when GET returns MeshCore ``??:``
+  (SenseCAP and other boards without FEM LNA CLI).
+- USB onboard accepts ``set agc.reset.interval`` ``OK - interval rounded to N``
+  without a follow-up GET (avoids serial timeout on busy radios).
+
+### Added
+
+- USB flash and onboard `--target sensecap-p1pro-repeater-slim` for the
+  SenseCAP Solar Node P1-Pro slim repeater (EnvyBoot `sensecap_solar_p1`,
+  app `2886:0059`). Alias: `sensecap-solar-p1-repeater-slim`.
+
 - `envybot export sites` writes a CSV of `sites.yaml` rows plus bound
   MeshCore node credentials to stdout. Skips decommissioned and Meshtastic
   binds. Optional `--tags` filters with AND semantics (every listed tag
