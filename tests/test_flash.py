@@ -247,29 +247,18 @@ class OnboardFlashOrderTests(unittest.TestCase):
             order.append("pick_port")
             return "/dev/cu.x"
 
+        def fake_bench_flash(port: str, opts: object, **_k: object) -> tuple[str, str | None]:
+            order.append("bootloader")
+            order.append("settle")
+            order.append("firmware")
+            return port, "usb-id"
+
         with mock.patch(
-            "envybot.flash_program.flash_bootloader_package",
-            side_effect=fake_bl,
-        ), mock.patch(
-            "envybot.commands.onboard.prompt_reboot_after_flash",
-        ), mock.patch(
-            "envybot.flash_program.settle_after_dfu",
-            side_effect=fake_settle,
-        ), mock.patch(
-            "envybot.flash_program.flash_firmware_package",
-            side_effect=fake_fw,
-        ), mock.patch(
-            "envybot.flash_program.resolve_bootloader_zip",
-            return_value=Path("/tmp/bl.zip"),
-        ), mock.patch(
-            "envybot.flash_program.resolve_firmware_artifacts",
-            return_value=(Path("/tmp/fw.zip"), None),
+            "envybot.commands.onboard.run_bench_flash",
+            side_effect=fake_bench_flash,
         ), mock.patch(
             "envybot.commands.onboard.pick_port",
             side_effect=pick_port_ok,
-        ), mock.patch(
-            "envybot.flash_program.prepare_serial_port",
-            side_effect=lambda p, _i, **_: p,
         ), mock.patch(
             "envybot.commands.onboard.open_repeater",
             side_effect=CliError("stop"),

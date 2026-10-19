@@ -8,19 +8,17 @@ from pathlib import Path
 
 from envybot.apply import apply_is_due
 from envybot.commands.onboard import (
-    ensure_onboard_unit,
-    CliError,
-    RepeaterSerial,
-    antenna_ready,
     apply_admin_password,
     apply_agc_reset_interval_policy,
     apply_ota_autofetch_policy,
     apply_path_hash_policy,
+    antenna_ready,
     register,
-    resolve_unit,
     stamp_fleet_ready,
     wait_usb_gone,
 )
+from envybot.onboard_book import ensure_onboard_unit, resolve_unit
+from envybot.repeater_serial import CliError, RepeaterSerial
 from envybot.radio import parse_ota_autofetch
 from envybot.history import open_history
 from envybot.keys_doc import parse_serial_acl
@@ -114,7 +112,7 @@ class FakeCli:
 class PathHashPolicyTests(unittest.TestCase):
     def test_already_two_byte(self) -> None:
         cli = FakeCli({"get path.hash.mode": "> 1"})
-        self.assertFalse(apply_path_hash_policy(cli, force=False))
+        self.assertFalse(apply_path_hash_policy(cli, {}, force=False))
         self.assertEqual(cli.sent, ["get path.hash.mode"])
 
     def test_sets_one_byte_to_two(self) -> None:
@@ -124,7 +122,7 @@ class PathHashPolicyTests(unittest.TestCase):
                 "set path.hash.mode 1": "OK",
             }
         )
-        self.assertTrue(apply_path_hash_policy(cli, force=False))
+        self.assertTrue(apply_path_hash_policy(cli, {}, force=False))
         self.assertEqual(
             cli.sent,
             ["get path.hash.mode", "set path.hash.mode 1", "get path.hash.mode"],
@@ -132,7 +130,7 @@ class PathHashPolicyTests(unittest.TestCase):
 
     def test_skips_unknown(self) -> None:
         cli = FakeCli({"get path.hash.mode": "UNKNOWN"})
-        self.assertFalse(apply_path_hash_policy(cli, force=False))
+        self.assertFalse(apply_path_hash_policy(cli, {}, force=False))
         self.assertEqual(cli.sent, ["get path.hash.mode"])
 
 

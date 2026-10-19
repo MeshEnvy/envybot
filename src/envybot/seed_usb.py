@@ -24,7 +24,7 @@ async def _probe_companion_serial(port: str, *, baud: int, verbose: bool) -> boo
 
 
 def probe_repeater_text_cli(port: str, *, baud: int, verbose: bool) -> bool:
-    from envybot.commands.onboard import CliError, probe_repeater
+    from envybot.repeater_serial import CliError, probe_repeater
 
     try:
         probe = probe_repeater(port, baud=baud, timeout=5.0, verbose=verbose)

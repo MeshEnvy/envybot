@@ -281,7 +281,7 @@ def _drain_serial(ser: Any, max_s: float = 0.12) -> None:
 
 def cli_cmd_reply(ser: Any, command: str, *, timeout: float = CLI_CMD_TIMEOUT_S) -> str | None:
     """One MeshCore CLI command; return text after ``->`` (same rules as onboard USB)."""
-    from envybot.commands.onboard import RepeaterSerial
+    from envybot.repeater_serial import RepeaterSerial
 
     _drain_serial(ser)
     ser.write((command.strip() + "\r").encode("ascii", errors="replace"))
@@ -377,7 +377,7 @@ def setup_seeder_tag_cli(
     on_host: Callable[[str], None],
 ) -> dict[str, str | None]:
     """MeshCore USB setup via RepeaterSerial (``\\r`` lines, ``->`` replies)."""
-    from envybot.commands.onboard import CliError
+    from envybot.repeater_serial import CliError
 
     def run(cmd: str) -> str | None:
         try:
@@ -604,7 +604,7 @@ def open_serial_port(port: str, baud: int) -> Any:
 
 
 def _cli_setting(raw: str) -> str:
-    from envybot.commands.onboard import reply_failed
+    from envybot.repeater_serial import reply_failed
     from envybot.radio import parse_get_value
 
     if reply_failed(raw):
@@ -707,7 +707,7 @@ def run_seeder(
         ser = open_serial_port(port, baud)
     else:
         print("[host] USB role: repeater text console (legacy motatool-style)", flush=True)
-        from envybot.commands.onboard import DEFAULT_TIMEOUT, RepeaterSerial
+        from envybot.repeater_serial import DEFAULT_TIMEOUT, RepeaterSerial
 
         repeater_cli = RepeaterSerial(port, baud=baud, timeout=DEFAULT_TIMEOUT, verbose=verbose)
         repeater_cli.__enter__()
@@ -741,7 +741,7 @@ def run_seeder(
             if role == "companion":
                 companion_folder_off(port, baud=baud, verbose=verbose)
             elif repeater_cli is not None:
-                from envybot.commands.onboard import CliError
+                from envybot.repeater_serial import CliError
 
                 try:
                     repeater_cli.cmd("ota folder off")

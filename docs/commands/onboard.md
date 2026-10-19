@@ -11,7 +11,7 @@ text CLI, not the companion protocol.
 
 ## What it does
 
-Idempotent on identity, creds, radio, name, and GPS:
+Idempotent on identity, creds, radio, and fleet-profile fields over USB:
 
 1. Open the DUT USB modem (path or autodetection).
 2. Match an existing book row by pubkey, or `--unit`, or allocate the next
@@ -21,34 +21,33 @@ Idempotent on identity, creds, radio, name, and GPS:
    replaced. Admin cannot be GET, so onboard always writes it (a yaml hit is
    the value, not a skip). A replacement chip left on factory `password`
    otherwise silently drops mesh login.
-4. Set USA/Canada radio (`910.525`, BW 62.5, SF7, CR 4/5), dutycycle 50%
-   (`set af 1` on MeshCore before 1.15), `path.hash.mode` 1 (2-byte),
-   `ota config autofetch off`, advert 0 / flood advert 0, `repeat off`.
-   Writes `repeat: false` on the book row when that key is absent, so a
-   later site bind does not turn repeat on. An existing `repeat: true`
-   is left alone and the radio is set to match.
-5. Bench mask: name `ME####` (reserved before USB SETs) and GPS `0,0`.
-   Book `name` is not set. No `public` key (private default).
-6. Write the book row (identity, creds, firmware/bootloader read from USB,
-   `board` when `--target` maps to a known token, `onboarded_at`, optional
-   `onboard_neighbors` after discover, and a one-line `notes` stamp). Then
-   stamp fleet ACL from
-   `keys.yaml` + book/node `trust` (`get acl` + `setperm`). Skip ACL if
-   there are no named people yet. MeshCore prints `ACL:` on serial and
-   does not send a `->` reply for `get acl`. Then stamp sqlite `applies`
-   for the private profile so fleet is not apply-due (no `due`, no first
-   mesh Deploy). `public: true` rows stay unstamped. `--no-write` skips the
-   stamp.
-7. Read public + secret keys. Set host clock. Pull `ota self` (EndF
-   `base_hash`) with firmware and bootloader into sqlite.
-8. Neighbor discover/fetch (default 3 rounds). Prompts to attach an
-   antenna first (Enter to continue, `s` to skip). `--no-discover` skips
-   the prompt. No TTY skips discover.
-9. Always reboot so `set radio` takes effect (`get radio` is prefs, not
-   the live radio). Waits for the USB node to drop as proof. `--no-reboot`
-   leaves that pending.
+4. Set USA/Canada radio (`910.525`, BW 62.5, SF7, CR 4/5). Remaining USB
+   SETs follow the same **private profile** rules as mesh Deploy
+   (`applicable_field_desireds`): dutycycle, path hash, OTA autofetch, advert
+   / flood, repeat, hop retry, powersaving, AGC interval, FEM rxgain when the
+   board allows it, name, lat/lon, and owner info when the row is site-bound.
+   Bench rows (no `site`) get the privacy mask (name `ME####`, GPS `0,0`,
+   advert 0). Writes `repeat: false` on the book row when that key is absent.
+5. Read public + secret keys. Set host clock. Pull `ota self` (EndF
+   `base_hash`) with firmware and bootloader from USB.
+6. Reboot so `set radio` takes effect (`get radio` is prefs, not the live
+   radio). Waits for the USB node to drop as proof. `--no-reboot` leaves that
+   pending.
+7. Neighbor discover/fetch (default 3 rounds, longer per-command timeouts
+   after reconnect). Prompts to attach an antenna first (Enter to continue,
+   `s` to skip). `--no-discover` skips the prompt. No TTY skips discover.
+8. **One** `nodes.yaml` write: identity, creds, versions, `board` when
+   `--target` maps to a known token, `onboarded_at`, optional
+   `onboard_neighbors`, notes stamp. Then serial ACL from `keys.yaml` +
+   node `trust` (`get acl` + `setperm`). MeshCore prints `ACL:` on serial and
+   does not send a `->` reply for `get acl`. Then stamp sqlite `applies` for
+   the private profile so fleet is not apply-due. `public: true` rows stay
+   unstamped. `--no-write` skips yaml, ACL, and stamp.
 
-`site` stays null. This unit is bag/bench until you stake it.
+`site` stays null on bench onboard. This unit is bag/bench until you stake it.
+
+Implementation is split across `repeater_serial`, `onboard_usb`, `onboard_book`,
+`onboard_serial_apply`, and `bench_flash`; `commands/onboard.py` is orchestration.
 
 ## Radio
 
@@ -112,7 +111,7 @@ reconnect).
 | `--no-reboot` | | Skip reboot (radio change stays pending) |
 | `--no-discover` | | Skip neighbor rounds |
 | `--discover-rounds N` | `3` | Discover/fetch rounds |
-| `--discover-wait SEC` | `12` | Wait between rounds |
+| `--discover-wait SEC` | `12` | Wait between discover rounds (each round uses a 30s CLI timeout and up to 90s wait-for-reply) |
 | `--baud` | `115200` | Serial baud |
 | `--timeout SEC` | `5` | Per-CLI wait |
 | `--verbose` | | Extra serial detail |

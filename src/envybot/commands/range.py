@@ -11,13 +11,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from envybot.commands.onboard import (
-    CliError,
-    RepeaterSerial,
-    parse_radio,
-    reply_failed,
-    resolve_port_arg,
-)
+from envybot.commands.onboard import parse_radio
+from envybot.onboard_usb import resolve_port_arg
+from envybot.repeater_serial import CliError, RepeaterSerial, reply_failed
 from envybot.flash_program import TARGETS
 
 DEFAULT_ROUNDS = 3

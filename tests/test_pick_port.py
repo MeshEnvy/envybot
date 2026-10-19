@@ -5,12 +5,13 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from envybot.commands.onboard import PortProbe, pick_port
+from envybot.onboard_usb import pick_port
+from envybot.repeater_serial import PortProbe
 
 
 class PickPortTests(unittest.TestCase):
     def test_explicit_port_skips_probe(self) -> None:
-        with patch("envybot.commands.onboard.resolve_port_arg", return_value="/dev/cu.x"), patch(
+        with patch("envybot.onboard_usb.resolve_port_arg", return_value="/dev/cu.x"), patch(
             "envybot.flash_program.ensure_serial_port_available",
             side_effect=lambda p, **_: p,
         ):
@@ -21,8 +22,8 @@ class PickPortTests(unittest.TestCase):
 
     def test_single_port_still_prompts_on_tty(self) -> None:
         ports = ["/dev/cu.a"]
-        with patch("envybot.commands.onboard.serial_port_candidates", return_value=ports), patch(
-            "envybot.commands.onboard.probe_repeater",
+        with patch("envybot.onboard_usb.serial_port_candidates", return_value=ports), patch(
+            "envybot.onboard_usb.probe_repeater",
             return_value=PortProbe(ver="MeshCore 1.17"),
         ), patch(
             "envybot.flash_program.ensure_serial_port_available",
@@ -39,8 +40,8 @@ class PickPortTests(unittest.TestCase):
         def probe(port: str, **_k: object) -> PortProbe:
             return PortProbe(ver="ver") if port == "/dev/cu.a" else PortProbe(note="skip")
 
-        with patch("envybot.commands.onboard.serial_port_candidates", return_value=ports), patch(
-            "envybot.commands.onboard.probe_repeater", side_effect=probe
+        with patch("envybot.onboard_usb.serial_port_candidates", return_value=ports), patch(
+            "envybot.onboard_usb.probe_repeater", side_effect=probe
         ), patch(
             "envybot.flash_program.ensure_serial_port_available",
             side_effect=lambda p, **_: p,
@@ -60,8 +61,8 @@ class PickPortTests(unittest.TestCase):
         def probe(port: str, **_k: object) -> PortProbe:
             return probes[port]
 
-        with patch("envybot.commands.onboard.serial_port_candidates", return_value=ports), patch(
-            "envybot.commands.onboard.probe_repeater", side_effect=probe
+        with patch("envybot.onboard_usb.serial_port_candidates", return_value=ports), patch(
+            "envybot.onboard_usb.probe_repeater", side_effect=probe
         ), patch(
             "envybot.flash_program.ensure_serial_port_available", side_effect=lambda p, **_: p
         ), patch("sys.stdin.isatty", return_value=True), patch(
@@ -72,8 +73,8 @@ class PickPortTests(unittest.TestCase):
 
     def test_non_tty_lists_all_probed_ports(self) -> None:
         ports = ["/dev/cu.a", "/dev/cu.b"]
-        with patch("envybot.commands.onboard.serial_port_candidates", return_value=ports), patch(
-            "envybot.commands.onboard.probe_repeater",
+        with patch("envybot.onboard_usb.serial_port_candidates", return_value=ports), patch(
+            "envybot.onboard_usb.probe_repeater",
             return_value=PortProbe(note="no repeater CLI on `ver`"),
         ), patch("sys.stdin.isatty", return_value=False):
             with self.assertRaises(SystemExit) as ctx:

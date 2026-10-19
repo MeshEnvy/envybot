@@ -36,7 +36,12 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/commands/fleet.py` | Localhost manager |
 | `src/envybot/commands/trust.py` | Contacts + channels + keys.yaml / ACL login |
 | `src/envybot/commands/cmd.py` | Remote MeshCore CLI |
-| `src/envybot/commands/onboard.py` | USB repeater text CLI onboard (`path.hash.mode` 1, `get acl` is `ACL:` dump). Sets `repeat off` and writes `repeat: false` when the book key is absent. Stamps private `applies` so fleet is ready. Optional `--with-flash-bootloader` / `--with-flash-firmware`. |
+| `src/envybot/repeater_serial.py` | Repeater text CLI session (`RepeaterSerial`, `send_command` wait-for-reply, `probe_repeater`) |
+| `src/envybot/onboard_usb.py` | USB pick/reconnect/reboot for onboard and flash |
+| `src/envybot/onboard_book.py` | Onboard `nodes.yaml` register + unit resolution |
+| `src/envybot/onboard_serial_apply.py` | USB SETs via `applicable_field_desireds` / ACL |
+| `src/envybot/bench_flash.py` | Shared bench DFU for onboard flash flags |
+| `src/envybot/commands/onboard.py` | USB onboard orchestration: profile SETs, reboot, discover, one register, ACL, sqlite stamp. Optional `--with-flash-bootloader` / `--with-flash-firmware`. |
 | `src/envybot/flash_program.py` | Bench artifact discovery, 1200 touch, nrfutil serial DFU (injectable runner). USB IDs: Xiao, RAK4631 slim, SenseCAP P1-Pro slim. |
 | `src/envybot/commands/flash.py` | `flash bootloader|firmware --target` |
 | `src/envybot/mota.py` | Light `.mota` parse for USB seeder catalog |
