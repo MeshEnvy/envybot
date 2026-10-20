@@ -266,7 +266,8 @@ companions skip. Not re-run on BLE recover.
   sparklines share a 72h wall-clock axis; Sun is elevation vs horizon.
   Detail card edits book `alias` and `notes` (blur saves).
   Map pins color by last-heard age (green→red over 24h); labels include
-  `(3h)` and tick from `last_heard` + store clock.
+  `(3h)` and tick from `last_heard` + store clock. `last_heard` is the last
+  successful reply, not a timed-out attempt (`updated_at` moves on those).
   In-flight cards show the current job stage (Logging in, Fetching ACL, …).
   **OTA (stage-then-roll):** auto poll (24h) and Pull store `ota status` +
   delayed `ota ls` into sqlite `ota_state`. Detail **Firmware** is identity (version, hw,

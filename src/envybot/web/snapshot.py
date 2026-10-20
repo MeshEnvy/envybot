@@ -21,6 +21,7 @@ from envybot.history import (
     last_ok_apply_desireds,
     last_ok_apply_times,
     latest_mesh_audit_path,
+    latest_ok_contact_at,
     latest_neighbors,
     latest_ota,
     latest_status,
@@ -114,17 +115,50 @@ def unit_label(
     return display_name(key, node, sites)
 
 
-def last_heard(node: dict[str, Any], seen: dict[str, Any] | None = None) -> int | None:
+# Written only when a reply was stored. ``updated_at`` moves on any last_seen
+# write (refresh gaps, full-sync drain). ``full_sync_at`` is stamped when the
+# queue drains, including after a silence bail.
+HEARD_STAMP_KEYS = (
+    "firmware_at",
+    "bootloader_at",
+    "ota_at",
+    "name_at",
+    "gps_at",
+    "advert_at",
+    "flood_advert_at",
+    "status_at",
+    "telemetry_at",
+    "acl_at",
+    "neighbors_at",
+    "ota_status_at",
+    "ota_ls_at",
+    "repeat_at",
+    "path_hash_at",
+    "dutycycle_at",
+    "powersaving_at",
+    "hop_retry_at",
+    "hop_retry_ms_at",
+    "fem_rxgain_at",
+    "agc_reset_interval_at",
+    "rxgain_at",
+    "ota_autofetch_at",
+)
+
+
+def last_heard(
+    node: dict[str, Any],
+    seen: dict[str, Any] | None = None,
+    contact_at: int | None = None,
+) -> int | None:
+    """Last successful contact. Failed attempts do not count."""
     stamps: list[int] = []
+    if contact_at is not None:
+        try:
+            stamps.append(int(contact_at))
+        except (TypeError, ValueError):
+            pass
     if seen:
-        for key in (
-            "updated_at",
-            "status_at",
-            "firmware_at",
-            "name_at",
-            "telemetry_at",
-            "neighbors_at",
-        ):
+        for key in HEARD_STAMP_KEYS:
             val = seen.get(key)
             if val is None:
                 continue
@@ -552,9 +586,10 @@ def sanitize_unit(
     profile: list[dict[str, Any]] | None = None,
     doc: dict[str, Any] | None = None,
     audit_path: str | None = None,
+    contact_at: int | None = None,
 ) -> dict[str, Any]:
     normalize_fleet_node(node)
-    heard = last_heard(node, seen)
+    heard = last_heard(node, seen, contact_at=contact_at)
     position = resolve_position(node, sites, key=key, doc=doc)
     tele_src: list[dict[str, Any]] = []
     if seen:
@@ -698,6 +733,7 @@ def build_fleet_snapshot(
     apply_at_map: dict[str, dict[str, int]] = {}
     apply_desired_map: dict[str, dict[str, str]] = {}
     audit_path_map: dict[str, str] = {}
+    contact_at_map: dict[str, int] = {}
     acl_heard_map: dict[str, list[dict[str, Any]]] = {}
     acl_heard_at_map: dict[str, int] = {}
     conn = None
@@ -705,6 +741,7 @@ def build_fleet_snapshot(
         conn = open_history(book_dir)
         if seen_map is None:
             seen_map = all_last_seen(conn)
+        contact_at_map = latest_ok_contact_at(conn)
         apply_at_map = last_ok_apply_times(conn)
         apply_desired_map = last_ok_apply_desireds(conn)
         for key in nodes:
@@ -802,6 +839,7 @@ def build_fleet_snapshot(
                 ),
                 doc=doc,
                 audit_path=audit_path_map.get(key),
+                contact_at=contact_at_map.get(key),
             )
             status_rows = status_rows_map.get(key, [])
             seen_row = seen_map.get(key) or {}

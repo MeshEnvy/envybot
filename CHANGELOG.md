@@ -16,6 +16,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Fixed
 
+- Fleet card age and map pin color follow the last successful contact. A timed-out login no longer refreshes "ago".
 - USB onboard skips ``radio.fem.rxgain`` when GET returns MeshCore ``??:``
   (SenseCAP and other boards without FEM LNA CLI).
 - USB onboard accepts ``set agc.reset.interval`` ``OK - interval rounded to N``

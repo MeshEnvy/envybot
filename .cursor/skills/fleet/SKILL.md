@@ -165,7 +165,7 @@ Companion flags match `cmd`: `--ble`, `--serial`, `--tcp`, `--timeout`, `--login
 | `sites.yaml` | Site GPS + `node:` bind |
 | `history.sqlite` | Observed telemetry, apply stamps, `mesh_audit` |
 
-Reachability: cite sqlite last-seen, not YAML.
+Reachability: cite sqlite last-seen, not YAML. Card **ago** and pin color use `last_heard`: the last successful reply (hear stamps or `mesh_audit` `ok=1`). `updated_at` also moves on timeouts and refresh gaps, so it is not last contact.
 
 ## Book validation (load gate)
 

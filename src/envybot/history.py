@@ -2163,6 +2163,23 @@ def latest_mesh_audit_path(conn: sqlite3.Connection, unit_key: str) -> str | Non
     return str(row[0]) if row else None
 
 
+def latest_ok_contact_at(conn: sqlite3.Connection) -> dict[str, int]:
+    """Newest successful mesh reply per unit. Timeouts are attempts, not contact."""
+    out: dict[str, int] = {}
+    for row in conn.execute(
+        "SELECT unit, MAX(ts_reply) AS ts FROM mesh_audit "
+        "WHERE ok = 1 AND ts_reply IS NOT NULL GROUP BY unit"
+    ):
+        ts = row["ts"]
+        if ts is None:
+            continue
+        try:
+            out[str(row["unit"]).lower()] = int(float(ts))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def _mesh_audit_row_payload(row: sqlite3.Row) -> dict[str, Any]:
     ts_sent = float(row["ts_sent"])
     ts_reply = row["ts_reply"]

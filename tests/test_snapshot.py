@@ -10,7 +10,14 @@ from pathlib import Path
 from ruamel.yaml import YAML
 
 from envybot.apply import applicable_field_desireds
-from envybot.history import import_yaml_last_seen, insert_apply, open_history, record_poll
+from envybot.full_sync import stamp_full_sync
+from envybot.history import (
+    import_yaml_last_seen,
+    insert_apply,
+    merge_refresh_gaps,
+    open_history,
+    record_poll,
+)
 from envybot.position import approx_miles, haversine_miles, is_placeholder_gps, lookup_site_name
 from envybot.web.snapshot import (
     assert_no_secrets,
@@ -22,6 +29,7 @@ from envybot.web.snapshot import (
     neighbor_is_fresh,
     reported_locs_from_contacts,
     resolve_position,
+    last_heard,
     sanitize_neighbors,
     strip_secrets,
     unit_label,
@@ -615,6 +623,69 @@ class SnapshotTests(unittest.TestCase):
             self.assertIn("headline", health)
             self.assertIn("checks", health)
             self.assertIn("summary", health)
+
+
+class LastHeardTests(unittest.TestCase):
+    def test_ignores_attempt_touches(self) -> None:
+        heard = last_heard(
+            {"status_pulled_at": 100},
+            {"updated_at": 9000, "full_sync_at": 8000, "status_at": 200},
+        )
+        self.assertEqual(heard, 200)
+        self.assertIsNone(last_heard({}, {"updated_at": 9000, "full_sync_at": 8000}))
+        self.assertEqual(last_heard({}, {"status_at": 50}, contact_at=80), 80)
+
+    def test_snapshot_age_is_last_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            yaml = YAML()
+            yaml.dump({"sites": {}}, sites_path.open("w", encoding="utf-8"))
+            yaml.dump(
+                {
+                    "next_unit": 5,
+                    "nodes": {
+                        "me0001": {"unit_id": "ME0001", "identity_pubkey": "a" * 64},
+                        "me0002": {"unit_id": "ME0002", "identity_pubkey": "b" * 64},
+                        "me0003": {"unit_id": "ME0003", "identity_pubkey": "c" * 64},
+                        "me0004": {"unit_id": "ME0004", "identity_pubkey": "d" * 64},
+                    },
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            conn = open_history(book)
+
+            class _Res:
+                polled_groups = frozenset({"status"})
+                status = {"battery_mv": 4000, "uptime_secs": 10}
+
+            record_poll(conn, unit="me0001", res=_Res(), ts=1000)
+            record_poll(conn, unit="me0002", res=_Res(), ts=1000)
+            record_poll(conn, unit="me0003", res=_Res(), ts=1000)
+            merge_refresh_gaps(conn, "me0001", ["status"])
+            stamp_full_sync(conn, "me0003")
+            merge_refresh_gaps(conn, "me0004", ["neighbors"])
+            conn.executemany(
+                "INSERT INTO mesh_audit "
+                "(ts_sent, ts_reply, unit, kind, label, path, ok, outcome) "
+                "VALUES (?, ?, ?, 'login', 'login', 'flood', ?, ?)",
+                [
+                    (4900, 5000, "me0002", 1, "ok"),
+                    (8900, 9000, "me0002", 0, "rejected"),
+                    (int(time.time()), None, "me0002", 0, "timeout"),
+                    (int(time.time()), None, "me0001", 0, "timeout"),
+                ],
+            )
+            conn.commit()
+            conn.close()
+
+            snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
+            units = snap["units"]
+            self.assertEqual(units["me0001"]["last_heard"], 1000)
+            self.assertEqual(units["me0002"]["last_heard"], 5000)
+            self.assertEqual(units["me0003"]["last_heard"], 1000)
+            self.assertIsNone(units["me0004"]["last_heard"])
 
 
 class NeighborFreshTests(unittest.TestCase):

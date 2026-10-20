@@ -317,8 +317,10 @@ list warns that fleet may not get out. Requires companion firmware with
 ## UI
 
 Map pins use **book** position (`sites.yaml` loc for the bound unit), never
-device `0,0`. Pin color is last-heard age (green now, amber at 12h, red at
-24h+; never-heard is gray). Labels are `Site (3h)` when bound, else book
+device `0,0`. Pin color and the card **ago** are the last successful contact
+(a stored reply, or a `mesh_audit` row with `ok=1`). A timed-out login does
+not move them. Green is now, amber at 12h, red at 24h+; never-heard is gray.
+Labels are `Site (3h)` when bound, else book
 alias, else unit id. Age ticks live from `last_heard`. Detail shows unit id and site name, editable **alias** and **notes**
 (when bag/bench, alias becomes the list title), `public` / `pause`,
 **Route** dropdown (auto / path / direct / flood) and hop display (path mode:
