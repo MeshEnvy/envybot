@@ -760,7 +760,7 @@ async def run(args: argparse.Namespace) -> int:
     async def execute_one(job: Any, uq: Any) -> tuple[JobOutcome, Any | None]:
         if not await session.ensure_companion_connected(log=log):
             return JobOutcome.TIMEOUT, "companion disconnected"
-        sync_book(nodes_path, doc, nodes, sites, keys)
+        sync_book(nodes_path, doc, nodes, sites, keys, conn=conn)
         node_row = nodes.get(uq.target.key) or {}
         uq.target.routing = resolve_routing(node_row)
         uq.target.routing_explicit = routing_explicit(node_row)
@@ -820,7 +820,7 @@ async def run(args: argparse.Namespace) -> int:
                 await scheduler.wait_for_work(timeout=CADENCE_CHECK_S)
                 if scheduler._stop:
                     break
-                sync_book(nodes_path, doc, nodes, sites, keys)
+                sync_book(nodes_path, doc, nodes, sites, keys, conn=conn)
                 cadence_policy = PollPolicy(
                     force=False,
                     live_only=args.live and not args.full_sync,
@@ -881,7 +881,7 @@ async def run(args: argparse.Namespace) -> int:
                 min_interval=args.min_interval,
             )
             before_keys = {k for k, uq in scheduler.units.items() if uq.jobs}
-            sync_book(nodes_path, doc, nodes, sites, keys)
+            sync_book(nodes_path, doc, nodes, sites, keys, conn=conn)
             seeded = 0
             if not args.no_auto_update:
                 seeded = _seed_auto_work(

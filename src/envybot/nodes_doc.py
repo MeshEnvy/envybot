@@ -82,6 +82,7 @@ NODES_YAML_HEADER = (
     "#   rxgain is SX1262 boosted gain. Apply ignores it unless board is\n"
     "#   heltec-t096 (or t096). Temporary off is firmware try, not apply.\n"
     "# board: heltec-t096 | rak4631. Leave blank if unverified.\n"
+    "# cohort: bench group label (e.g. bench002). Same value means co-located.\n"
     "# onboarded_at: unix epoch when USB onboard first wrote the row.\n"
     "# onboard_neighbors: neighbor snapshot from post-onboard discover.\n"
     "#   Missing CLI stamps done.\n"
@@ -204,6 +205,8 @@ def sync_book(
     nodes: dict[str, Any],
     sites: dict[str, dict[str, Any]],
     keys: dict[str, list[str]],
+    *,
+    conn: Any | None = None,
 ) -> bool:
     """Reload book from disk when mtimes change. Mutates in place. Returns True if reloaded."""
     global _book_mtime
@@ -240,6 +243,10 @@ def sync_book(
     sites.update(load_sites(nodes_path.parent / "sites.yaml"))
     keys.clear()
     keys.update(load_keys(keys_path(nodes_path)))
+    if conn is not None:
+        from envybot.mesh_peers import sync_mesh_peers_book_units
+
+        sync_mesh_peers_book_units(conn, nodes)
     return True
 
 

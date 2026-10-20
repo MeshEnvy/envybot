@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from envybot.book import BookError
-from envybot.history import migrate_legacy
+from envybot.history import open_history
+from envybot.mesh_peers import sync_mesh_peers_book_units
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import load_nodes_doc, load_sites_for_book
 from envybot.public_advert import collect_advert_name_violations
@@ -57,7 +58,8 @@ def load_book(nodes_path: Path) -> Book:
     sites = load_sites_for_book(nodes_path)
     keys = load_keys(keys_path(nodes_path))
     raise_on_book_errors(validate_book(doc, nodes, sites))
-    conn = migrate_legacy(nodes_path.parent, nodes)
+    conn = open_history(nodes_path.parent)
+    sync_mesh_peers_book_units(conn, nodes)
     return Book(
         nodes_path=nodes_path,
         doc=doc,

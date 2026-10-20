@@ -23,15 +23,14 @@ from envybot.history import (
     last_ok_apply,
     list_poll_log,
     latest_status,
-    migrate_legacy,
     open_history,
-    save_community_locs,
     poll_snapshots,
     record_poll,
     source_histories,
     rolling_traffic,
     status_series,
 )
+from envybot.mesh_peers import upsert_mesh_peers_from_contacts
 
 
 class _Res:
@@ -219,7 +218,9 @@ class HistoryTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            conn = migrate_legacy(book, {})
+            conn = open_history(book)
+            import_jsonl(conn, jsonl)
+            jsonl.unlink()
             seen = get_last_seen(conn, "me0002")
             assert seen is not None
             self.assertEqual(seen["battery_mv"], 3900)
@@ -798,7 +799,7 @@ class HistoryTests(unittest.TestCase):
         """A second connection must be able to write after a full-sync stamp.
 
         The fleet connection is long-lived. The UI snapshot opens another
-        connection and writes community locs. An uncommitted stamp deadlocks
+        connection and writes mesh_peers. An uncommitted stamp deadlocks
         that write on this thread (sqlite3 isolation is deferred).
         """
         with tempfile.TemporaryDirectory() as tmp:
@@ -808,7 +809,16 @@ class HistoryTests(unittest.TestCase):
                 stamp_full_sync(conn, "me0001", ts=1)
                 other = open_history(book)
                 try:
-                    save_community_locs(other, {"abcd": (39.5, -119.8)})
+                    upsert_mesh_peers_from_contacts(
+                        other,
+                        {
+                            "abcd1234": {
+                                "public_key": "abcd1234",
+                                "adv_lat": 39.5,
+                                "adv_lon": -119.8,
+                            }
+                        },
+                    )
                     seen = other.execute(
                         "SELECT full_sync_at FROM last_seen WHERE unit = ?",
                         ("me0001",),
@@ -818,6 +828,132 @@ class HistoryTests(unittest.TestCase):
             finally:
                 conn.close()
         self.assertEqual(seen[0], 1)
+
+
+class MeshPeersTests(unittest.TestCase):
+    def test_neighbor_poll_bumps_liveness_keeps_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            conn = open_history(book)
+            pk = "a" * 64
+            prefix = pk[:8]
+            upsert_mesh_peers_from_contacts(
+                conn,
+                {pk: {"public_key": pk, "adv_name": "Ophir"}},
+            )
+            record_poll(
+                conn,
+                unit="me0001",
+                res=_Res(
+                    neighbors=[{"pubkey": prefix, "snr": 5.0, "secs_ago": 1}],
+                    polled_groups=frozenset({"neighbors"}),
+                ),
+                ts=100,
+            )
+            row = conn.execute(
+                "SELECT adv_name, last_mesh_seen_at, last_mesh_seen_by FROM mesh_peers WHERE pubkey = ?",
+                (pk,),
+            ).fetchone()
+            conn.close()
+        self.assertEqual(row[0], "Ophir")
+        self.assertEqual(row[1], 100)
+        self.assertEqual(row[2], "me0001")
+
+    def test_resolve_prefix_prefers_longest_full_key(self) -> None:
+        from envybot.mesh_peers import resolve_peer_storage_key, upsert_mesh_peers_from_contacts
+
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            upsert_mesh_peers_from_contacts(
+                conn,
+                {
+                    "a" * 64: {"public_key": "a" * 64, "adv_name": "A-full"},
+                    ("a" * 8) + ("b" * 56): {
+                        "public_key": ("a" * 8) + ("b" * 56),
+                        "adv_name": "A-alt",
+                    },
+                },
+            )
+            storage = resolve_peer_storage_key(conn, "a" * 8)
+            conn.close()
+        self.assertEqual(len(storage), 64)
+
+    def test_prefix_promotion_on_full_contact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            conn = open_history(book)
+            pk = "b" * 64
+            prefix = pk[:8]
+            record_poll(
+                conn,
+                unit="me0002",
+                res=_Res(
+                    neighbors=[{"pubkey": prefix, "snr": 3.0, "secs_ago": 2}],
+                    polled_groups=frozenset({"neighbors"}),
+                ),
+                ts=50,
+            )
+            upsert_mesh_peers_from_contacts(
+                conn,
+                {pk: {"public_key": pk, "adv_name": "Slide"}},
+            )
+            rows = conn.execute("SELECT pubkey, adv_name, last_mesh_seen_at FROM mesh_peers").fetchall()
+            conn.close()
+        by_pk = {r[0]: r for r in rows}
+        self.assertNotIn(prefix, by_pk)
+        self.assertEqual(by_pk[pk][1], "Slide")
+        self.assertEqual(by_pk[pk][2], 50)
+
+    def test_load_mesh_peer_lookup_scoped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            upsert_mesh_peers_from_contacts(
+                conn,
+                {
+                    "aa" * 32: {"public_key": "aa" * 32, "adv_name": "Alpha"},
+                    "bb" * 32: {"public_key": "bb" * 32, "adv_name": "Beta"},
+                },
+            )
+            from envybot.mesh_peers import load_mesh_peer_lookup
+
+            names, _, _ = load_mesh_peer_lookup(conn, {"aa" * 8})
+            conn.close()
+        from envybot.web.snapshot import lookup_peer_index
+
+        self.assertEqual(lookup_peer_index("aa" * 8, names), "Alpha")
+        self.assertIsNone(lookup_peer_index("bb" * 8, names))
+
+    def test_sync_book_units_seeds_mesh_peers(self) -> None:
+        from envybot.mesh_peers import load_mesh_peer_lookup, sync_mesh_peers_book_units
+        from ruamel.yaml import YAML
+
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            YAML().dump(
+                {
+                    "next_unit": 2,
+                    "nodes": {
+                        "me0001": {
+                            "unit_id": "ME0001",
+                            "identity_pubkey": "c" * 64,
+                        },
+                    },
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            conn = open_history(book)
+            doc = YAML().load(nodes_path.read_text(encoding="utf-8"))
+            sync_mesh_peers_book_units(conn, doc["nodes"])
+            names, _, _ = load_mesh_peer_lookup(conn)
+            book_row = conn.execute(
+                "SELECT book_unit, identity_source FROM mesh_peers WHERE pubkey = ?",
+                ("c" * 64,),
+            ).fetchone()
+            conn.close()
+        self.assertEqual(book_row[0], "me0001")
+        self.assertEqual(book_row[1], "book")
+        self.assertEqual(names.get("c" * 8), None)
 
 
 if __name__ == "__main__":

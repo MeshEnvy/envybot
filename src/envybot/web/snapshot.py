@@ -15,22 +15,21 @@ from envybot.health import compute_health
 from envybot.history import (
     all_last_seen,
     parse_refresh_gaps,
-    latest_acl_snapshot,
     compact_sparks,
     interval_traffic,
     last_ok_apply_desireds,
     last_ok_apply_times,
-    latest_mesh_audit_path,
     latest_ok_contact_at,
-    latest_neighbors,
-    latest_ota,
-    latest_status,
-    load_community_locs,
+    latest_acl_snapshot_map,
+    latest_mesh_audit_path_map,
+    latest_neighbors_map,
+    latest_ota_map,
+    latest_status_map,
     open_history,
     rolling_traffic,
-    save_community_locs,
     status_series,
 )
+from envybot.mesh_peers import load_mesh_peer_lookup
 from envybot.ota_parse import ota_badge
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
@@ -278,48 +277,56 @@ def neighbor_age_secs(
     return age
 
 
-def reported_locs_from_contacts(contacts: Any) -> dict[str, tuple[float, float]]:
-    """Advert GPS from companion contacts, indexed by full key and prefixes."""
-    if not isinstance(contacts, dict):
-        return {}
-    out: dict[str, tuple[float, float]] = {}
-    for key, raw in contacts.items():
-        if not isinstance(raw, dict):
+def collect_heard_pubkeys(neighbors_map: dict[str, Any]) -> set[str]:
+    """Pubkeys from latest neighbor GET payloads (for scoped mesh_peers load)."""
+    from envybot.mesh_peers import normalize_pubkey_hex
+
+    out: set[str] = set()
+    for entry in neighbors_map.values():
+        if not isinstance(entry, dict):
             continue
-        pk = str(raw.get("public_key") or key or "").strip().lower()
-        if not pk:
+        payload = entry.get("payload")
+        if not isinstance(payload, list):
             continue
-        try:
-            lat = float(raw.get("adv_lat"))
-            lon = float(raw.get("adv_lon"))
-        except (TypeError, ValueError):
-            continue
-        if is_placeholder_gps(lat, lon):
-            continue
-        loc = (lat, lon)
-        out[pk] = loc
-        if len(pk) >= 16:
-            out[pk[:16]] = loc
-        if len(pk) >= 8:
-            out[pk[:8]] = loc
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            raw = item.get("pubkey") or item.get("pubkey_prefix")
+            pk = normalize_pubkey_hex(raw)
+            if pk:
+                out.add(pk)
     return out
 
 
-def lookup_reported_loc(
-    pubkey: Any, reported_locs: dict[str, tuple[float, float]]
-) -> tuple[float, float] | None:
-    if not isinstance(pubkey, str) or not pubkey:
+def lookup_peer_index(pubkey: Any, index: dict[str, Any]) -> Any | None:
+    if not isinstance(pubkey, str) or not pubkey or not index:
         return None
     pk = pubkey.strip().lower()
     if not pk:
         return None
-    if pk in reported_locs:
-        return reported_locs[pk]
-    if len(pk) >= 16 and pk[:16] in reported_locs:
-        return reported_locs[pk[:16]]
-    if len(pk) >= 8 and pk[:8] in reported_locs:
-        return reported_locs[pk[:8]]
+    if pk in index:
+        return index[pk]
+    if len(pk) >= 16 and pk[:16] in index:
+        return index[pk[:16]]
+    if len(pk) >= 8 and pk[:8] in index:
+        return index[pk[:8]]
+    if len(pk) < 64:
+        matches = [key for key in index if key.startswith(pk) and len(key) > len(pk)]
+        if len(matches) == 1:
+            return index[matches[0]]
+        if len(matches) > 1:
+            best = max(matches, key=len)
+            return index[best]
     return None
+
+
+def lookup_peer_loc(
+    pubkey: Any, peer_locs: dict[str, tuple[float, float]]
+) -> tuple[float, float] | None:
+    loc = lookup_peer_index(pubkey, peer_locs)
+    if loc is None:
+        return None
+    return loc
 
 
 def _coord_pair(pos: Any) -> tuple[float, float] | None:
@@ -338,22 +345,22 @@ def _coord_pair(pos: Any) -> tuple[float, float] | None:
 def neighbor_loc(
     nb: dict[str, Any],
     units: dict[str, dict[str, Any]],
-    reported_locs: dict[str, tuple[float, float]],
+    peer_locs: dict[str, tuple[float, float]],
 ) -> tuple[float, float] | None:
-    """Book display loc for fleet peers; companion advert GPS for community."""
+    """Book display loc for fleet peers; mesh_peers advert GPS for off-book."""
     key = nb.get("unit_key")
     if isinstance(key, str) and key in units:
         book = _coord_pair(units[key].get("position"))
         if book:
             return book
-    return lookup_reported_loc(nb.get("pubkey_prefix"), reported_locs)
+    return lookup_peer_loc(nb.get("pubkey_prefix"), peer_locs)
 
 
 def attach_neighbor_miles(
     units: dict[str, dict[str, Any]],
-    reported_locs: dict[str, tuple[float, float]] | None = None,
+    peer_locs: dict[str, tuple[float, float]] | None = None,
 ) -> None:
-    locs = reported_locs or {}
+    locs = peer_locs or {}
     for unit in units.values():
         origin = _coord_pair(unit.get("position"))
         if not origin:
@@ -366,6 +373,54 @@ def attach_neighbor_miles(
                 continue
             miles = haversine_miles(origin[0], origin[1], dest[0], dest[1])
             nb["miles"] = approx_miles(miles)
+
+
+def attach_neighbor_names(
+    units: dict[str, dict[str, Any]],
+    peer_names: dict[str, str] | None = None,
+) -> None:
+    """Fill Heard labels from mesh_peers when the book has none."""
+    names = peer_names or {}
+    if not names:
+        return
+    for unit in units.values():
+        for nb in unit.get("neighbors") or []:
+            if not isinstance(nb, dict) or nb.get("label"):
+                continue
+            name = lookup_peer_index(nb.get("pubkey_prefix"), names)
+            if isinstance(name, str) and name.strip():
+                nb["label"] = name.strip()
+
+
+def attach_neighbor_mesh_liveness(
+    units: dict[str, dict[str, Any]],
+    peer_liveness: dict[str, dict[str, Any]] | None,
+    *,
+    now: int,
+) -> None:
+    """Attach fleet-wide mesh sighting from mesh_peers (distinct from this unit secs_ago)."""
+    live = peer_liveness or {}
+    if not live:
+        return
+    for unit in units.values():
+        for nb in unit.get("neighbors") or []:
+            if not isinstance(nb, dict):
+                continue
+            entry = lookup_peer_index(nb.get("pubkey_prefix"), live)
+            if not isinstance(entry, dict):
+                continue
+            seen_at = entry.get("seen_at")
+            if seen_at is None:
+                continue
+            try:
+                ts = int(seen_at)
+            except (TypeError, ValueError):
+                continue
+            nb["mesh_seen_at"] = ts
+            seen_by = entry.get("seen_by")
+            if seen_by:
+                nb["mesh_seen_by"] = seen_by
+            nb["mesh_seen_ago"] = max(0, now - ts)
 
 
 def sanitize_neighbors(
@@ -706,7 +761,7 @@ def build_fleet_snapshot(
     companion: str | None = None,
     poll: dict[str, Any] | None = None,
     last_seen: dict[str, dict[str, Any]] | None = None,
-    reported_locs: dict[str, tuple[float, float]] | None = None,
+    conn: sqlite3.Connection | None = None,
     include: set[str] | None = None,
     skip: set[str] | None = None,
 ) -> dict[str, Any]:
@@ -736,25 +791,36 @@ def build_fleet_snapshot(
     contact_at_map: dict[str, int] = {}
     acl_heard_map: dict[str, list[dict[str, Any]]] = {}
     acl_heard_at_map: dict[str, int] = {}
-    conn = None
+    own_conn = conn is None
+    if own_conn:
+        conn = None
     try:
-        conn = open_history(book_dir)
+        if own_conn:
+            conn = open_history(book_dir)
+        elif conn is None:
+            raise sqlite3.Error("connection required")
         if seen_map is None:
             seen_map = all_last_seen(conn)
         contact_at_map = latest_ok_contact_at(conn)
         apply_at_map = last_ok_apply_times(conn)
         apply_desired_map = last_ok_apply_desireds(conn)
-        for key in nodes:
-            if not key_in_unit_filter(key, include=include, skip=skip):
-                continue
-            pulled = latest_neighbors(conn, key)
+        prefetch_keys = [
+            k for k in nodes if key_in_unit_filter(k, include=include, skip=skip)
+        ]
+        nb_batch = latest_neighbors_map(conn, prefetch_keys)
+        status_batch = latest_status_map(conn, prefetch_keys)
+        ota_batch = latest_ota_map(conn, prefetch_keys)
+        acl_batch = latest_acl_snapshot_map(conn, prefetch_keys)
+        audit_batch = latest_mesh_audit_path_map(conn, prefetch_keys)
+        for key in prefetch_keys:
+            pulled = nb_batch.get(key)
             if pulled is not None:
                 pulled_ts, nbs = pulled
                 neighbors_map[key] = {"ts": pulled_ts, "payload": nbs}
-            ota = latest_ota(conn, key)
+            ota = ota_batch.get(key)
             if ota is not None:
                 ota_map[key] = ota
-            status = latest_status(conn, key)
+            status = status_batch.get(key)
             if status is not None:
                 status_map[key] = status
             interval = interval_traffic(conn, key)
@@ -764,28 +830,25 @@ def build_fleet_snapshot(
             if window is not None:
                 window_map[key] = window
             status_rows_map[key] = status_series(conn, key)
-            audit_path = latest_mesh_audit_path(conn, key)
+            audit_path = audit_batch.get(key)
             if audit_path:
                 audit_path_map[key] = audit_path
-            acl_ts, acl_payload = latest_acl_snapshot(conn, key)
-            if acl_payload is not None:
-                acl_heard_map[key] = acl_payload
-            if acl_ts is not None:
-                acl_heard_at_map[key] = acl_ts
-        if reported_locs:
-            try:
-                save_community_locs(conn, reported_locs)
-            except sqlite3.OperationalError:
-                # Fleet's long-lived connection can still hold a write
-                # transaction. Skipping the loc cache must not kill the run.
-                pass
-        else:
-            reported_locs = load_community_locs(conn)
+            acl_entry = acl_batch.get(key)
+            if acl_entry is not None:
+                acl_ts, acl_payload = acl_entry
+                if acl_payload is not None:
+                    acl_heard_map[key] = acl_payload
+                if acl_ts is not None:
+                    acl_heard_at_map[key] = acl_ts
+        heard_keys = collect_heard_pubkeys(neighbors_map)
+        peer_names, peer_locs, peer_liveness = load_mesh_peer_lookup(conn, heard_keys)
     except (OSError, sqlite3.Error):
         seen_map = seen_map or {}
-        if conn is not None:
+        peer_names, peer_locs, peer_liveness = {}, {}, {}
+        if own_conn and conn is not None:
             conn.close()
         conn = None
+        own_conn = False
 
     try:
         units: dict[str, dict[str, Any]] = {}
@@ -860,9 +923,11 @@ def build_fleet_snapshot(
                 refresh_gaps=parse_refresh_gaps(seen_row.get("refresh_gaps")),
             )
             units[key]["sparks"] = compact_sparks(status_rows, conn=conn, unit=key, now=now)
-        attach_neighbor_miles(units, reported_locs)
+        attach_neighbor_miles(units, peer_locs)
+        attach_neighbor_names(units, peer_names)
+        attach_neighbor_mesh_liveness(units, peer_liveness, now=now)
     finally:
-        if conn is not None:
+        if own_conn and conn is not None:
             conn.close()
 
     mapped = sum(1 for u in units.values() if u.get("mapped"))

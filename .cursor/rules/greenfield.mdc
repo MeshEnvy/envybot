@@ -37,8 +37,8 @@ Do not design for legacy books, old yaml keys, or rolling schema.
 | `strip_observed` in memory (telemetry is sqlite) | Deleting/renaming keys on every launch |
 | Explicit operator edits (UI, onboard, apply persist) | Built-in "first run migrate" |
 
-`migrate_legacy` (`polls.jsonl` → sqlite) is leftover ingest, not a
-pattern. Do not copy it. Do not add a yaml twin.
+Do not add book-open migrators or one-shot backfills in product code.
+One-shot cleanup belongs in an operator session, then delete the path.
 
 ## Related
 

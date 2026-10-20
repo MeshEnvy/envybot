@@ -253,8 +253,15 @@ companions skip. Not re-run on BLE recover.
   **Load older** via `before_id`; live `audit` SSE rows while card open).
   **Heard**
   list is live snapshot from latest neighbors GET (book + off-book by pubkey).
-  Rows show approximate miles from the unit: book display loc for fleet
-  peers, companion advert GPS (`adv_lat`/`adv_lon`) for community nodes.
+  Book peers use the book label. Off-book rows use `mesh_peers.adv_name`
+  (companion sync on the fleet sqlite conn). Registry code lives in
+  `src/envybot/mesh_peers.py`. `book_unit` links refresh on `load_book`,
+  hot `sync_book`, and UI yaml saves (`sync_mesh_peers_from_book`), not on
+  every snapshot read. Snapshot batch-loads neighbors/status/ota/acl/audit
+  and scopes `mesh_peers` to heard pubkeys. Prefix match at read via
+  `lookup_peer_index`. Row age is per observer (`secs_ago`); optional
+  `mesh_seen_ago` / `mesh_seen_by` show fleet-wide liveness from
+  `last_mesh_seen_*` on neighbor polls.
   Each GET persists only that
   group (no replay of earlier status). SSE `unit` events carry
   `{ source, sample }` so the open card updates live via `state.js`.

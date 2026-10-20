@@ -18,16 +18,19 @@ from envybot.history import (
     open_history,
     record_poll,
 )
+from envybot.mesh_peers import upsert_mesh_peers_from_contacts
 from envybot.position import approx_miles, haversine_miles, is_placeholder_gps, lookup_site_name
 from envybot.web.snapshot import (
     assert_no_secrets,
+    attach_neighbor_mesh_liveness,
     attach_neighbor_miles,
+    attach_neighbor_names,
     build_fleet_snapshot,
+    lookup_peer_index,
     drift_state,
     is_secret_key,
     neighbor_age_secs,
     neighbor_is_fresh,
-    reported_locs_from_contacts,
     resolve_position,
     last_heard,
     sanitize_neighbors,
@@ -767,7 +770,7 @@ class NeighborMilesTests(unittest.TestCase):
         attach_neighbor_miles(units)
         self.assertAlmostEqual(units["me0001"]["neighbors"][0]["miles"], 6.9, places=1)
 
-    def test_community_uses_reported_loc(self) -> None:
+    def test_off_book_uses_peer_loc(self) -> None:
         units = {
             "me0001": {
                 "position": {"lat": 39.5, "lon": -119.8},
@@ -777,15 +780,22 @@ class NeighborMilesTests(unittest.TestCase):
         attach_neighbor_miles(units, {"abcd1234": (39.6, -119.8)})
         self.assertAlmostEqual(units["me0001"]["neighbors"][0]["miles"], 6.9, places=1)
 
-    def test_contacts_skip_placeholder(self) -> None:
-        locs = reported_locs_from_contacts(
-            {
-                "aa" * 32: {"public_key": "aa" * 32, "adv_lat": 0.0, "adv_lon": 0.0},
-                "bb" * 32: {"public_key": "bb" * 32, "adv_lat": 39.6, "adv_lon": -119.8},
-            }
-        )
+    def test_mesh_peers_skip_placeholder_gps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            upsert_mesh_peers_from_contacts(
+                conn,
+                {
+                    "aa" * 32: {"public_key": "aa" * 32, "adv_lat": 0.0, "adv_lon": 0.0},
+                    "bb" * 32: {"public_key": "bb" * 32, "adv_lat": 39.6, "adv_lon": -119.8},
+                },
+            )
+            from envybot.mesh_peers import load_mesh_peer_lookup
+
+            _, locs, _ = load_mesh_peer_lookup(conn)
+            conn.close()
         self.assertNotIn("aa" * 32, locs)
-        self.assertEqual(locs["bb" * 8], (39.6, -119.8))
+        self.assertEqual(lookup_peer_index("bb" * 8, locs), (39.6, -119.8))
 
     def test_unmapped_origin_omits_miles(self) -> None:
         units = {
@@ -839,6 +849,104 @@ class NeighborMilesTests(unittest.TestCase):
             nbs = [n for n in snap["units"]["me0001"]["neighbors"] if n.get("unit_key") == "me0002"]
             self.assertEqual(len(nbs), 1)
             self.assertAlmostEqual(nbs[0]["miles"], 6.9, places=1)
+
+
+class NeighborNameTests(unittest.TestCase):
+    def test_mesh_peers_index_advert_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            upsert_mesh_peers_from_contacts(
+                conn,
+                {
+                    "aa" * 32: {"public_key": "aa" * 32, "adv_name": "  Ophir  "},
+                    "bb" * 32: {"public_key": "bb" * 32, "adv_name": ""},
+                },
+            )
+            from envybot.mesh_peers import load_mesh_peer_lookup
+
+            names, _, _ = load_mesh_peer_lookup(conn)
+            conn.close()
+        self.assertEqual(lookup_peer_index("aa" * 8, names), "Ophir")
+        self.assertIsNone(lookup_peer_index("bb" * 8, names))
+
+    def test_book_label_wins(self) -> None:
+        units = {
+            "me0001": {
+                "neighbors": [
+                    {"pubkey_prefix": "abcd1234"},
+                    {"unit_key": "me0002", "label": "PV Peak", "pubkey_prefix": "bbbbbbbb"},
+                ]
+            }
+        }
+        attach_neighbor_names(units, {"abcd1234": "Slide", "bbbbbbbb": "Other"})
+        self.assertEqual(units["me0001"]["neighbors"][0]["label"], "Slide")
+        self.assertEqual(units["me0001"]["neighbors"][1]["label"], "PV Peak")
+
+    def test_attach_neighbor_mesh_liveness(self) -> None:
+        now = 1_000_000
+        units = {
+            "me0001": {
+                "neighbors": [
+                    {"pubkey_prefix": "aa" * 8, "secs_ago": 30},
+                    {"pubkey_prefix": "bb" * 8, "secs_ago": 60},
+                ]
+            }
+        }
+        full = "aa" * 32
+        liveness = {full: {"seen_at": now - 7200, "seen_by": "me0014"}}
+        attach_neighbor_mesh_liveness(units, liveness, now=now)
+        n0 = units["me0001"]["neighbors"][0]
+        self.assertEqual(n0["mesh_seen_ago"], 7200)
+        self.assertEqual(n0["mesh_seen_by"], "me0014")
+        self.assertNotIn("mesh_seen_ago", units["me0001"]["neighbors"][1])
+
+    def test_snapshot_keeps_cached_advert_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            book = Path(tmp)
+            nodes_path = book / "nodes.yaml"
+            sites_path = book / "sites.yaml"
+            yaml = YAML()
+            yaml.dump({"sites": {}}, sites_path.open("w", encoding="utf-8"))
+            yaml.dump(
+                {
+                    "next_unit": 2,
+                    "nodes": {
+                        "me0001": {
+                            "unit_id": "ME0001",
+                            "identity_pubkey": "a" * 64,
+                            "neighbors": [
+                                {"pubkey": "c" * 8 + "00", "secs_ago": 30, "snr": 4.0},
+                            ],
+                        },
+                    },
+                },
+                nodes_path.open("w", encoding="utf-8"),
+            )
+            conn = open_history(book)
+            import_yaml_last_seen(
+                conn, yaml.load(nodes_path.read_text(encoding="utf-8"))["nodes"]
+            )
+            upsert_mesh_peers_from_contacts(
+                conn,
+                {
+                    "c" * 64: {"public_key": "c" * 64, "adv_name": "Community"},
+                },
+            )
+            conn.execute(
+                "UPDATE mesh_peers SET last_mesh_seen_at = ?, last_mesh_seen_by = ? "
+                "WHERE pubkey = ?",
+                (int(time.time()) - 100, "me0099", "c" * 64),
+            )
+            conn.commit()
+            conn.close()
+            snap = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
+            row = snap["units"]["me0001"]["neighbors"][0]
+            self.assertNotIn("unit_key", row)
+            self.assertEqual(row["label"], "Community")
+            self.assertEqual(row["mesh_seen_by"], "me0099")
+            self.assertGreaterEqual(row["mesh_seen_ago"], 90)
+            again = build_fleet_snapshot(nodes_path=nodes_path, sites_path=sites_path)
+            self.assertEqual(again["units"]["me0001"]["neighbors"][0]["label"], "Community")
 
 
 class DriftStateTests(unittest.TestCase):

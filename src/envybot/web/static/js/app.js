@@ -3887,6 +3887,9 @@ const App = {
                 <template v-if="nb.miles != null"> · ~{{ formatMiles(nb.miles) }}</template>
                 · {{ nb.snr ?? '?' }} dB
                 · {{ formatAgo(nb.secs_ago) }}
+                <template v-if="nb.mesh_seen_ago != null">
+                  · mesh {{ formatAgo(nb.mesh_seen_ago) }}<template v-if="nb.mesh_seen_by"> ({{ nb.mesh_seen_by }})</template>
+                </template>
               </div>
             </div>
           </section>

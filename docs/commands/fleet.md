@@ -14,8 +14,8 @@ OTA session (`ota status` + delayed `ota ls`) stays on a 24h auto cadence.
 Neighbors share the 1h live interval with status/telemetry and run right
 after login. Neighbor GET
 sends remote `discover.neighbors`, waits 12s, then reads the table. Heard
-rows show approximate miles (book display GPS for fleet peers, companion
-advert GPS for community nodes). Polls every
+rows show approximate miles (book display GPS for fleet peers,
+`mesh_peers` advert GPS for off-book peers). Polls every
 pollable MeshCore unit in the book, including bag/bench (no site `node:` bind).
 Contact sync drops an old companion record when a unit's pubkey changes
 (same `unit_id` or site name). Bare `Repeater` contacts stay.
@@ -28,12 +28,10 @@ Contact sync drops an old companion record when a unit's pubkey changes
 | `nodes.yaml` | Desired identity + `trust.admin` / `trust.guest`. Poll does not write. Map pins: site GPS or per-node `loc` (mobile/bag). `bench_loc` is the ingestor pin plus sun/history backfill (not radio apply). |
 | `keys.yaml` | Person → MeshCore companion pubkeys. Apply resolves names to ACL. |
 | `sites.yaml` | Places (`loc`) and the 1:1 `node:` bind. Fleet writes bind only. |
-| `data/fleet/history.sqlite` | Observed last-seen, telemetry, apply log, `cmd` audit |
+| `data/fleet/history.sqlite` | Observed last-seen, telemetry, apply log, `cmd` audit, `mesh_peers` registry |
 
 Observed last-seen lives in sqlite only. Do not put telemetry or
-`*_pulled_at` in `nodes.yaml`. First run still ingests leftover
-`polls.jsonl` (then deletes it); that path is leftover, not a yaml
-migrator.
+`*_pulled_at` in `nodes.yaml`.
 
 ## Book validation
 
@@ -45,7 +43,8 @@ Site-bound MeshCore units advertise GPS in the 32-byte MeshCore advert
 payload. Lat/lon uses 9 bytes, so the **on-air name is max 23 characters**
 (base `sites.yaml` `advert_name` + book `public_advert.name_suffix`). CLI
 `set name` allows 32 characters; firmware truncates what goes on-air.
-Path hop labels and neighbor names come from heard adverts, not the full CLI
+Path hop labels use companion adverts on the wire. Heard neighbor labels use
+`mesh_peers` (book label when the pubkey is managed). Neither is the full CLI
 name.
 
 With default suffix ` {lora.sh}` (10 chars), keep `advert_name` at **13
@@ -65,6 +64,13 @@ Neighbors: remote `discover.neighbors` (zero-hop CTL) then `GET_NEIGHBOURS`.
 `--no-discover` skips the search. `--discover-wait SEC` changes the listen
 window (default 12). The UI hides a neighbor when the hear is older than
 7 days from now: radio `secs_ago` at GET, plus time since that pull.
+Heard names are the book label when the pubkey is in the book, otherwise
+the advert name from sqlite `mesh_peers` (companion sync). A pubkey prefix
+means there is no stored name for that key yet. Each row shows SNR and **this
+unit's** hear age (`secs_ago` from the latest neighbors GET). When any fleet
+unit has heard that pubkey more recently, the row also shows **mesh** age and
+the last observer unit key (`mesh_peers.last_mesh_seen_*`, updated on neighbor
+polls and companion sync).
 Firmware has no TTL, so ghosts stay in sqlite history.
 
 A long-running `fleet` (not `--once`) re-checks due groups about every 60s

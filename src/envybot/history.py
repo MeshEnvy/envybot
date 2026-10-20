@@ -7,12 +7,11 @@ import math
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
+
+from envybot.mesh_peers import touch_mesh_peers_from_neighbor_poll
 
 HISTORY_REL = Path("data/fleet/history.sqlite")
-LEGACY_JSONL = Path("data/fleet/polls.jsonl")
-COMMUNITY_LOCS_META = "community_locs"
-
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS last_seen (
   unit TEXT PRIMARY KEY,
@@ -137,6 +136,20 @@ CREATE TABLE IF NOT EXISTS mesh_audit (
   source TEXT
 );
 CREATE INDEX IF NOT EXISTS mesh_audit_unit_ts ON mesh_audit (unit, ts_sent);
+
+CREATE TABLE IF NOT EXISTS mesh_peers (
+  pubkey TEXT PRIMARY KEY,
+  adv_name TEXT,
+  adv_lat REAL,
+  adv_lon REAL,
+  last_mesh_seen_at INTEGER,
+  last_mesh_seen_by TEXT,
+  identity_at INTEGER,
+  identity_source TEXT,
+  book_unit TEXT,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mesh_peers_book_unit ON mesh_peers (book_unit);
 """
 
 
@@ -168,10 +181,6 @@ def history_path(book: Path) -> Path:
     return book / HISTORY_REL
 
 
-def legacy_jsonl_path(book: Path) -> Path:
-    return book / LEGACY_JSONL
-
-
 def open_history(book: Path) -> sqlite3.Connection:
     book = Path(book)
     path = history_path(book)
@@ -184,8 +193,6 @@ def open_history(book: Path) -> sqlite3.Connection:
     _ensure_last_seen_columns(conn)
     _ensure_audit_source_columns(conn)
     _ensure_sample_loc_columns(conn)
-    _backfill_sample_loc_from_sites(conn, book)
-    _backfill_sample_loc_v2(conn, book)
     return conn
 
 
@@ -204,42 +211,6 @@ def _ensure_sample_loc_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE telemetry ADD COLUMN lat REAL")
     if "lon" not in cols:
         conn.execute("ALTER TABLE telemetry ADD COLUMN lon REAL")
-
-
-def load_community_locs(conn: sqlite3.Connection) -> dict[str, tuple[float, float]]:
-    """Companion-advert GPS for off-book neighbors, keyed by pubkey prefix."""
-    row = conn.execute(
-        "SELECT value FROM meta WHERE key = ?", (COMMUNITY_LOCS_META,)
-    ).fetchone()
-    if not row or not row[0]:
-        return {}
-    try:
-        raw = json.loads(row[0])
-    except json.JSONDecodeError:
-        return {}
-    if not isinstance(raw, dict):
-        return {}
-    out: dict[str, tuple[float, float]] = {}
-    for key, loc in raw.items():
-        if not isinstance(key, str) or not isinstance(loc, (list, tuple)) or len(loc) < 2:
-            continue
-        try:
-            lat, lon = float(loc[0]), float(loc[1])
-        except (TypeError, ValueError):
-            continue
-        out[key.lower()] = (lat, lon)
-    return out
-
-
-def save_community_locs(
-    conn: sqlite3.Connection, locs: dict[str, tuple[float, float]]
-) -> None:
-    payload = {k.lower(): [lat, lon] for k, (lat, lon) in locs.items()}
-    conn.execute(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
-        (COMMUNITY_LOCS_META, json.dumps(payload, default=str)),
-    )
-    conn.commit()
 
 
 SAMPLE_LOC_BACKFILL_META = "sample_loc_backfill"
@@ -586,6 +557,183 @@ def latest_status(conn: sqlite3.Connection, unit: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return data if isinstance(data, dict) else None
+
+
+def _unit_sql_in(units: Sequence[str]) -> tuple[str, list[str]] | None:
+    if not units:
+        return None
+    keys = [str(u).lower() for u in units]
+    return ",".join("?" * len(keys)), keys
+
+
+def latest_neighbors_map(
+    conn: sqlite3.Connection, units: Sequence[str]
+) -> dict[str, tuple[int, list[Any]]]:
+    sql_in = _unit_sql_in(units)
+    if sql_in is None:
+        return {}
+    placeholders, params = sql_in
+    rows = conn.execute(
+        f"""
+        SELECT n.unit, n.ts, n.payload
+        FROM neighbors n
+        INNER JOIN (
+            SELECT unit, MAX(ts) AS ts FROM neighbors
+            WHERE unit IN ({placeholders}) GROUP BY unit
+        ) latest ON n.unit = latest.unit AND n.ts = latest.ts
+        """,
+        params,
+    ).fetchall()
+    out: dict[str, tuple[int, list[Any]]] = {}
+    for row in rows:
+        unit = str(row["unit"]).lower()
+        try:
+            ts = int(row["ts"])
+            data = json.loads(row["payload"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(data, list):
+            out[unit] = (ts, data)
+    return out
+
+
+def latest_status_map(
+    conn: sqlite3.Connection, units: Sequence[str]
+) -> dict[str, dict[str, Any]]:
+    sql_in = _unit_sql_in(units)
+    if sql_in is None:
+        return {}
+    placeholders, params = sql_in
+    rows = conn.execute(
+        f"""
+        SELECT s.unit, s.payload
+        FROM status s
+        INNER JOIN (
+            SELECT unit, MAX(ts) AS ts FROM status
+            WHERE unit IN ({placeholders}) GROUP BY unit
+        ) latest ON s.unit = latest.unit AND s.ts = latest.ts
+        """,
+        params,
+    ).fetchall()
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        try:
+            data = json.loads(row["payload"])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            out[str(row["unit"]).lower()] = data
+    return out
+
+
+def latest_ota_map(
+    conn: sqlite3.Connection, units: Sequence[str]
+) -> dict[str, dict[str, Any]]:
+    sql_in = _unit_sql_in(units)
+    if sql_in is None:
+        return {}
+    placeholders, params = sql_in
+    out: dict[str, dict[str, Any]] = {}
+    for row in conn.execute(
+        f"SELECT unit, ota_state FROM last_seen WHERE unit IN ({placeholders})",
+        params,
+    ):
+        unit = str(row["unit"]).lower()
+        raw = row["ota_state"]
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            out[unit] = data
+    missing = [u for u in params if u not in out]
+    if not missing:
+        return out
+    sub_in = _unit_sql_in(missing)
+    if sub_in is None:
+        return out
+    sub_ph, sub_params = sub_in
+    for row in conn.execute(
+        f"""
+        SELECT o.unit, o.payload
+        FROM ota_snapshots o
+        INNER JOIN (
+            SELECT unit, MAX(ts) AS ts FROM ota_snapshots
+            WHERE unit IN ({sub_ph}) GROUP BY unit
+        ) latest ON o.unit = latest.unit AND o.ts = latest.ts
+        """,
+        sub_params,
+    ):
+        unit = str(row["unit"]).lower()
+        if unit in out:
+            continue
+        try:
+            data = json.loads(row["payload"])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            out[unit] = data
+    return out
+
+
+def latest_acl_snapshot_map(
+    conn: sqlite3.Connection, units: Sequence[str]
+) -> dict[str, tuple[int | None, list[dict[str, Any]] | None]]:
+    sql_in = _unit_sql_in(units)
+    if sql_in is None:
+        return {}
+    placeholders, params = sql_in
+    rows = conn.execute(
+        f"""
+        SELECT a.unit, a.ts, a.payload
+        FROM acl_snapshots a
+        INNER JOIN (
+            SELECT unit, MAX(ts) AS ts FROM acl_snapshots
+            WHERE unit IN ({placeholders}) GROUP BY unit
+        ) latest ON a.unit = latest.unit AND a.ts = latest.ts
+        """,
+        params,
+    ).fetchall()
+    out: dict[str, tuple[int | None, list[dict[str, Any]] | None]] = {}
+    for row in rows:
+        unit = str(row["unit"]).lower()
+        try:
+            ts = int(row["ts"])
+            payload = json.loads(row["payload"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            out[unit] = (None, None)
+            continue
+        if isinstance(payload, list):
+            out[unit] = (ts, payload)
+        else:
+            out[unit] = (ts, None)
+    return out
+
+
+def latest_mesh_audit_path_map(
+    conn: sqlite3.Connection, units: Sequence[str]
+) -> dict[str, str]:
+    sql_in = _unit_sql_in(units)
+    if sql_in is None:
+        return {}
+    placeholders, params = sql_in
+    rows = conn.execute(
+        f"""
+        SELECT unit, path, ts_sent FROM mesh_audit
+        WHERE unit IN ({placeholders}) AND path IS NOT NULL AND path != ''
+        ORDER BY ts_sent DESC
+        """,
+        params,
+    ).fetchall()
+    out: dict[str, str] = {}
+    for row in rows:
+        unit = str(row["unit"]).lower()
+        if unit in out:
+            continue
+        out[unit] = str(row["path"])
+    return out
 
 
 def _status_int(payload: dict[str, Any], key: str) -> int | None:
@@ -1818,6 +1966,9 @@ def record_poll(
             "INSERT INTO neighbors (ts, unit, payload) VALUES (?, ?, ?)",
             (now, unit, json.dumps(res.neighbors, default=str)),
         )
+        touch_mesh_peers_from_neighbor_poll(
+            conn, observer_unit=unit, ts=now, neighbors=res.neighbors
+        )
     ota_groups = {"ota_status", "ota_ls"} & set(groups)
     if ota_groups and getattr(res, "ota", None) is not None:
         from envybot.ota_parse import merge_ota_snapshot
@@ -2259,19 +2410,3 @@ def mark_mesh_audit_late(
     conn.commit()
 
 
-def migrate_legacy(book: Path, nodes: dict[str, Any]) -> sqlite3.Connection:
-    """Open history. If empty, import jsonl + YAML last-seen, then delete jsonl."""
-    conn = open_history(book)
-    if not is_empty(conn):
-        return conn
-    jsonl = legacy_jsonl_path(book)
-    if jsonl.is_file():
-        import_jsonl(conn, jsonl)
-        jsonl.unlink()
-    import_yaml_last_seen(conn, nodes)
-    conn.execute(
-        "INSERT OR REPLACE INTO meta (key, value) VALUES ('migrated_at', ?)",
-        (str(int(time.time())),),
-    )
-    conn.commit()
-    return conn

@@ -13,38 +13,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 - ``envybot seed --dutycycle PCT`` sets tag airtime cap at seed start (default 10).
 - ``envybot seed`` on companion USB: setup via ``run_cli_command``, then raw
   mota-seeder (requires meshcore companion OTA folder + MS passthrough firmware).
-
-### Fixed
-
-- Fleet card age and map pin color follow the last successful contact. A timed-out login no longer refreshes "ago".
-- USB onboard skips ``radio.fem.rxgain`` when GET returns MeshCore ``??:``
-  (SenseCAP and other boards without FEM LNA CLI).
-- USB onboard accepts ``set agc.reset.interval`` ``OK - interval rounded to N``
-  without a follow-up GET (avoids serial timeout on busy radios).
-
-### Added
-
 - USB flash and onboard `--target sensecap-p1pro-repeater-slim` for the
   SenseCAP Solar Node P1-Pro slim repeater (EnvyBoot `sensecap_solar_p1`,
   app `2886:0059`). Alias: `sensecap-solar-p1-repeater-slim`.
-
 - `envybot export sites` writes a CSV of `sites.yaml` rows plus bound
   MeshCore node credentials to stdout. Skips decommissioned and Meshtastic
   binds. Optional `--tags` filters with AND semantics (every listed tag
   must appear on the site).
 
-### Fixed
-
-- Fleet companion reconnect after laptop sleep now drops the stale BLE
-  handle, rescans, and reconnects. The old path reused the pre-sleep
-  device object and spun `reconnect 1/5` until you restarted the process.
-- Auto path now discards a stale hop cache after three timeouts on
-  single-shot fleet jobs (neighbors, status, CLI). Those retries used to
-  keep the same path for all `--attempts` because fail counting only ran
-  inside the old inner retry loop.
-
 ### Changed
 
+- Heard off-book labels and miles read sqlite `mesh_peers` (companion sync).
+  The book still wins for managed units. Neighbor SNR and age stay per observer.
 - Fleet neighbor GET is on the same 1h live interval as status and
   telemetry (`--min-interval`). Sync and auto poll both run it first after
   login. The 24h neighbor cadence is gone.
@@ -71,6 +51,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   is **`--full-sync`** (Pull every GET group plus Deploy profile). Session
   state is `deploying`.
 
+### Fixed
+
+- Fleet card age and map pin color follow the last successful contact. A timed-out login no longer refreshes "ago".
+- USB onboard skips ``radio.fem.rxgain`` when GET returns MeshCore ``??:``
+  (SenseCAP and other boards without FEM LNA CLI).
+- USB onboard accepts ``set agc.reset.interval`` ``OK - interval rounded to N``
+  without a follow-up GET (avoids serial timeout on busy radios).
+- Fleet companion reconnect after laptop sleep now drops the stale BLE
+  handle, rescans, and reconnects. The old path reused the pre-sleep
+  device object and spun `reconnect 1/5` until you restarted the process.
+- Auto path now discards a stale hop cache after three timeouts on
+  single-shot fleet jobs (neighbors, status, CLI). Those retries used to
+  keep the same path for all `--attempts` because fail counting only ran
+  inside the old inner retry loop.
+
 ### Removed
 
 - Fleet **`--unit`** — use **`--only`** (`trust` / `onboard` `--unit` unchanged).
@@ -94,7 +89,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
   `NODE_DISCOVER_REQ`, 10s listen, lists nearby repeaters (name, pubkey prefix,
   SNR). Warns when none answered. Skips on unsupported companion firmware.
 - Fleet detail **Heard** rows show approximate miles from the unit. Book
-  display GPS for fleet peers; companion advert GPS for community nodes.
+  display GPS for fleet peers; `mesh_peers` advert GPS for off-book peers.
 - **`weather backfill`** — Open-Meteo hourly cache for bound site GPS. Poll
   history **When** cells show ambient temp, cloud, precip, and wind on hover;
   telemetry rows show radio temp vs ambient. Run `./envybot weather backfill`

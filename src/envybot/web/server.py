@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import sqlite3
 import time
 import webbrowser
 from dataclasses import dataclass, field
@@ -27,6 +28,7 @@ from envybot.history import (
     open_history,
     source_histories,
 )
+from envybot.mesh_peers import sync_mesh_peers_book_units, upsert_mesh_peers_from_contacts
 from envybot.jobs import FleetScheduler
 from envybot.keys_doc import keys_path, load_keys
 from envybot.nodes_doc import (
@@ -53,7 +55,6 @@ from envybot.web.snapshot import (
     assert_no_secrets,
     build_fleet_snapshot,
     build_neighbor_edges,
-    reported_locs_from_contacts,
 )
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -105,7 +106,6 @@ class MonitorWeb:
     _poll_state: dict[str, Any] = field(default_factory=dict, repr=False)
     _companion: str | None = field(default=None, repr=False)
     console: ConsoleManager = field(default_factory=ConsoleManager, repr=False)
-    _reported_locs: dict[str, tuple[float, float]] = field(default_factory=dict, repr=False)
     _include: set[str] | None = field(default=None, repr=False)
     _skip: set[str] | None = field(default=None, repr=False)
 
@@ -485,14 +485,51 @@ class MonitorWeb:
         )
         return 200, None
 
-    def _live_reported_locs(self) -> dict[str, tuple[float, float]] | None:
+    def _companion_contacts(self) -> Any:
         session = getattr(self, "_fleet_session", None)
         client = getattr(session, "_recovery_client", None) if session else None
-        live = reported_locs_from_contacts(getattr(client, "contacts", None) if client else None)
-        if live:
-            self._reported_locs = live
-            return live
-        return self._reported_locs or None
+        return getattr(client, "contacts", None) if client else None
+
+    def _fleet_conn(self) -> Any | None:
+        binding = self._binding
+        if binding is None:
+            return None
+        return binding.conn
+
+    @contextlib.contextmanager
+    def history_conn(self):
+        """Fleet worker sqlite when bound; otherwise open history per request."""
+        conn = self._fleet_conn()
+        if conn is not None:
+            yield conn
+            return
+        conn = open_history(self.nodes_path.parent)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    def _sync_companion_mesh_peers(self) -> None:
+        contacts = self._companion_contacts()
+        conn = self._fleet_conn()
+        if not contacts or conn is None:
+            return
+        try:
+            upsert_mesh_peers_from_contacts(conn, contacts, commit=True)
+        except sqlite3.OperationalError:
+            pass
+
+    def sync_mesh_peers_from_book(self) -> None:
+        conn = self._fleet_conn()
+        if conn is None:
+            return
+        doc = load_nodes_doc(self.nodes_path)
+        nodes = doc.get("nodes") or {}
+        if isinstance(nodes, dict):
+            try:
+                sync_mesh_peers_book_units(conn, nodes)
+            except sqlite3.OperationalError:
+                pass
 
     def _merge_scheduler_path_pins(self, snap: dict[str, Any]) -> None:
         binding = self._binding
@@ -518,6 +555,7 @@ class MonitorWeb:
             self._poll_state = dict(poll)
         if companion is not None:
             self._companion = companion
+        self._sync_companion_mesh_peers()
         snap = build_fleet_snapshot(
             nodes_path=self.nodes_path,
             sites_path=self.sites_path,
@@ -525,7 +563,7 @@ class MonitorWeb:
             session_states=self._session_states,
             companion=self._companion,
             poll=self._poll_state or poll or {"phase": "idle"},
-            reported_locs=self._live_reported_locs(),
+            conn=self._fleet_conn(),
             include=self._include,
             skip=self._skip,
         )
@@ -551,6 +589,7 @@ class MonitorWeb:
             self._poll_state = dict(poll)
         if companion is not None:
             self._companion = companion
+        self._sync_companion_mesh_peers()
         snap = build_fleet_snapshot(
             nodes_path=self.nodes_path,
             sites_path=self.sites_path,
@@ -558,7 +597,7 @@ class MonitorWeb:
             session_states=self._session_states,
             companion=self._companion,
             poll=self._poll_state or poll or {"phase": "idle"},
-            reported_locs=self._live_reported_locs(),
+            conn=self._fleet_conn(),
             include=self._include,
             skip=self._skip,
         )
@@ -697,11 +736,8 @@ async def _handle_history(request: web.Request) -> web.Response:
     web_ctx: MonitorWeb = request.app["web_ctx"]
     if not web_ctx.unit_visible(unit):
         return web.json_response({"error": "unknown unit"}, status=404)
-    conn = open_history(web_ctx.nodes_path.parent)
-    try:
+    with web_ctx.history_conn() as conn:
         series = history_series(conn, unit, metric, hours=hours)
-    finally:
-        conn.close()
     payload = {"unit": unit, "metric": metric, "hours": hours, "points": series}
     assert_no_secrets(payload)
     return web.json_response(payload)
@@ -738,8 +774,7 @@ async def _handle_polls(request: web.Request) -> web.Response:
     web_ctx: MonitorWeb = request.app["web_ctx"]
     if not web_ctx.unit_visible(unit):
         return web.json_response({"error": "unknown unit"}, status=404)
-    conn = open_history(web_ctx.nodes_path.parent)
-    try:
+    with web_ctx.history_conn() as conn:
         histories = source_histories(conn, unit, hours=hours, limit=limit)
         loc = _site_loc_for_polls(web_ctx, unit)
         attach_sun(histories.get("status"), loc=loc)
@@ -752,8 +787,6 @@ async def _handle_polls(request: web.Request) -> web.Response:
         histories["sun"] = (
             sun_series(loc[0], loc[1], now - hours * 3600, now) if loc else []
         )
-    finally:
-        conn.close()
     payload = {"unit": unit, "hours": hours, "histories": histories}
     assert_no_secrets(payload)
     return web.json_response(payload)
@@ -768,14 +801,11 @@ async def _handle_poll_log(request: web.Request) -> web.Response:
     web_ctx: MonitorWeb = request.app["web_ctx"]
     if not web_ctx.unit_visible(unit):
         return web.json_response({"error": "unknown unit"}, status=404)
-    conn = open_history(web_ctx.nodes_path.parent)
-    try:
+    with web_ctx.history_conn() as conn:
         rows, has_more = list_poll_log(conn, unit, limit=limit, before_ts=before_ts)
         loc = _site_loc_for_polls(web_ctx, unit)
         attach_sun(rows, loc=loc)
         attach_weather(conn, rows, loc=loc)
-    finally:
-        conn.close()
     payload = {"unit": unit, "rows": rows, "has_more": has_more}
     assert_no_secrets(payload)
     return web.json_response(payload)
@@ -790,11 +820,8 @@ async def _handle_audit(request: web.Request) -> web.Response:
     web_ctx: MonitorWeb = request.app["web_ctx"]
     if not web_ctx.unit_visible(unit):
         return web.json_response({"error": "unknown unit"}, status=404)
-    conn = open_history(web_ctx.nodes_path.parent)
-    try:
+    with web_ctx.history_conn() as conn:
         rows, has_more = list_mesh_audit(conn, unit, limit=limit, before_id=before_id)
-    finally:
-        conn.close()
     payload = {"unit": unit, "rows": rows, "has_more": has_more}
     assert_no_secrets(payload)
     return web.json_response(payload)
@@ -1010,6 +1037,7 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
     node.pop("lat", None)
     node.pop("lon", None)
     write_nodes_doc(web_ctx.nodes_path, doc)
+    web_ctx.sync_mesh_peers_from_book()
     snap = await web_ctx.refresh_snapshot()
     unit = snap["units"].get(key) or {}
     return web.json_response(unit)

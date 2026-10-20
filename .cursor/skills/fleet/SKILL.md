@@ -185,9 +185,12 @@ lat/lon), so the **on-air name is max 23 characters**.
 | Max base `advert_name` with GPS + default suffix | **13 chars** |
 | CLI `set name` / prefs | 32 chars (can be longer; advert truncates) |
 
-Companion path labels and neighbor names use **heard advert names**, not the
-full CLI name. Clipped names in `path:` lines (e.g. `Bare Mountain E {lora.s`)
-mean the book name exceeds the 23-byte advert budget.
+Path hop labels use companion on-wire adverts. Heard neighbor rows: book label
+when the pubkey is managed, else `mesh_peers.adv_name` (companion sync), else
+the pubkey prefix. SNR and `secs_ago` are this unit's hear; UI adds mesh-wide
+age from `last_mesh_seen_*` when newer fleet context exists. Clipped names in `path:` lines
+(e.g. `Bare Mountain E {lora.s`) mean the book name exceeds the 23-byte advert
+budget.
 
 Validation checks every **site-bound MeshCore** unit:
 `advert_name` + `public_advert.name_suffix` (or per-site `advert_suffix`).

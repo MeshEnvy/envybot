@@ -36,7 +36,7 @@ from envybot.keys_doc import (
     write_keys,
 )
 from envybot.apply import profile_id, stamp_profile_after_trust
-from envybot.history import migrate_legacy
+from envybot.history import open_history
 from envybot.book_dal import load_book
 from envybot.nodes_doc import UNIT_NUM_RE, load_nodes_doc, load_sites_for_book, write_nodes_doc
 from envybot.position import lookup_site_name, public_radio_name, resolve_book_position, site_binding
@@ -450,7 +450,7 @@ async def run(args: argparse.Namespace) -> int:
             return 2
         doc_after = load_nodes_doc(nodes_path)
         keys_after = load_keys(keys_path(nodes_path))
-        conn = migrate_legacy(nodes_path.parent, doc_after.get("nodes") or {})
+        conn = open_history(nodes_path.parent)
         acl_ok, acl_fail, ok_keys = await grant_companion_acl(
             client,
             grant_targets,
