@@ -10,6 +10,7 @@ Command manuals and operator notes. Agents: read [`.cursor/skills/fleet/SKILL.md
 | `trust` | [commands/trust.md](commands/trust.md) |
 | `cmd` | [commands/cmd.md](commands/cmd.md) |
 | `onboard` | [commands/onboard.md](commands/onboard.md) |
+| `reonboard` | [commands/reonboard.md](commands/reonboard.md) |
 | `flash` | [commands/flash.md](commands/flash.md) |
 | `seed` | [commands/seed.md](commands/seed.md) |
 | `weather` | [commands/weather.md](commands/weather.md) |

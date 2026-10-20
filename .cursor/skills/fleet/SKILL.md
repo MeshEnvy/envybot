@@ -29,6 +29,15 @@ cd /path/to/envybot
 ./envybot fleet --no-web --only me0048 --full-sync --companion 3355
 ```
 
+## USB bench: `onboard` vs `reonboard`
+
+| Command | Use when |
+|---------|----------|
+| `onboard` | First bind: mints a new fleet keypair (unless USB pubkey already matches the row). `--unit` with pubkey mismatch → error. |
+| `reonboard --unit KEY` | Book → USB: restore `identity_secret`, passwords, profile. `--force` re-SETs matching GETs. |
+
+Manuals: [onboard.md](../../../docs/commands/onboard.md), [reonboard.md](../../../docs/commands/reonboard.md). Not companion/mesh — USB text CLI on the DUT.
+
 ## "Nothing is happening" / Fleet idle
 
 | Symptom | Cause | Fix |

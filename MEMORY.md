@@ -8,7 +8,7 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | Repo | [MeshEnvy/envybot](https://github.com/MeshEnvy/envybot) |
 | Version | 0.1.0 |
 | Tooling | `uv` + `pyproject.toml` |
-| Commands | `fleet`, `trust`, `cmd`, `onboard`, `flash`, `seed`, `weather`, `range`, `export` |
+| Commands | `fleet`, `trust`, `cmd`, `onboard`, `reonboard`, `flash`, `seed`, `weather`, `range`, `export` |
 | Book | `--book` / `ENVYBOT_HOME` / cwd with `nodes.yaml` (+ `keys.yaml`, `channels.yaml`) |
 
 ## Layout
@@ -41,7 +41,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/onboard_book.py` | Onboard `nodes.yaml` register + unit resolution |
 | `src/envybot/onboard_serial_apply.py` | USB SETs via `applicable_field_desireds` / ACL |
 | `src/envybot/bench_flash.py` | Shared bench DFU for onboard flash flags |
-| `src/envybot/commands/onboard.py` | USB onboard orchestration: profile SETs, reboot, discover, one register, ACL, sqlite stamp. Optional `--with-flash-bootloader` / `--with-flash-firmware`. |
+| `src/envybot/onboard_usb_session.py` | Shared USB onboard / reonboard orchestration |
+| `src/envybot/commands/onboard.py` | First bind: mint identity, profile SETs, discover, register, ACL, stamp |
+| `src/envybot/commands/reonboard.py` | Book → USB restore for an existing `--unit` row (`--force` re-SET) |
 | `src/envybot/flash_program.py` | Bench artifact discovery, 1200 touch, nrfutil serial DFU (injectable runner). USB IDs: Xiao, RAK4631 slim, SenseCAP P1-Pro slim. |
 | `src/envybot/commands/flash.py` | `flash bootloader|firmware --target` |
 | `src/envybot/mota.py` | Light `.mota` parse for USB seeder catalog |

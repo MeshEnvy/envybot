@@ -44,6 +44,54 @@ def require_ok(step: str, reply: str) -> str:
     return reply
 
 
+def usb_identity_matches_book(cli: RepeaterSerial, node: dict[str, Any]) -> bool:
+    from envybot.onboard_book import PUB_HEX_LEN, normalize_hex
+
+    book_pub = str(node.get("identity_pubkey") or "").strip().lower()
+    if not book_pub:
+        return True
+    pub = normalize_hex(
+        parse_get_value(cli.cmd("get public.key")) or "",
+        PUB_HEX_LEN,
+        "public.key",
+    )
+    return pub.lower() == book_pub
+
+
+def _set_prv_if_needed(cli: RepeaterSerial, secret: str, *, label: str) -> bool:
+    from envybot.onboard_book import PRV_HEX_LEN, normalize_hex
+
+    want = normalize_hex(secret, PRV_HEX_LEN, label)
+    cur = normalize_hex(
+        parse_get_value(cli.cmd("get prv.key")) or "",
+        PRV_HEX_LEN,
+        "prv.key",
+    )
+    if cur.lower() == want.lower():
+        return False
+    require_ok("set prv.key", cli.cmd(f"set prv.key {want}"))
+    return True
+
+
+def mint_identity_on_usb(cli: RepeaterSerial, secret: str) -> bool:
+    """Install a new fleet private key. Returns True if reboot is required."""
+    return _set_prv_if_needed(cli, secret, label="minted identity")
+
+
+def restore_book_identity_on_usb(cli: RepeaterSerial, node: dict[str, Any]) -> bool:
+    """Write yaml ``identity_secret`` when USB differs. Returns True if reboot is required."""
+    secret = str(node.get("identity_secret") or "")
+    if not secret.strip():
+        raise CliError("identity_secret missing in book row")
+    if not _set_prv_if_needed(cli, secret, label="identity_secret"):
+        if usb_identity_matches_book(cli, node):
+            return False
+        raise CliError(
+            "identity_secret matches USB but public.key does not match identity_pubkey in yaml"
+        )
+    return True
+
+
 def coords_match(got: float | None, want: float) -> bool:
     return got is not None and abs(got - want) < 1e-4
 

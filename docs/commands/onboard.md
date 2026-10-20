@@ -11,32 +11,40 @@ text CLI, not the companion protocol.
 
 ## What it does
 
-Idempotent on identity, creds, radio, and fleet-profile fields over USB:
+**First bind** over USB (not the same as [`reonboard`](reonboard.md), which
+pushes an existing row onto the radio):
 
 1. Open the DUT USB modem (path or autodetection).
 2. Match an existing book row by pubkey, or `--unit`, or allocate the next
    `ME####` from `next_unit` (never reuse). Refuses `decommissioned` rows.
-3. GET then SET. Reuse stored admin/guest password *values* on re-run when
+   If `--unit` points at a row whose pubkey ≠ USB, exit with “use reonboard”.
+3. **Mint** a new mesh keypair on USB (`set prv.key` + reboot) when this is a
+   new allocation or the row has no identity yet. Does **not** copy the chip’s
+   factory key into the book. Re-plug the same radio (pubkey already in yaml)
+   skips minting. After the first bind, mesh identity stays in the book until
+   you change it; restore a row onto USB with [`reonboard`](reonboard.md), not
+   another `onboard`.
+4. GET then SET. Reuse stored admin/guest password *values* on re-run when
    they are unique and strong. Weak or colliding book/device passwords are
    replaced. Admin cannot be GET, so onboard always writes it (a yaml hit is
    the value, not a skip). A replacement chip left on factory `password`
    otherwise silently drops mesh login.
-4. Set USA/Canada radio (`910.525`, BW 62.5, SF7, CR 4/5). Remaining USB
+5. Set USA/Canada radio (`910.525`, BW 62.5, SF7, CR 4/5). Remaining USB
    SETs follow the same **private profile** rules as mesh Deploy
    (`applicable_field_desireds`): dutycycle, path hash, OTA autofetch, advert
    / flood, repeat, hop retry, powersaving, AGC interval, FEM rxgain when the
    board allows it, name, lat/lon, and owner info when the row is site-bound.
    Bench rows (no `site`) get the privacy mask (name `ME####`, GPS `0,0`,
    advert 0). Writes `repeat: false` on the book row when that key is absent.
-5. Read public + secret keys. Set host clock. Pull `ota self` (EndF
+6. Read public + secret keys. Set host clock. Pull `ota self` (EndF
    `base_hash`) with firmware and bootloader from USB.
-6. Reboot so `set radio` takes effect (`get radio` is prefs, not the live
+7. Reboot so `set radio` takes effect (`get radio` is prefs, not the live
    radio). Waits for the USB node to drop as proof. `--no-reboot` leaves that
    pending.
-7. Neighbor discover/fetch (default 3 rounds, longer per-command timeouts
+8. Neighbor discover/fetch (default 3 rounds, longer per-command timeouts
    after reconnect). Prompts to attach an antenna first (Enter to continue,
    `s` to skip). `--no-discover` skips the prompt. No TTY skips discover.
-8. **One** `nodes.yaml` write: identity, creds, versions, `board` when
+9. **One** `nodes.yaml` write: identity, creds, versions, `board` when
    `--target` maps to a known token, `onboarded_at`, optional
    `onboard_neighbors`, notes stamp. Then serial ACL from `keys.yaml` +
    node `trust` (`get acl` + `setperm`). MeshCore prints `ACL:` on serial and
@@ -47,7 +55,8 @@ Idempotent on identity, creds, radio, and fleet-profile fields over USB:
 `site` stays null on bench onboard. This unit is bag/bench until you stake it.
 
 Implementation is split across `repeater_serial`, `onboard_usb`, `onboard_book`,
-`onboard_serial_apply`, and `bench_flash`; `commands/onboard.py` is orchestration.
+`onboard_serial_apply`, `onboard_usb_session`, and `bench_flash`; `commands/onboard.py`
+and `commands/reonboard.py` are thin entrypoints.
 
 ## Radio
 
@@ -107,7 +116,6 @@ reconnect).
 | `--admin-pw` | generated or yaml | Admin password |
 | `--guest-pw` | generated or yaml | Guest password (`''` for blank) |
 | `--no-write` | | Do not update `nodes.yaml` |
-| `--force` | | Re-SET even when matching |
 | `--no-reboot` | | Skip reboot (radio change stays pending) |
 | `--no-discover` | | Skip neighbor rounds |
 | `--discover-rounds N` | `3` | Discover/fetch rounds |
@@ -132,7 +140,12 @@ reconnect).
 ./envybot onboard /dev/cu.usbmodem1444301
 ./envybot onboard --unit me0041
 ./envybot onboard --no-write
+./envybot reonboard --unit me0057
 ```
+
+Wrong pubkey for an existing row → [`reonboard`](reonboard.md), not onboard.
+Fails when the USB pubkey is already registered on a different row (fix the
+book first).
 
 ## Writes
 

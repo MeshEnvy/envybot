@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-import sys
+import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -155,6 +155,27 @@ def new_node(unit_id: str) -> dict[str, Any]:
     }
 
 
+def generate_identity_secret() -> str:
+    return secrets.token_hex(PRV_HEX_LEN // 2)
+
+
+def should_mint_fleet_identity(
+    node: dict[str, Any] | None,
+    usb_pubkey: str,
+    *,
+    created: bool,
+) -> bool:
+    """Mint a new mesh keypair on USB (``onboard`` only), not idempotent re-plug."""
+    if created:
+        return True
+    if not node:
+        return True
+    book_pub = str(node.get("identity_pubkey") or "").strip().lower()
+    if not book_pub:
+        return True
+    return book_pub != usb_pubkey.strip().lower()
+
+
 def normalize_hex(text: str, expect_len: int, label: str) -> str:
     hexed = re.sub(r"\s+", "", text).lower()
     if not HEX_RE.match(hexed) or len(hexed) != expect_len:
@@ -194,12 +215,36 @@ def resolve_unit(
         if is_decommissioned(node):
             raise SystemExit(f"{key}: decommissioned")
         have = str((node or {}).get("identity_pubkey") or "").strip().lower()
-        if have and have != pubkey.strip().lower():
-            raise SystemExit(f"--unit {key} already has a different pubkey")
+        want = pubkey.strip().lower()
+        if have and have != want:
+            raise SystemExit(
+                f"--unit {key} pubkey does not match USB "
+                f"(yaml {have[:8]}…, USB {want[:8]}…; use reonboard)"
+            )
         return key, node
     if existing:
         return existing, nodes[existing]
     return None, None
+
+
+def ensure_reonboard_unit(
+    nodes: dict[str, Any],
+    *,
+    unit: str | None,
+) -> tuple[str, dict[str, Any]]:
+    if not unit:
+        raise SystemExit("reonboard requires --unit")
+    key = unit.lower()
+    node = nodes.get(key)
+    if not isinstance(node, dict):
+        raise SystemExit(f"{key}: no such row in nodes.yaml")
+    if is_decommissioned(node):
+        raise SystemExit(f"{key}: decommissioned")
+    if not str(node.get("identity_secret") or "").strip():
+        raise SystemExit(f"{key}: missing identity_secret (cannot restore book identity)")
+    if not str(node.get("identity_pubkey") or "").strip():
+        raise SystemExit(f"{key}: missing identity_pubkey")
+    return key, node
 
 
 def ensure_onboard_unit(
@@ -278,8 +323,11 @@ def register(
         unit_id = key.upper()
         node = nodes.get(key) or new_node(unit_id)
         have = str(node.get("identity_pubkey") or "").strip().lower()
-        if have and have != pubkey.strip().lower():
-            raise SystemExit(f"--unit {key} already has a different pubkey")
+        want = pubkey.strip().lower()
+        if have and have != want:
+            raise SystemExit(
+                f"{key}: book pubkey {have[:8]}… != USB {want[:8]}… after session"
+            )
         node["unit_id"] = unit_id
         nodes[key] = node
         remember_unit_id(doc, unit_id)

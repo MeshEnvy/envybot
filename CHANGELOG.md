@@ -8,6 +8,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- ``envybot reonboard --unit KEY`` — push an existing book row onto USB
+  (`identity_secret`, passwords, profile, ACL, stamp). ``--force`` re-SETs
+  profile fields even when GET already matches. Manual:
+  [docs/commands/reonboard.md](docs/commands/reonboard.md).
 - ``envybot seed`` sends ``ota announce`` on the tag after ``ota folder on`` and
   every 60s by default (``--announce-interval``), since seed owns the USB port.
 - ``envybot seed --dutycycle PCT`` sets tag airtime cap at seed start (default 10).
@@ -23,6 +27,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- ``envybot onboard`` mints a new mesh keypair on first bind (``set prv.key`` +
+  reboot) instead of copying the chip's factory key into the book. Re-plug the
+  same radio (pubkey already in yaml) skips minting. ``--unit`` with book pubkey
+  ≠ USB exits with "use reonboard" (no ``--force`` on onboard).
 - Heard off-book labels and miles read sqlite `mesh_peers` (companion sync).
   The book still wins for managed units. Neighbor SNR and age stay per observer.
 - Fleet neighbor GET is on the same 1h live interval as status and
@@ -68,6 +76,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Removed
 
+- ``onboard --force`` — use ``reonboard`` to restore book identity and
+  re-apply profile; use ``reonboard --force`` to re-SET matching fields.
 - Fleet **`--unit`** — use **`--only`** (`trust` / `onboard` `--unit` unchanged).
 
 ### Added

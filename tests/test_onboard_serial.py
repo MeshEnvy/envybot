@@ -13,11 +13,17 @@ from envybot.commands.onboard import (
     apply_ota_autofetch_policy,
     apply_path_hash_policy,
     antenna_ready,
-    register,
     stamp_fleet_ready,
     wait_usb_gone,
 )
-from envybot.onboard_book import ensure_onboard_unit, resolve_unit
+from envybot.onboard_book import (
+    ensure_onboard_unit,
+    ensure_reonboard_unit,
+    register,
+    resolve_unit,
+    should_mint_fleet_identity,
+)
+from envybot.onboard_serial_apply import mint_identity_on_usb, restore_book_identity_on_usb
 from envybot.repeater_serial import CliError, RepeaterSerial
 from envybot.radio import parse_ota_autofetch
 from envybot.history import open_history
@@ -230,6 +236,17 @@ class EnsureOnboardUnitTests(unittest.TestCase):
 
 
 class ResolveUnitTests(unittest.TestCase):
+    def test_mismatch_on_unit_says_reonboard(self) -> None:
+        nodes = {
+            "me0057": {
+                "unit_id": "ME0057",
+                "identity_pubkey": "a" * 64,
+            }
+        }
+        with self.assertRaises(SystemExit) as err:
+            resolve_unit(nodes, "b" * 64, unit="me0057")
+        self.assertIn("reonboard", str(err.exception))
+
     def test_refuses_decommissioned_pubkey(self) -> None:
         nodes = {
             "me0008": {
@@ -241,6 +258,81 @@ class ResolveUnitTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as err:
             resolve_unit(nodes, "a" * 64, unit=None)
         self.assertIn("decommissioned", str(err.exception))
+
+
+class FleetIdentityTests(unittest.TestCase):
+    def test_mint_when_new_row(self) -> None:
+        node = {"unit_id": "ME0051"}
+        self.assertTrue(should_mint_fleet_identity(node, "c" * 64, created=True))
+
+    def test_no_mint_when_pubkey_matches(self) -> None:
+        node = {"identity_pubkey": "a" * 64}
+        self.assertFalse(should_mint_fleet_identity(node, "a" * 64, created=False))
+
+    def test_mint_when_row_has_no_identity(self) -> None:
+        node = {"unit_id": "ME0057"}
+        self.assertTrue(should_mint_fleet_identity(node, "c" * 64, created=False))
+
+    def test_reonboard_requires_secret(self) -> None:
+        nodes = {"me0057": {"unit_id": "ME0057", "identity_pubkey": "a" * 64}}
+        with self.assertRaises(SystemExit) as err:
+            ensure_reonboard_unit(nodes, unit="me0057")
+        self.assertIn("identity_secret", str(err.exception))
+
+    def test_reonboard_accepts_complete_row(self) -> None:
+        nodes = {
+            "me0057": {
+                "unit_id": "ME0057",
+                "identity_pubkey": "a" * 64,
+                "identity_secret": "d" * 128,
+            }
+        }
+        key, node = ensure_reonboard_unit(nodes, unit="me0057")
+        self.assertEqual(key, "me0057")
+        self.assertIs(node, nodes["me0057"])
+
+    def test_reonboard_requires_unit_flag(self) -> None:
+        with self.assertRaises(SystemExit) as err:
+            ensure_reonboard_unit({}, unit=None)
+        self.assertIn("requires --unit", str(err.exception))
+
+    def test_restore_sends_set_prv_key(self) -> None:
+        node = {
+            "identity_pubkey": "a" * 64,
+            "identity_secret": "d" * 128,
+        }
+        cli = FakeCli(
+            {
+                "get prv.key": "> " + "e" * 128,
+                "set prv.key " + "d" * 128: "OK",
+            }
+        )
+        self.assertTrue(restore_book_identity_on_usb(cli, node))
+        self.assertIn("set prv.key " + "d" * 128, cli.sent)
+
+    def test_restore_skips_when_already_matching(self) -> None:
+        node = {
+            "identity_pubkey": "a" * 64,
+            "identity_secret": "d" * 128,
+        }
+        cli = FakeCli(
+            {
+                "get prv.key": "> " + "d" * 128,
+                "get public.key": "> " + "a" * 64,
+            }
+        )
+        self.assertFalse(restore_book_identity_on_usb(cli, node))
+
+    def test_mint_sends_set_prv_key(self) -> None:
+        secret = "f" * 128
+        cli = FakeCli(
+            {
+                "get prv.key": "> " + "e" * 128,
+                "set prv.key " + secret: "OK",
+            }
+        )
+        self.assertTrue(mint_identity_on_usb(cli, secret))
+        self.assertIn("set prv.key " + secret, cli.sent)
 
 
 class AdminPasswordPolicyTests(unittest.TestCase):
