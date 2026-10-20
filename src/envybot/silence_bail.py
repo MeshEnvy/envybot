@@ -107,16 +107,10 @@ def apply_silence_outcome(
     gap_kinds = [job.kind]
     dropped = drop_remaining_poll_apply(uq, skip_job=job)
     gap_kinds.extend(dropped)
-    gaps = gap_names_for_kinds(gap_kinds)
-    if conn is not None and gaps:
-        from envybot.history import merge_refresh_gaps
-
-        merge_refresh_gaps(conn, unit, gaps)
     uq.session_extra["bail_dropped"] = gap_kinds
     if log is not None:
-        gap_text = ", ".join(gaps) if gaps else "none"
         log.step(
             f"refresh bailed after {BAIL_AFTER_SILENCES} silences "
-            f"(will retry after cooldown; gaps: {gap_text})"
+            f"(will retry after cooldown)"
         )
     return JobOutcome.TIMEOUT, BAIL_PAYLOAD

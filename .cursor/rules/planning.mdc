@@ -1,0 +1,46 @@
+---
+description: Every EnvyBot implementation plan must include debt cleanup and greenfield migration
+alwaysApply: true
+---
+
+# Planning
+
+When you **author or extend** an implementation plan (Cursor plan mode,
+`.cursor/plans/*.plan.md`, or a multi-step agent brief for EnvyBot), the
+plan is incomplete unless it includes **both** sections below in addition to
+the feature work. Do not ship a plan that is feature-only.
+
+## 1. High-value technical debt cleanup pass
+
+Add a scoped subsection and matching todos. Prefer **cheap structural wins**
+that make the feature honest (shared sqlite conn, import boundaries, batch
+reads, docs/tests). **Defer** heavy refactors explicitly (large file splits,
+optional perf work) with a one-line reason, not silence.
+
+Each debt item should state **what** and **why now** (blocks the feature,
+reduces duplicate paths, or pays down active confusion). Skip drive-by
+reformatting and unrelated refactors.
+
+## 2. Greenfield migration
+
+Add a subsection aligned with [`.cursor/rules/greenfield.mdc`](greenfield.mdc).
+
+- **Book check** before removing product migrators: confirm operator book(s)
+  have no leftover files/keys the migrator handled; confirm one-shot meta
+  stamps where applicable.
+- **One-shot cleanup** in the operator session (inline Python only; do not
+  commit migration scripts).
+- **Product code** opens the canonical shape only; delete `migrate_*`, open-time
+  backfills, dual-read, and compatibility shims in the **same change set** as
+  the cleanup, after the book check passes.
+- Update command docs (`docs/commands/`) when storage or fleet load behavior
+  changes.
+
+Order debt and greenfield relative to the feature as the plan requires
+(often: finish product surface, book check, then strip migrators). Always
+list verification (tests, `./envybot fleet` smoke) in the plan.
+
+## Plan frontmatter
+
+Use plan todos for debt and greenfield items (distinct ids). Cancel or mark
+deferred items explicitly rather than omitting the section.

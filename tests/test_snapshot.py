@@ -10,11 +10,9 @@ from pathlib import Path
 from ruamel.yaml import YAML
 
 from envybot.apply import applicable_field_desireds
-from envybot.full_sync import stamp_full_sync
 from envybot.history import (
     import_yaml_last_seen,
     insert_apply,
-    merge_refresh_gaps,
     open_history,
     record_poll,
 )
@@ -666,9 +664,6 @@ class LastHeardTests(unittest.TestCase):
             record_poll(conn, unit="me0001", res=_Res(), ts=1000)
             record_poll(conn, unit="me0002", res=_Res(), ts=1000)
             record_poll(conn, unit="me0003", res=_Res(), ts=1000)
-            merge_refresh_gaps(conn, "me0001", ["status"])
-            stamp_full_sync(conn, "me0003")
-            merge_refresh_gaps(conn, "me0004", ["neighbors"])
             conn.executemany(
                 "INSERT INTO mesh_audit "
                 "(ts_sent, ts_reply, unit, kind, label, path, ok, outcome) "
@@ -1110,7 +1105,7 @@ class RadioPrefTests(unittest.TestCase):
             self.assertEqual(prefs["powersaving"]["value"], "on")
             self.assertEqual(prefs["powersaving"]["state"], "synced")
             self.assertEqual(prefs["fem_rxgain"]["value"], "off")
-            self.assertEqual(prefs["fem_rxgain"]["state"], "due")
+            self.assertEqual(prefs["fem_rxgain"]["state"], "unconfirmed")
             self.assertEqual(prefs["dutycycle"]["value"], "50%")
             self.assertEqual(prefs["path_hash"]["value"], "2-byte")
             self.assertEqual(prefs["ota_autofetch"]["value"], "off")

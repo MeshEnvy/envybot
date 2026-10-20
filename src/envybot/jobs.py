@@ -276,6 +276,58 @@ class FleetScheduler:
         self._wake_idle()
         return 200, None
 
+    def enqueue_refresh(
+        self,
+        target: RouterTarget,
+        jobs: list[RadioJob],
+        *,
+        manual_job: str = "refresh",
+        replace: bool,
+    ) -> tuple[int, str | None]:
+        if not jobs:
+            return 400, "no refresh jobs"
+        uq = self.get_or_create(target)
+        self._cancel_timer(uq)
+        for job in jobs:
+            job.manual = True
+            job.manual_job = manual_job
+            job.unit_key = target.key
+        if replace:
+            console_kept = [job for job in uq.jobs if is_console_job(job)]
+            uq.jobs.clear()
+            uq.jobs.extend(console_kept)
+            uq.jobs.extend(jobs)
+            uq.manual = True
+            uq.manual_job = manual_job
+            uq.manual_bump = True
+        else:
+            from envybot.refresh_registry import merge_refresh_jobs
+
+            existing = {j.kind for j in uq.jobs if not is_console_job(j)}
+            merged = merge_refresh_jobs(existing, jobs)
+            if merged:
+                uq.jobs.extend(merged)
+                uq.manual = True
+                if not uq.manual_job:
+                    uq.manual_job = manual_job
+        uq.apply_aborted = False
+        uq.succeeded = False
+        uq.backoff_until = 0.0
+        self.clear_cooldown(uq)
+        uq.last_served = 0.0
+        uq.has_inventory_gap = uq.has_inventory_gap or any(
+            j.kind.startswith("get:") and j.kind.split(":", 1)[1] in INVENTORY_GROUPS
+            for j in jobs
+        )
+        self._wake_idle()
+        return 200, None
+
+    def pending_kinds_for(self, key: str) -> set[str]:
+        uq = self.units.get(key.lower())
+        if uq is None:
+            return set()
+        return {j.kind for j in uq.jobs if not is_console_job(j)}
+
     def cancel_console_jobs(self, key: str, tab_id: str | None = None) -> bool:
         """Drop queued console:* on this unit (one tab, or all). In-flight uses cancel_check."""
         uq = self.units.get(key.lower())
@@ -439,8 +491,6 @@ class FleetScheduler:
             if not uq.jobs:
                 uq.succeeded = True
                 succeeded[uq.target.key] = True
-                if uq.manual and uq.manual_job == "full":
-                    uq.session_extra["stamp_full_sync"] = True
                 if uq.manual and uq.manual_job != "console":
                     uq.manual = False
                     uq.manual_job = None

@@ -8,7 +8,7 @@ import time
 import unittest
 from pathlib import Path
 
-from envybot.full_sync import stamp_full_sync
+from envybot.field_state import increment_field_failure
 from envybot.history import (
     _backfill_sample_loc_from_sites,
     _backfill_sample_loc_v2,
@@ -50,6 +50,7 @@ class _Res:
         self.acl = kwargs.get("acl")
         self.neighbors = kwargs.get("neighbors")
         self.polled_groups = kwargs.get("polled_groups", frozenset())
+        self.audit_heard = kwargs.get("audit_heard", {})
 
 
 class HistoryTests(unittest.TestCase):
@@ -94,6 +95,25 @@ class HistoryTests(unittest.TestCase):
             noise = history_series(conn, "me0001", "noise_floor")
             self.assertEqual(len(noise), 1)
             self.assertEqual(noise[0]["value"], -94)
+
+    def test_record_poll_audit_pref_heard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            record_poll(
+                conn,
+                unit="me0001",
+                res=_Res(
+                    polled_groups=frozenset({"repeat", "dutycycle"}),
+                    audit_heard={"repeat": "True", "dutycycle": "25"},
+                ),
+                ts=500,
+            )
+            seen = get_last_seen(conn, "me0001")
+            assert seen is not None
+            self.assertEqual(seen["repeat_heard"], "True")
+            self.assertEqual(seen["dutycycle_heard"], "25")
+            self.assertEqual(seen["repeat_at"], 500)
+            self.assertEqual(seen["dutycycle_at"], 500)
 
     def test_record_ota_base_hash(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -795,18 +815,17 @@ class HistoryTests(unittest.TestCase):
             self.assertAlmostEqual(mid["temperature"], 14.9)
             self.assertIn("temperature", mid.get("synthetic") or [])
 
-    def test_stamp_full_sync_releases_write_lock(self) -> None:
-        """A second connection must be able to write after a full-sync stamp.
-
-        The fleet connection is long-lived. The UI snapshot opens another
-        connection and writes mesh_peers. An uncommitted stamp deadlocks
-        that write on this thread (sqlite3 isolation is deferred).
-        """
+    def test_field_failures_releases_write_lock(self) -> None:
+        """A second connection must be able to write after field_failures update."""
         with tempfile.TemporaryDirectory() as tmp:
             book = Path(tmp)
             conn = open_history(book)
             try:
-                stamp_full_sync(conn, "me0001", ts=1)
+                from envybot.history import _upsert_last_seen
+
+                _upsert_last_seen(conn, "me0001", {"updated_at": 1})
+                conn.commit()
+                increment_field_failure(conn, "me0001", "status")
                 other = open_history(book)
                 try:
                     upsert_mesh_peers_from_contacts(
@@ -819,15 +838,24 @@ class HistoryTests(unittest.TestCase):
                             }
                         },
                     )
-                    seen = other.execute(
-                        "SELECT full_sync_at FROM last_seen WHERE unit = ?",
+                    row = other.execute(
+                        "SELECT field_failures FROM last_seen WHERE unit = ?",
                         ("me0001",),
                     ).fetchone()
                 finally:
                     other.close()
             finally:
                 conn.close()
-        self.assertEqual(seen[0], 1)
+        self.assertIn("status", row[0])
+
+    def test_open_history_last_seen_schema_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = open_history(Path(tmp))
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(last_seen)")}
+            conn.close()
+        self.assertIn("field_failures", cols)
+        self.assertIn("repeat_at", cols)
+        self.assertNotIn("force_due", cols)
 
 
 class MeshPeersTests(unittest.TestCase):

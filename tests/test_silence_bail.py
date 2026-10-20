@@ -7,11 +7,11 @@ import time
 import unittest
 from collections import deque
 from pathlib import Path
-from unittest.mock import MagicMock
 
-from envybot.history import get_last_seen, merge_refresh_gaps, open_history, parse_refresh_gaps
+from envybot.field_state import increment_field_failure, parse_field_failures
+from envybot.history import get_last_seen, open_history
 from envybot.jobs import FleetScheduler, JobOutcome, RadioJob, UnitQueue
-from envybot.radio import PollLog, RouterTarget
+from envybot.radio import RouterTarget
 from envybot.silence_bail import (
     BAIL_PAYLOAD,
     GET_REPLY_UNPARSED,
@@ -59,9 +59,10 @@ class ApplySilenceOutcomeTests(unittest.TestCase):
             self.assertEqual(out, JobOutcome.TIMEOUT)
             self.assertEqual(pay, BAIL_PAYLOAD)
             self.assertEqual([j.kind for j in uq.jobs], ["get:hop_retry_ms"])
-            gaps = parse_refresh_gaps((get_last_seen(conn, "me0001") or {}).get("refresh_gaps"))
-            self.assertIn("hop_retry_ms", gaps)
-            self.assertIn("fem_rxgain", gaps)
+            fails = parse_field_failures(
+                (get_last_seen(conn, "me0001") or {}).get("field_failures")
+            )
+            self.assertEqual(fails, {})
 
     def test_heard_resets_streak(self) -> None:
         job = RadioJob(kind="get:hop_retry", unit_key="me0001")
@@ -111,16 +112,19 @@ class BailSettleTests(unittest.TestCase):
         self.assertGreaterEqual(uq.cooldown_until, before + 3599.0)
 
 
-class RefreshGapsHistoryTests(unittest.TestCase):
-    def test_merge_and_parse(self) -> None:
+class FieldFailureHistoryTests(unittest.TestCase):
+    def test_field_failures_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
-            merge_refresh_gaps(conn, "me0001", ["hop_retry_ms"])
-            merge_refresh_gaps(conn, "me0001", ["fem_rxgain"])
-            gaps = parse_refresh_gaps(
-                (get_last_seen(conn, "me0001") or {}).get("refresh_gaps")
+            from envybot.history import _upsert_last_seen
+
+            _upsert_last_seen(conn, "me0001", {"updated_at": 1})
+            conn.commit()
+            increment_field_failure(conn, "me0001", "status")
+            fails = parse_field_failures(
+                (get_last_seen(conn, "me0001") or {}).get("field_failures")
             )
-            self.assertEqual(gaps, ["hop_retry_ms", "fem_rxgain"])
+            self.assertEqual(fails.get("status"), 1)
 
 
 if __name__ == "__main__":

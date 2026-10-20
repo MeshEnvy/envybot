@@ -20,6 +20,7 @@ import {
   postBenchLoc,
   syncUnit,
   fullUnit,
+  refreshUnit,
   stageUnit,
   openConsole as apiOpenConsole,
   sendConsole as apiSendConsole,
@@ -1375,6 +1376,52 @@ const App = {
       }
     }
 
+    /** @param {Record<string, unknown>} row */
+    function refreshRowLabel(row) {
+      const r = row?.refresh;
+      if (!r || typeof r !== "object") return "↻";
+      const phase = r.phase;
+      if (phase === "running" || phase === "queued") return "…";
+      if (phase === "failed") return "✕";
+      if (phase === "paused") return "⏸";
+      if (phase === "cooldown") return "⏳";
+      if (r.apply_state === "due") return "Due";
+      if (typeof r.next_auto_secs === "number" && r.next_auto_secs > 0) {
+        const m = Math.max(1, Math.ceil(r.next_auto_secs / 60));
+        return `${m}m`;
+      }
+      if (r.attempts > 0 && r.attempts < r.cap) return `${r.attempts}/${r.cap}`;
+      return "↻";
+    }
+
+    /** @param {Record<string, unknown>} row */
+    function refreshRowTitle(row) {
+      const r = row?.refresh;
+      if (!r || typeof r !== "object") return "Refresh this field";
+      if (r.phase === "failed") return `Failed after ${r.attempts} attempts`;
+      if (r.phase === "running") return "Refreshing…";
+      if (r.phase === "queued") return "Queued";
+      if (r.apply_state === "due") return "Book differs from on radio — refresh to push";
+      if (typeof r.next_auto_secs === "number") {
+        return r.next_auto_secs <= 0 ? "Due for auto pull" : `Auto pull in ${r.next_auto_secs}s`;
+      }
+      return "Refresh";
+    }
+
+    /** @param {Record<string, unknown>} unit @param {Record<string, unknown>} row @param {Event} [ev] */
+    async function runRowRefresh(unit, row, ev) {
+      ev?.stopPropagation?.();
+      if (!unit?.key || !row?.id || !manualAccepting.value) return;
+      if (isInFlight(unit) && refreshRowLabel(row) === "…") return;
+      try {
+        const updated = await refreshUnit(String(unit.key), [String(row.id)]);
+        applyUnit(updated);
+        pushMap();
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
     /** @param {Record<string, unknown>} unit @param {Record<string, unknown>} row @param {Event} [ev] */
     async function runStage(unit, row, ev) {
       ev?.stopPropagation?.();
@@ -1860,21 +1907,32 @@ const App = {
     function prefBadgeTitle(pref) {
       if (!pref) return "";
       if (pref.note) return pref.note;
-      if (pref.state === "due") return "Book apply due";
-      if (pref.state === "blocked") return "Not applied";
+      if (pref.attention === "true" || pref.attention === true) {
+        if (pref.state === "unconfirmed") return "Not confirmed on radio";
+        if (pref.state === "drift") return "Book differs from on radio";
+        return "Needs attention";
+      }
       if (pref.state === "default") return "Stock default (not in book)";
-      return "Apply stamped";
+      if (pref.state === "synced") return "Book matches on radio";
+      return String(pref.state || "");
     }
 
     /** Header chips: only prefs that need operator attention (Profile holds the rest). */
     function headerPrefs(unit) {
       const prefs = unit?.prefs;
       if (!Array.isArray(prefs)) return [];
-      return prefs.filter((p) => p && (p.state === "due" || p.state === "blocked"));
+      return prefs.filter(
+        (p) =>
+          p &&
+          (p.attention === "true" ||
+            p.attention === true ||
+            p.state === "drift" ||
+            p.state === "unconfirmed"),
+      );
     }
 
     const PROFILE_SECTION_HINT =
-      "Click a value to edit the book. Revert restores the value from when you opened this card. Dirty rows need Sync or Full sync to reach the radio.";
+      "Book is what envybot will push. On radio is the last confirmed value (SET or pull). Edit book cells; use refresh when a row needs attention.";
 
     const PROFILE_GROUP_ACCESS = new Set(["acl", "admin", "guest"]);
     const PROFILE_GROUP_ADVERT = new Set(["name", "lat", "lon", "owner"]);
@@ -1883,7 +1941,7 @@ const App = {
     function profileVisibleRows(unit) {
       const profile = unit?.profile;
       if (!Array.isArray(profile)) return [];
-      return profile.filter((r) => r && r.id !== "paused" && r.id !== "full_sync_interval");
+      return profile.filter((r) => r && r.id !== "paused");
     }
 
     /** @param {Record<string, unknown>} row */
@@ -1908,11 +1966,36 @@ const App = {
     }
 
     /** @param {Record<string, unknown>} row */
+    function profileBook(row) {
+      if (row?.book && typeof row.book === "object") {
+        return /** @type {{ value: unknown, display: string }} */ (row.book);
+      }
+      return { value: row.value ?? "", display: String(row.display ?? "") };
+    }
+
+    /** @param {Record<string, unknown>} row */
+    function profileOnRadioDisplay(row) {
+      const or = row.on_radio;
+      if (!or || typeof or !== "object") return "Not confirmed";
+      if (!or.confirmed) return "Not confirmed";
+      return String(or.display || "—");
+    }
+
+    /** @param {Record<string, unknown>} row */
+    function profileOnRadioSubline(row) {
+      const or = row.on_radio;
+      if (!or?.confirmed || or.confirmed_at == null) return "";
+      const src = or.source === "set" ? "SET" : or.source === "pull" ? "Pull" : "";
+      if (!src) return formatRelative(or.confirmed_at, fleet.now);
+      return `${src} · ${formatRelative(or.confirmed_at, fleet.now)}`;
+    }
+
+    /** @param {Record<string, unknown>} row */
     function profileLabelClass(row) {
       const span = profileAclTableRow(row);
       return {
         "profile-label-span": span,
-        "profile-row-due": row.state === "due",
+        "profile-row-attention": !!row.attention,
       };
     }
 
@@ -1930,8 +2013,17 @@ const App = {
     function profileRowTitle(row) {
       if (!row) return "";
       if (row.note) return row.note;
-      if (row.state === "due") return "Differs from last apply stamp. Sync to push.";
-      if (row.state === "synced") return "Matches apply stamp";
+      if (row.state === "unconfirmed") {
+        return row.attention
+          ? "No confirmation on radio yet. Refresh or Sync to apply."
+          : "Confirmation queued or in progress.";
+      }
+      if (row.state === "drift") {
+        return row.attention
+          ? "Book differs from last confirmed on-radio value."
+          : "Push queued or in progress.";
+      }
+      if (row.state === "synced") return "Book matches on radio.";
       return String(row.source || "");
     }
 
@@ -1946,7 +2038,8 @@ const App = {
       if (Object.prototype.hasOwnProperty.call(profileBoolPending, id)) {
         return profileBoolPending[id];
       }
-      return row.display === "on" || row.value === true;
+      const book = profileBook(row);
+      return book.display === "on" || book.value === true;
     }
 
     /**
@@ -2014,26 +2107,27 @@ const App = {
     /** @param {Record<string, unknown>} row */
     function profileBaselineEntryFromRow(row) {
       const id = String(row.id);
+      const book = profileBook(row);
       if (id === "owner") {
         return {
           kind: "textarea",
-          value: row.value ?? "",
+          value: book.value ?? "",
           owner_override: !!row.owner_override,
         };
       }
       if (row.kind === "bool") {
         return {
           kind: "bool",
-          value: row.display === "on" || row.value === true,
+          value: book.display === "on" || book.value === true,
         };
       }
       if (row.kind === "password") {
         if (row.id === "guest" && row.guest_open) {
           return { kind: "password", value: "", guest_open: true };
         }
-        return { kind: "password", value: row.value ?? "" };
+        return { kind: "password", value: book.value ?? "" };
       }
-      return { kind: row.kind, value: row.value };
+      return { kind: row.kind, value: book.value };
     }
 
     /** @param {Record<string, unknown> | null | undefined} unit */
@@ -2044,7 +2138,7 @@ const App = {
       const fields = {};
       for (const row of unit.profile) {
         const id = String(row.id);
-        if (id === "paused" || id === "full_sync_interval" || id === "acl") continue;
+        if (id === "paused" || id === "acl") continue;
         fields[id] = profileBaselineEntryFromRow(row);
       }
       profileBaselineByUnit[uk] = fields;
@@ -2053,25 +2147,26 @@ const App = {
     /** @param {Record<string, unknown>} row @param {Record<string, unknown>} entry */
     function profileRowMatchesBaseline(row, entry) {
       const id = String(row.id);
+      const book = profileBook(row);
       if (id === "owner") {
         return (
           !!row.owner_override === !!entry.owner_override &&
-          String(row.value ?? "") === String(entry.value ?? "")
+          String(book.value ?? "") === String(entry.value ?? "")
         );
       }
       if (entry.kind === "bool") {
-        const on = row.display === "on" || row.value === true;
+        const on = book.display === "on" || book.value === true;
         return on === entry.value;
       }
       if (entry.kind === "number" || entry.kind === "enum") {
-        return String(row.value ?? "") === String(entry.value ?? "");
+        return String(book.value ?? "") === String(entry.value ?? "");
       }
       if (entry.kind === "password") {
         const cur =
-          row.id === "guest" && row.guest_open ? "" : String(row.value ?? "");
+          row.id === "guest" && row.guest_open ? "" : String(book.value ?? "");
         return cur === String(entry.value ?? "");
       }
-      return String(row.value ?? "") === String(entry.value ?? "");
+      return String(book.value ?? "") === String(entry.value ?? "");
     }
 
     /**
@@ -2159,7 +2254,7 @@ const App = {
     function profileRowDraftSeed(row) {
       const id = String(row.id);
       if (id === "acl") return null;
-      const raw = row.value;
+      const raw = profileBook(row).value;
       if (raw === true || raw === false) return raw ? "true" : "false";
       if (raw == null || raw === "—") return "";
       return String(raw);
@@ -2170,7 +2265,7 @@ const App = {
       if (!unit?.profile || !Array.isArray(unit.profile)) return;
       for (const row of unit.profile) {
         const id = String(row.id);
-        if (id === "paused" || id === "full_sync_interval") continue;
+        if (id === "paused") continue;
         if (profileEditingId.value === id) continue;
         const seed = profileRowDraftSeed(row);
         if (seed !== null) profileDrafts[id] = seed;
@@ -2195,8 +2290,9 @@ const App = {
     /** @param {Record<string, unknown>} row */
     function profilePasswordMaskedLabel(row) {
       if (profilePasswordShowsEmpty(row)) return "";
-      if (row.has_value || row.display === "***") return "***";
-      return String(row.display || "—");
+      const book = profileBook(row);
+      if (row.has_value || book.display === "***") return "***";
+      return String(book.display || "—");
     }
 
     function profileAclTableRow(row) {
@@ -2321,20 +2417,6 @@ const App = {
           console.error(err);
         }
       });
-    }
-
-    /** @param {Record<string, unknown>} unit @param {Event} ev */
-    async function onFullSyncIntervalChange(unit, ev) {
-      const sel = ev.target;
-      if (!sel || !("value" in sel)) return;
-      try {
-        const updated = await patchUnit(String(unit.key), {
-          full_sync_interval: sel.value,
-        });
-        applyUnit(updated);
-      } catch (err) {
-        console.error(err);
-      }
     }
 
     function cardVoltage(unit) {
@@ -2995,6 +3077,9 @@ const App = {
       manualAccepting,
       canManualUnit,
       runManualJob,
+      refreshRowLabel,
+      refreshRowTitle,
+      runRowRefresh,
       selectUnit,
       clearSelection,
       onModalBackdropMouseDown,
@@ -3113,6 +3198,9 @@ const App = {
       unitLabel,
       unitTitle,
       profileRowTitle,
+      profileBook,
+      profileOnRadioDisplay,
+      profileOnRadioSubline,
       profileDrafts,
       profileEditingId,
       profileRowSaving,
@@ -3132,7 +3220,6 @@ const App = {
       onProfileSelect,
       onProfileEditKeydown,
       resetOwnerDefault,
-      onFullSyncIntervalChange,
       togglePaused,
       ackStability,
       setRouteMode,
@@ -3163,6 +3250,9 @@ const App = {
       routeCopied,
       showPolicyFloodBadge,
       runManualJob,
+      refreshRowLabel,
+      refreshRowTitle,
+      runRowRefresh,
       otaLocalLabel,
       otaHwLabel,
       otaTargetLabel,
@@ -3516,28 +3606,16 @@ const App = {
               >
                 <span class="unit-refresh-icon" aria-hidden="true">{{ syncGlyph(selectedUnit) }}</span>
               </button>
-              <div v-if="manualAccepting" class="full-sync-control">
-                <button
-                  type="button"
-                  class="manual-btn"
-                  :disabled="!canManualUnit(selectedUnit, 'full')"
-                  title="Read radio profile, then push dirty fields"
-                  @click="runManualJob(selectedUnit, 'full', $event)"
-                >
-                  Full sync
-                </button>
-                <select
-                  class="full-sync-interval-select"
-                  :value="selectedUnit.full_sync_interval || '7d'"
-                  aria-label="Full sync interval"
-                  @change="onFullSyncIntervalChange(selectedUnit, $event)"
-                >
-                  <option value="24h">24h</option>
-                  <option value="7d">7d</option>
-                  <option value="30d">30d</option>
-                  <option value="off">off</option>
-                </select>
-              </div>
+              <button
+                v-if="manualAccepting"
+                type="button"
+                class="manual-btn"
+                :disabled="!canManualUnit(selectedUnit, 'full')"
+                title="Pull every field, then push book drift"
+                @click="runManualJob(selectedUnit, 'full', $event)"
+              >
+                Full refresh
+              </button>
               <button type="button" class="detail-close" aria-label="Close" @click="clearSelection">×</button>
             </div>
           </div>
@@ -3913,20 +3991,31 @@ const App = {
             <div v-show="detailSectionOpen('profile')" class="detail-disclosure-body">
             <div v-for="group in profileGroups(selectedUnit)" :key="group.id" class="profile-group">
               <p class="book-field-label profile-group-label">{{ group.label }}</p>
-              <dl class="profile-grid">
+              <dl class="profile-grid profile-grid--book-radio">
+                <dt class="profile-col-head profile-col-head--skip" aria-hidden="true"></dt>
+                <dd class="profile-col-head">Book</dd>
+                <dd class="profile-col-head">On radio</dd>
                 <template v-for="row in group.rows" :key="row.id">
                 <dt class="profile-label" :class="profileLabelClass(row)">
                   <span
-                    v-if="row.state === 'due'"
+                    v-if="row.attention"
                     class="profile-label-due-mark"
                     :title="profileRowTitle(row)"
                     aria-hidden="true"
                   >⚠</span>{{ row.label }}
+                  <button
+                    v-if="row.refresh && row.refresh.phase !== 'n/a' && manualAccepting"
+                    type="button"
+                    class="profile-refresh-btn"
+                    :title="refreshRowTitle(row)"
+                    :aria-label="'Refresh ' + row.label"
+                    @click.stop="runRowRefresh(selectedUnit, row, $event)"
+                  >{{ refreshRowLabel(row) }}</button>
                 </dt>
                 <dd
-                  class="profile-value"
+                  class="profile-value profile-col-book"
                   :class="profileValueClass(row)"
-                  :title="profileRowTitle(row) + (row.editable && row.kind !== 'bool' ? ' · click to edit' : '')"
+                  :title="profileRowTitle(row) + (row.editable && row.kind !== 'bool' ? ' · click to edit book' : '')"
                   :data-profile-edit="profileEditingId === row.id ? row.id : null"
                 >
                   <template v-if="row.kind === 'bool' && row.editable">
@@ -3949,12 +4038,12 @@ const App = {
                       ACL table needs a fleet restart (still serving the old profile API). Stop and rerun
                       <code>./envybot fleet</code>, then hard-refresh this page.
                     </p>
-                    <span>{{ row.display }}</span>
+                    <span>{{ profileBook(row).display }}</span>
                   </template>
                   <template v-else-if="profileAclTableRow(row)">
                     <div
                       class="profile-acl-block"
-                      :title="!row.acl_heard_at ? 'Run Full sync to read radio ACL' : ('Radio ACL · ' + formatRelative(row.acl_heard_at, fleet.now))"
+                      :title="!row.acl_heard_at ? 'Run Full sync to read radio ACL' : ('Last pull · ' + formatRelative(row.acl_heard_at, fleet.now))"
                     >
                       <table v-if="row.acl_table?.length" class="profile-acl-table">
                         <thead>
@@ -3992,7 +4081,7 @@ const App = {
                       :disabled="profileRowSaving(row.id)"
                       @click="startProfileEdit(row)"
                     >
-                      {{ row.display || '—' }}
+                      {{ profileBook(row).display || '—' }}
                     </button>
                     <textarea
                       v-else
@@ -4022,12 +4111,12 @@ const App = {
                       :disabled="profileRowSaving(row.id)"
                       @click="startProfileEdit(row)"
                     >
-                      {{ row.display }}
+                      {{ profileBook(row).display }}
                     </button>
                     <select
                       v-else
                       class="profile-inline-select"
-                      :value="profileDrafts[row.id] ?? String(row.value ?? '')"
+                      :value="profileDrafts[row.id] ?? String(profileBook(row).value ?? '')"
                       :disabled="profileRowSaving(row.id)"
                       @change="onProfileSelect(selectedUnit, row, $event)"
                       @blur="cancelProfileEdit()"
@@ -4077,7 +4166,7 @@ const App = {
                       :disabled="profileRowSaving(row.id)"
                       @click="startProfileEdit(row)"
                     >
-                      {{ row.display }}
+                      {{ profileBook(row).display }}
                     </button>
                     <input
                       v-else
@@ -4092,7 +4181,7 @@ const App = {
                     />
                   </template>
                   <template v-else>
-                    {{ row.display }}
+                    {{ profileBook(row).display }}
                   </template>
                   <span v-if="profileRowSaving(row.id)" class="profile-saving-tag">saving…</span>
                   <button
@@ -4104,6 +4193,26 @@ const App = {
                   >
                     Revert
                   </button>
+                </dd>
+                <dd
+                  v-if="!profileAclTableRow(row)"
+                  class="profile-value profile-col-radio"
+                  :title="profileRowTitle(row)"
+                >
+                  <span class="profile-on-radio-value">{{ profileOnRadioDisplay(row) }}</span>
+                  <span v-if="profileOnRadioSubline(row)" class="profile-on-radio-meta">{{
+                    profileOnRadioSubline(row)
+                  }}</span>
+                </dd>
+                <dd
+                  v-else
+                  class="profile-value profile-col-radio profile-col-radio--acl"
+                  :title="profileRowTitle(row)"
+                >
+                  <span class="profile-on-radio-value">{{ profileOnRadioDisplay(row) }}</span>
+                  <span v-if="profileOnRadioSubline(row)" class="profile-on-radio-meta">{{
+                    profileOnRadioSubline(row)
+                  }}</span>
                 </dd>
                 </template>
               </dl>

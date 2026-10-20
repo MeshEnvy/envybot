@@ -8,13 +8,26 @@ import time
 from pathlib import Path
 from typing import Any
 
-from envybot.apply import apply_is_due, desired_repeat, profile_parts
-from envybot.full_sync import node_full_sync_interval_label
-from envybot.web.profile_fields import build_profile_rows, build_radio_prefs, pref_display
+from envybot.apply import _heard_matches_desired, desired_repeat, profile_parts
+from envybot.radio_confirmation import row_needs_attention
+from envybot.profile_display import pref_display
+from envybot.web.profile_fields import (
+    build_profile_rows,
+    build_radio_prefs,
+    profile_has_attention,
+)
+from envybot.apply import apply_due_fields
+from envybot.field_state import parse_field_failures
+from envybot.poll import PollPolicy
+from envybot.radio import DEFAULT_MIN_POLL_INTERVAL
+from envybot.refresh_registry import (
+    HEADER_REFRESH_IDS,
+    REFRESH_TARGETS,
+    compute_refresh_meta,
+)
 from envybot.health import compute_health
 from envybot.history import (
     all_last_seen,
-    parse_refresh_gaps,
     compact_sparks,
     interval_traffic,
     last_ok_apply_desireds,
@@ -114,9 +127,7 @@ def unit_label(
     return display_name(key, node, sites)
 
 
-# Written only when a reply was stored. ``updated_at`` moves on any last_seen
-# write (refresh gaps, full-sync drain). ``full_sync_at`` is stamped when the
-# queue drains, including after a silence bail.
+# Written only when a reply was stored. ``updated_at`` moves on failed attempts too.
 HEARD_STAMP_KEYS = (
     "firmware_at",
     "bootloader_at",
@@ -545,7 +556,16 @@ def identity_leak_parts(
     if (
         heard_advert is not None
         and desired_advert is not None
-        and int(float(heard_advert)) != int(desired_advert)
+        and not _heard_matches_desired(
+            "advert",
+            str(int(desired_advert)),
+            heard_advert,
+            node=node,
+            doc=doc,
+            keys=None,
+            sites=sites,
+            unit=key or "",
+        )
         and _heard_after_apply(
             seen,
             value_key="advert_interval_min",
@@ -560,7 +580,16 @@ def identity_leak_parts(
     if (
         heard_flood is not None
         and desired_flood is not None
-        and int(float(heard_flood)) != int(desired_flood)
+        and not _heard_matches_desired(
+            "flood",
+            str(int(desired_flood)),
+            heard_flood,
+            node=node,
+            doc=doc,
+            keys=None,
+            sites=sites,
+            unit=key or "",
+        )
         and _heard_after_apply(
             seen,
             value_key="flood_advert_interval_h",
@@ -732,7 +761,6 @@ def sanitize_unit(
         "rxgain": node.get("rxgain"),
         "prefs": prefs or [],
         "profile": profile or [],
-        "full_sync_interval": node_full_sync_interval_label(node),
         "node_clock": (seen or {}).get("node_clock"),
         "drift": drift_state(
             node,
@@ -752,6 +780,75 @@ def sanitize_unit(
     return unit
 
 
+def attach_unit_refresh_meta(
+    unit: dict[str, Any],
+    *,
+    key: str,
+    node: dict[str, Any],
+    seen_row: dict[str, Any],
+    now: int,
+    conn: sqlite3.Connection | None,
+    sites: dict[str, dict[str, Any]] | None,
+    doc: dict[str, Any] | None,
+    keys: dict[str, list[str]] | None,
+    session: dict[str, Any] | None,
+    pending_kinds: set[str],
+    on_cooldown: bool,
+    max_attempts: int = 10,
+) -> None:
+    policy = PollPolicy(force=False, min_interval=DEFAULT_MIN_POLL_INTERVAL)
+    failures = parse_field_failures(seen_row.get("field_failures"))
+    due_apply: set[str] = set()
+    if conn is not None:
+        due_apply = set(
+            apply_due_fields(conn, key, node, sites, doc=doc, keys=keys)
+        )
+    paused = bool(unit.get("paused"))
+    profile = unit.get("profile")
+    if isinstance(profile, list):
+        for row in profile:
+            if not isinstance(row, dict):
+                continue
+            rid = str(row.get("id") or "")
+            spec = REFRESH_TARGETS.get(rid)
+            if spec is None:
+                continue
+            row["refresh"] = compute_refresh_meta(
+                rid,
+                spec=spec,
+                seen=seen_row,
+                now=now,
+                policy=policy,
+                field_failures=failures,
+                session=session,
+                pending_kinds=pending_kinds,
+                apply_due_fields_set=due_apply,
+                max_attempts=max_attempts,
+                paused=paused,
+                on_cooldown=on_cooldown,
+            )
+    header: dict[str, Any] = {}
+    for hid in HEADER_REFRESH_IDS:
+        spec = REFRESH_TARGETS.get(hid)
+        if spec is None:
+            continue
+        header[hid] = compute_refresh_meta(
+            hid,
+            spec=spec,
+            seen=seen_row,
+            now=now,
+            policy=policy,
+            field_failures=failures,
+            session=session,
+            pending_kinds=pending_kinds,
+            apply_due_fields_set=due_apply,
+            max_attempts=max_attempts,
+            paused=paused,
+            on_cooldown=on_cooldown,
+        )
+    unit["header_refresh"] = header
+
+
 def build_fleet_snapshot(
     *,
     nodes_path: Path,
@@ -764,6 +861,9 @@ def build_fleet_snapshot(
     conn: sqlite3.Connection | None = None,
     include: set[str] | None = None,
     skip: set[str] | None = None,
+    pending_kinds_for: Any | None = None,
+    on_cooldown_for: Any | None = None,
+    max_attempts: int = 10,
 ) -> dict[str, Any]:
     """Full public fleet snapshot: YAML desired + sqlite last_seen."""
     doc = load_nodes_doc(nodes_path)
@@ -859,11 +959,32 @@ def build_fleet_snapshot(
                 continue
             if not is_meshcore_platform(node):
                 continue
-            profile_ok = False
-            if conn is not None:
-                profile_ok = not apply_is_due(
-                    conn, key, node, sites, doc=doc, keys=keys
-                )
+            seen_row = seen_map.get(key) or {}
+            apply_times = apply_at_map.get(key) or {}
+            apply_desireds = apply_desired_map.get(key)
+            profile = build_profile_rows(
+                node,
+                sites,
+                doc=doc,
+                keys=keys,
+                key=key,
+                apply_desireds=apply_desireds,
+                apply_times=apply_times,
+                seen=seen_row,
+                include_secrets=True,
+                heard_acl=acl_heard_map.get(key),
+                acl_heard_at=acl_heard_at_map.get(key),
+            )
+            prefs = build_radio_prefs(
+                node,
+                sites,
+                doc=doc,
+                keys=keys,
+                key=key,
+                apply_desireds=apply_desireds,
+                apply_times=apply_times,
+                seen=seen_row,
+            )
             units[key] = sanitize_unit(
                 key,
                 node,
@@ -878,34 +999,55 @@ def build_fleet_snapshot(
                 status_raw=status_map.get(key),
                 traffic_interval=interval_map.get(key),
                 traffic_window_6h=window_map.get(key),
-                profile_ok=profile_ok,
+                profile_ok=not profile_has_attention(profile),
                 ota_raw=ota_map.get(key),
-                apply_at=apply_at_map.get(key),
-                prefs=build_radio_prefs(
-                    node,
-                    sites,
-                    doc=doc,
-                    keys=keys,
-                    key=key,
-                    apply_desireds=apply_desired_map.get(key),
-                ),
-                profile=build_profile_rows(
-                    node,
-                    sites,
-                    doc=doc,
-                    keys=keys,
-                    key=key,
-                    apply_desireds=apply_desired_map.get(key),
-                    include_secrets=True,
-                    heard_acl=acl_heard_map.get(key),
-                    acl_heard_at=acl_heard_at_map.get(key),
-                ),
+                apply_at=apply_times,
+                prefs=prefs,
+                profile=profile,
                 doc=doc,
                 audit_path=audit_path_map.get(key),
                 contact_at=contact_at_map.get(key),
             )
             status_rows = status_rows_map.get(key, [])
-            seen_row = seen_map.get(key) or {}
+            pending = pending_kinds_for(key) if pending_kinds_for else set()
+            on_cd = bool(on_cooldown_for(key)) if on_cooldown_for else False
+            attach_unit_refresh_meta(
+                units[key],
+                key=key,
+                node=node,
+                seen_row=seen_row,
+                now=now,
+                conn=conn,
+                sites=sites,
+                doc=doc,
+                keys=keys,
+                session=states.get(key),
+                pending_kinds=pending,
+                on_cooldown=on_cd,
+                max_attempts=max_attempts,
+            )
+            prof = units[key].get("profile")
+            if isinstance(prof, list):
+                for row in prof:
+                    if not isinstance(row, dict):
+                        continue
+                    row["attention"] = row_needs_attention(
+                        row.get("state") or "n/a",
+                        row.get("refresh"),
+                    )
+                units[key]["profile_ok"] = not profile_has_attention(prof)
+                units[key]["drift"] = drift_state(
+                    node,
+                    profile_ok=units[key]["profile_ok"],
+                    seen=seen_row,
+                    apply_at=apply_times,
+                    sites=sites,
+                    doc=doc,
+                    key=key,
+                )
+                units[key]["drift_detail"] = identity_leak_reason(
+                    node, seen_row, apply_times, sites=sites, doc=doc, key=key
+                )
             units[key]["health"] = compute_health(
                 freshness=units[key]["freshness"],
                 session=states.get(key),
@@ -920,7 +1062,6 @@ def build_fleet_snapshot(
                 stability_ack_ts=_stability_ack_ts(node),
                 last_heard=units[key].get("last_heard"),
                 now=now,
-                refresh_gaps=parse_refresh_gaps(seen_row.get("refresh_gaps")),
             )
             units[key]["sparks"] = compact_sparks(status_rows, conn=conn, unit=key, now=now)
         attach_neighbor_miles(units, peer_locs)

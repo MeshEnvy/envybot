@@ -342,10 +342,8 @@ class FleetManualJobBuildTests(unittest.TestCase):
                 self.assertIn(f"get:{g}", sync_get)
             self.assertEqual(sync_kinds[0], "login")
             self.assertEqual(sync_kinds[1], "get:neighbors_discover")
-            apply_idx = next(i for i, k in enumerate(sync_kinds) if k.startswith("apply:"))
             status_idx = sync_kinds.index("get:status")
             self.assertLess(sync_kinds.index("get:neighbors"), status_idx)
-            self.assertLess(status_idx, apply_idx)
             full = build_manual_jobs(
                 target, "full", do_poll=True, do_apply=True, apply_due=False, skip_discover=False
             )

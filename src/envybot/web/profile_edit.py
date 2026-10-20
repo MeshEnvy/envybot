@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from envybot.full_sync import FULL_SYNC_INTERVAL_CHOICES
 from envybot.position import site_binding, write_sites_doc, load_sites_doc
 from envybot.public_advert import strip_name_suffix_decorations
 
@@ -119,16 +118,6 @@ def apply_profile_field_edit(
         else:
             node["guest_password"] = str(value)
         return None
-    if field == "full_sync_interval":
-        if value is None or value == "":
-            node.pop("full_sync_interval", None)
-            return None
-        label = str(value).strip().lower()
-        if label not in FULL_SYNC_INTERVAL_CHOICES:
-            return f"interval must be one of {', '.join(FULL_SYNC_INTERVAL_CHOICES)}"
-        node["full_sync_interval"] = label
-        return None
-
     yaml_key = {
         "advert": "advert_interval_min",
         "flood": "flood_advert_interval_h",

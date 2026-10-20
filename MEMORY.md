@@ -123,6 +123,11 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   (no audit GETs on the same pass).
   UI ``due`` is that stamp (apply needed). ``leak`` is a later pull that
   still shows advert or flood advert on. Name or GPS is not an advert.
+  Fleet UI profile: **Book** vs **On radio** (`radio_confirmation.py`);
+  on radio = last SET or pull confirmation only, with attention when
+  unconfirmed or drift (suppressed while row refresh is queued/running).
+  `last_seen` schema: no open-time ALTER; one-shot align per
+  `docs/commands/fleet.md` § Troubleshooting after schema changes.
   A last-seen interval older than the apply stamp is ignored. Poll default: status/telemetry/neighbors every 1h
   (`--min-interval`). Neighbors lead after login (`discover.neighbors` + wait + GET).
   OTA (`ota status` + delayed `ota ls`) stays 24h. Sync always pulls neighbors first after
@@ -160,9 +165,11 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   ride the learned path (`mesh_audit.path` = hop hashes, `direct`, or `flood`).
   Auto flood-discovers when cache is empty; timeout on cached path (3x)
   discards cache and re-floods. Locked path re-applies book `route:`.
-  Three consecutive **radio silences** (no reply) bail the rest of that pass,
-  set miss cooldown, and record gap names in `last_seen.refresh_gaps` (health
-  **Refresh** warn until stamped). Any text reply resets the silence streak.
+  Three consecutive **radio silences** (no reply) bail the rest of that pass and
+  set miss cooldown. Unsent GETs stay due on TTL. Row refresh shows retry state;
+  card health no longer lists field failures. Attention uses
+  `field_failures` when a command exhausts its retry cap. Any text reply resets
+  the silence streak.
   Neighbor discover wait (default 12s) is a background timer, not radio hold.
   Manual Refresh/Pull/Deploy replace that unit's remaining jobs except a
   queued console send (stays in front). A click mid-GET supersedes the
@@ -212,11 +219,12 @@ companions skip. Not re-run on BLE recover.
   sidebar list (first click fly/select, second opens detail). Open card is
   `?unit=<key>` (`replaceState`; reload restores). `?map=1` reopens the map.
   `--web-only` browses the book without a radio. Never expose secrets.
-  **Sync** and **Full sync** always enqueue (even while that unit
+  **Sync** and **Full refresh** always enqueue (even while that unit
   is polling) and run ahead of auto work until the click is done. Overrides
-  `--skip` and `paused`. Sync is live GET (status/telemetry) then SET dirty
-  fields. Full sync GETs all groups (audit reconciles), then SET dirty only.
-  Per-node `full_sync_interval` (default 7d) schedules auto Full sync.
+  `--skip` and `paused`. Sync is live GET (status/telemetry/neighbors) then
+  apply-due SETs. Full refresh enqueues every GET group plus apply-due SETs.
+  Per-row refresh (pull or apply) via `POST /api/unit/{key}/refresh`. Pull rows
+  show auto countdown in the UI. Audit GETs also age out on their 7-day TTL.
   **Console** (header or unit-row icon): tabbed modal, optional extra sessions to the
   same unit. Row icon focuses the first tab for that unit or opens one.
   Open is radio-free. CLI jumps that unit (login on first send if not

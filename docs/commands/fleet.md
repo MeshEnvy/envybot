@@ -80,7 +80,11 @@ status/telemetry/neighbors are ≥1h stale, OTA ≥24h, or apply is due.
 Sync always fetches neighbors right after login. UI freshness stays 24h.
 
 Default runs never GET sticky identity fields unless the weekly audit
-interval elapsed. UI ``due`` follows per-field apply stamps. Audit GET
+interval elapsed. Profile rows show **Book** (desired) vs **On radio**
+(last confirmed value). Confirmation is a successful SET (`applies`) or
+a stored pull/overheard value in sqlite `last_seen` (audit GET writes pref
+heard columns). Rows with no confirmation, or book ≠ confirmed on radio,
+need attention unless a row refresh is already queued or running. Audit GET
 mismatch clears that field's stamp and re-queues SET. ``leak`` is a
 later pull that still shows advert or flood advert on. Leftover name or
 GPS is not an advert. A last-seen interval older than the apply stamp is
@@ -137,11 +141,12 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
   displaced in-flight login is not a give-up. Failed login drops remaining
   console CLI (`stopping`, not `continuing`).   On unit done with gaps: `partial OK`.
 - **Three radio silences in a row** (no reply frame) on a unit during auto
-  poll/apply **bails** the rest of that pass: remaining GET/SET jobs are dropped,
-  the unit gets the usual miss cooldown, and unstamped field names are stored in
-  sqlite `last_seen.refresh_gaps`. A text reply (even `??: …` or unparsed CLI)
-  resets the silence streak. The dashboard shows **Refresh** under attention until
-  those fields are stamped. Manual Sync clears cooldown and retries sooner.
+  poll/apply **bails** the rest of that pass: remaining GET/SET jobs are dropped
+  and the unit gets the usual miss cooldown. Jobs that were not sent stay **due**
+  per-field TTL), not card attention. Per-command timeouts accumulate in sqlite
+  `last_seen.field_failures`; the profile row shows ✕ only after that command
+  command hits its retry cap (10 default, 3 for audit GETs). A text reply resets
+  the silence streak. Manual Sync clears cooldown and retries sooner.
 - Per-attempt mesh audit rows land in sqlite `mesh_audit` (unit, kind, label,
   path, wait, outcome, reply snippet). Detail card **Audit** table,
   `GET /api/audit/{unit}?limit=40&before_id=` (newest first, **Load older**),
@@ -170,8 +175,9 @@ temperature (with vs-ambient delta), Open-Meteo weather column, and gap.
 Interpolated gauges are italic. Detail 10 rows, **Load more** +10. Sparklines
 prefer `polls` when loaded. Default history limit is 80 (72h). SSE `unit`
 events merge live status/telemetry into the polls list.
-Cards show book apply prefs (power saving, FEM LNA, AGC reset, duty cycle, path hash,
-OTA autofetch) with applied/due from sqlite stamps. Not a live radio GET.
+Profile **Book** column is editable desired state. **On radio** shows only
+confirmed values (SET or pull) with source and age. Header chips surface
+prefs that still need attention (unconfirmed or drift).
 
 ## Manual jobs (UI)
 
@@ -179,10 +185,10 @@ While the companion worker is live:
 
 | Action | GET | SET |
 |--------|-----|-----|
-| **Sync** | neighbors, then status, telemetry | SET fields whose book desired differs from apply stamp |
+| **Sync** | neighbors, then status, telemetry | SET fields whose book desired differs from on-radio confirmation |
 | **Full sync** | all GET groups (incl. OTA, neighbors, profile audit) | SET dirty fields after reconcile |
 
-Unit detail: **Active** (auto poll/apply), **Sync**, **Full sync** + interval dropdown (`full_sync_interval`: 24h, 7d, 30d, off). **Profile** edits radio prefs and credentials in the book; **ACL** is a read-only table (2-byte prefix, role, person) with per-row status vs last `get acl` (✓ in sync, ⚠ book-only, ! unknown on radio). Edit `nodes.yaml` trust and `keys.yaml` offline, then Sync when `acl` is dirty. CLI `--full-sync` forces GET policy on a headless run.
+Unit detail: **Active** (auto poll/apply), **Sync**, **Full sync** (marks every GET group due now, then pulls and SETs dirty fields). **Profile** edits radio prefs and credentials in the book; **ACL** is a read-only table (2-byte prefix, role, person) with per-row status vs last `get acl` (✓ in sync, ⚠ book-only, ! unknown on radio). Edit `nodes.yaml` trust and `keys.yaml` offline, then Sync when `acl` is dirty. CLI `--full-sync` forces inventory/periodic GET policy on a headless run (not the 7-day audit groups).
 
 ### Console (header)
 
@@ -331,7 +337,7 @@ alias, else unit id. Age ticks live from `last_heard`. Detail shows unit id and 
 (when bag/bench, alias becomes the list title), `public` / `pause`,
 **Route** dropdown (auto / path / direct / flood) and hop display (path mode:
 paste a log dump and save to book `route:`), and drift
-from the apply stamp (`due` when the profile is stale) or a later pull
+from book vs on-radio drift (`due` when profile rows need attention) or a later pull
 that still shows advert on (`leak`). Leftover name or GPS is not an advert.
 List cards show the same primary label with unit id
 as secondary when it differs. While the companion worker is live, **Refresh** on a
@@ -346,3 +352,63 @@ route and a danger badge when mode is flood.
 Sidebar rows fade and badge as paused. Rows with
 `decommissioned:` or `firmware_platform: meshtastic` are omitted
 entirely.
+
+## Troubleshooting (`history.sqlite`)
+
+Fleet does **not** alter `last_seen` on startup. After a schema change, align
+the operator book **once** (backup first), then restart fleet. Do not commit
+migration scripts to the repo.
+
+```bash
+export ENVYBOT_HOME=/path/to/book   # e.g. peaky-nevada
+cp "$ENVYBOT_HOME/data/fleet/history.sqlite" "$ENVYBOT_HOME/data/fleet/history.sqlite.bak-$(date +%Y%m%d)"
+python3 <<'PY'
+import sqlite3
+from pathlib import Path
+import os
+
+book = Path(os.environ["ENVYBOT_HOME"])
+path = book / "data/fleet/history.sqlite"
+# Canonical last_seen columns added after early books (see history.py SCHEMA).
+additions = [
+    ("ota_status_at", "INTEGER"),
+    ("ota_ls_at", "INTEGER"),
+    ("ota_state", "TEXT"),
+    ("ota_unsupported", "INTEGER"),
+    ("ota_unsupported_fw", "TEXT"),
+    ("repeat_at", "INTEGER"),
+    ("path_hash_at", "INTEGER"),
+    ("dutycycle_at", "INTEGER"),
+    ("powersaving_at", "INTEGER"),
+    ("hop_retry_at", "INTEGER"),
+    ("hop_retry_ms_at", "INTEGER"),
+    ("fem_rxgain_at", "INTEGER"),
+    ("agc_reset_interval_at", "INTEGER"),
+    ("rxgain_at", "INTEGER"),
+    ("ota_autofetch_at", "INTEGER"),
+    ("field_failures", "TEXT"),
+    ("repeat_heard", "TEXT"),
+    ("path_hash_heard", "TEXT"),
+    ("dutycycle_heard", "TEXT"),
+    ("powersaving_heard", "TEXT"),
+    ("hop_retry_heard", "TEXT"),
+    ("hop_retry_ms_heard", "TEXT"),
+    ("fem_rxgain_heard", "TEXT"),
+    ("agc_reset_interval_heard", "TEXT"),
+    ("rxgain_heard", "TEXT"),
+    ("ota_autofetch_heard", "TEXT"),
+]
+conn = sqlite3.connect(path)
+have = {r[1] for r in conn.execute("PRAGMA table_info(last_seen)")}
+added = []
+for name, typ in additions:
+    if name not in have:
+        conn.execute(f"ALTER TABLE last_seen ADD COLUMN {name} {typ}")
+        added.append(name)
+conn.commit()
+conn.close()
+print("added:", added or "(already canonical)")
+PY
+```
+
+Confirm: `sqlite3 "$ENVYBOT_HOME/data/fleet/history.sqlite" "PRAGMA table_info(last_seen)" | grep field_failures`

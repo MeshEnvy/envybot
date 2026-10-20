@@ -38,7 +38,7 @@ cd /path/to/envybot
 | Companion connects, neighbor ping only | Idle loop waiting for manual/scheduled work | Expected when idle |
 | `--only` matched but no login lines | Filter worked; unit not due for queued phase | Same as idle |
 
-Auto seed queues due poll groups, due apply, or **Full sync** when `full_sync_interval` elapsed. `--only` bypasses miss-cooldown on startup seed. **`--no-auto-update`:** no auto seed; Sync/Full sync only.
+Auto seed queues due poll groups and due apply. `--only` bypasses miss-cooldown on startup seed. **`--no-auto-update`:** no auto seed; Sync/Full sync only.
 
 Progress logs require default progress (do not pass `-q` / `--quiet`).
 
@@ -63,6 +63,17 @@ apply skip: none
 If all fields synced: `apply skip: all` and `--apply-only` queues nothing.
 
 **Sync** (UI) SETs dirty fields after live GET. **Full sync** GETs the profile first, then SETs dirty fields (no blind re-SET). CLI **`--full-sync`** forces periodic GET policy on that run.
+
+## Profile: Book vs On radio
+
+Detail **Profile** is two columns: **Book** (editable desired) and **On radio** (last **confirmed** value only).
+
+| Confirmation | Source |
+|--------------|--------|
+| SET ok | sqlite `applies` |
+| Pull / overheard | `last_seen` heard columns (identity, advert/flood, audit pref `*_heard`) |
+
+Latest confirmation by timestamp wins. **Not confirmed** never copies book into On radio. Row **attention** (⚠) when unconfirmed or book ≠ on radio, suppressed while row refresh is `queued` or `running`. Logic: `src/envybot/radio_confirmation.py`, rows: `src/envybot/web/profile_fields.py`.
 
 ## Routing and companion paths
 
@@ -144,7 +155,9 @@ Fleet UI: set **Route** to **Path**, paste the same log text (names and `{lora.s
 | `--retry-delay SEC` | Auto backoff after timeout (default 60) |
 | `--deployed-only` | Site-bound units only |
 
-Three consecutive **radio silences** (no reply) on auto poll/apply bail the rest of that unit's pass, apply miss cooldown, and store unstamped groups in sqlite `refresh_gaps` (dashboard **Refresh** under attention). Text replies reset the streak. Manual Sync clears cooldown.
+Three consecutive **radio silences** (no reply) on auto poll/apply bail the rest of that unit's pass and apply miss cooldown. Unsent GETs stay **due** on TTL until the next successful pull. Per-command failure counts in `field_failures` show on the **row refresh** control (✕ at cap), not on the card health roll call. Text replies reset the silence streak. Manual Sync clears cooldown.
+
+**Per-field refresh:** `POST /api/unit/{key}/refresh` with `{ "targets": ["status"] }` (append) or Full refresh / Sync (replace queue). Book SoT fields **apply**; observed fields **pull**. ACL applies when book drifted, otherwise pulls heard ACL.
 
 Companion flags match `cmd`: `--ble`, `--serial`, `--tcp`, `--timeout`, `--login-timeout`, `-v`.
 

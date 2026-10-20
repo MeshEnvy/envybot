@@ -44,7 +44,33 @@ CREATE TABLE IF NOT EXISTS last_seen (
   packets_recv INTEGER,
   packets_sent INTEGER,
   err_events INTEGER,
-  recv_errors INTEGER
+  recv_errors INTEGER,
+  ota_status_at INTEGER,
+  ota_ls_at INTEGER,
+  ota_state TEXT,
+  ota_unsupported INTEGER,
+  ota_unsupported_fw TEXT,
+  repeat_at INTEGER,
+  path_hash_at INTEGER,
+  dutycycle_at INTEGER,
+  powersaving_at INTEGER,
+  hop_retry_at INTEGER,
+  hop_retry_ms_at INTEGER,
+  fem_rxgain_at INTEGER,
+  agc_reset_interval_at INTEGER,
+  rxgain_at INTEGER,
+  ota_autofetch_at INTEGER,
+  repeat_heard TEXT,
+  path_hash_heard TEXT,
+  dutycycle_heard TEXT,
+  powersaving_heard TEXT,
+  hop_retry_heard TEXT,
+  hop_retry_ms_heard TEXT,
+  fem_rxgain_heard TEXT,
+  agc_reset_interval_heard TEXT,
+  rxgain_heard TEXT,
+  ota_autofetch_heard TEXT,
+  field_failures TEXT
 );
 
 CREATE TABLE IF NOT EXISTS status (
@@ -190,7 +216,6 @@ def open_history(book: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.executescript(SCHEMA)
-    _ensure_last_seen_columns(conn)
     _ensure_audit_source_columns(conn)
     _ensure_sample_loc_columns(conn)
     return conn
@@ -211,6 +236,20 @@ def _ensure_sample_loc_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE telemetry ADD COLUMN lat REAL")
     if "lon" not in cols:
         conn.execute("ALTER TABLE telemetry ADD COLUMN lon REAL")
+
+
+_PREF_HEARD_COLUMNS = (
+    "repeat_heard",
+    "path_hash_heard",
+    "dutycycle_heard",
+    "powersaving_heard",
+    "hop_retry_heard",
+    "hop_retry_ms_heard",
+    "fem_rxgain_heard",
+    "agc_reset_interval_heard",
+    "rxgain_heard",
+    "ota_autofetch_heard",
+)
 
 
 SAMPLE_LOC_BACKFILL_META = "sample_loc_backfill"
@@ -332,139 +371,7 @@ def _stamp_missing_sample_loc(
     return n
 
 
-def _ensure_last_seen_columns(conn: sqlite3.Connection) -> None:
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(last_seen)")}
-    if "voltage" not in cols:
-        conn.execute("ALTER TABLE last_seen ADD COLUMN voltage REAL")
-    if "uptime_secs" not in cols:
-        conn.execute("ALTER TABLE last_seen ADD COLUMN uptime_secs INTEGER")
-    if "temperature" not in cols:
-        conn.execute("ALTER TABLE last_seen ADD COLUMN temperature REAL")
-    if "ota_at" not in cols:
-        conn.execute("ALTER TABLE last_seen ADD COLUMN ota_at INTEGER")
-    if "base_hash" not in cols:
-        conn.execute("ALTER TABLE last_seen ADD COLUMN base_hash TEXT")
-    if "ota_status_at" not in cols:
-        conn.execute("ALTER TABLE last_seen ADD COLUMN ota_status_at INTEGER")
-    if "ota_ls_at" not in cols:
-        conn.execute("ALTER TABLE last_seen ADD COLUMN ota_ls_at INTEGER")
-    if "ota_state" not in cols:
-        conn.execute("ALTER TABLE last_seen ADD COLUMN ota_state TEXT")
-    if "ota_unsupported" not in cols:
-        conn.execute("ALTER TABLE last_seen ADD COLUMN ota_unsupported INTEGER")
-    if "ota_unsupported_fw" not in cols:
-        conn.execute("ALTER TABLE last_seen ADD COLUMN ota_unsupported_fw TEXT")
-    if "full_sync_at" not in cols:
-        conn.execute("ALTER TABLE last_seen ADD COLUMN full_sync_at INTEGER")
-    for col in (
-        "repeat_at",
-        "path_hash_at",
-        "dutycycle_at",
-        "powersaving_at",
-        "hop_retry_at",
-        "hop_retry_ms_at",
-        "fem_rxgain_at",
-        "agc_reset_interval_at",
-        "rxgain_at",
-        "ota_autofetch_at",
-    ):
-        if col not in cols:
-            conn.execute(f"ALTER TABLE last_seen ADD COLUMN {col} INTEGER")
-    if "refresh_gaps" not in cols:
-        conn.execute("ALTER TABLE last_seen ADD COLUMN refresh_gaps TEXT")
-    _backfill_last_seen_promoted_fields(conn)
-
-
-def parse_refresh_gaps(raw: Any | None) -> list[str]:
-    if not raw:
-        return []
-    if isinstance(raw, list):
-        return [str(x) for x in raw if x]
-    text = str(raw).strip()
-    if not text:
-        return []
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, list):
-            return [str(x) for x in parsed if x]
-    except json.JSONDecodeError:
-        pass
-    return [part.strip() for part in text.split(",") if part.strip()]
-
-
-def merge_refresh_gaps(conn: sqlite3.Connection, unit: str, new_gaps: list[str]) -> None:
-    if not new_gaps:
-        return
-    seen = get_last_seen(conn, unit) or {}
-    merged = list(parse_refresh_gaps(seen.get("refresh_gaps")))
-    for gap in new_gaps:
-        if gap not in merged:
-            merged.append(gap)
-    _upsert_last_seen(
-        conn,
-        unit,
-        {"refresh_gaps": json.dumps(merged), "updated_at": int(time.time())},
-    )
-    conn.commit()
-
-
-def clear_refresh_gap(conn: sqlite3.Connection, unit: str, group: str) -> None:
-    seen = get_last_seen(conn, unit)
-    if not seen:
-        return
-    gaps = parse_refresh_gaps(seen.get("refresh_gaps"))
-    if group not in gaps:
-        return
-    gaps = [g for g in gaps if g != group]
-    _upsert_last_seen(
-        conn,
-        unit,
-        {
-            "updated_at": int(time.time()),
-            "refresh_gaps": json.dumps(gaps) if gaps else None,
-        },
-    )
-    conn.commit()
-
-
-def _backfill_last_seen_promoted_fields(conn: sqlite3.Connection) -> None:
-    """Promote uptime/temp from history rows when last_seen cache is missing them."""
-    rows = conn.execute(
-        "SELECT unit, uptime_secs, temperature FROM last_seen "
-        "WHERE uptime_secs IS NULL OR temperature IS NULL"
-    ).fetchall()
-    if not rows:
-        return
-    for row in rows:
-        unit = str(row["unit"])
-        fields: dict[str, Any] = {}
-        if row["uptime_secs"] is None:
-            status_row = conn.execute(
-                "SELECT payload FROM status WHERE unit = ? ORDER BY ts DESC LIMIT 1",
-                (unit,),
-            ).fetchone()
-            if status_row:
-                try:
-                    payload = json.loads(status_row["payload"])
-                except json.JSONDecodeError:
-                    payload = {}
-                uptime = payload.get("uptime_secs") if isinstance(payload, dict) else None
-                if uptime is not None:
-                    try:
-                        fields["uptime_secs"] = int(uptime)
-                    except (TypeError, ValueError):
-                        pass
-        if row["temperature"] is None:
-            tele_row = conn.execute(
-                "SELECT value FROM telemetry WHERE unit = ? AND type = 'temperature' "
-                "ORDER BY ts DESC LIMIT 1",
-                (unit,),
-            ).fetchone()
-            if tele_row and tele_row["value"] is not None:
-                fields["temperature"] = tele_row["value"]
-        if fields:
-            _upsert_last_seen(conn, unit, fields)
-    conn.commit()
+_LAST_SEEN_NULLABLE_JSON = frozenset({"field_failures"})
 
 
 def is_empty(conn: sqlite3.Connection) -> bool:
@@ -1800,7 +1707,13 @@ def _upsert_last_seen(conn: sqlite3.Connection, unit: str, fields: dict[str, Any
     existing = get_last_seen(conn, unit)
     now = int(fields.get("updated_at") or time.time())
     row = dict(existing or {"unit": unit, "updated_at": now})
-    row.update({k: v for k, v in fields.items() if v is not None or k in ("unit",)})
+    row.update(
+        {
+            k: v
+            for k, v in fields.items()
+            if v is not None or k in ("unit",) or k in _LAST_SEEN_NULLABLE_JSON
+        }
+    )
     row["unit"] = unit
     row["updated_at"] = now
     cols = [
@@ -1840,7 +1753,6 @@ def _upsert_last_seen(conn: sqlite3.Connection, unit: str, fields: dict[str, Any
         "ota_state",
         "ota_unsupported",
         "ota_unsupported_fw",
-        "full_sync_at",
         "repeat_at",
         "path_hash_at",
         "dutycycle_at",
@@ -1851,7 +1763,8 @@ def _upsert_last_seen(conn: sqlite3.Connection, unit: str, fields: dict[str, Any
         "agc_reset_interval_at",
         "rxgain_at",
         "ota_autofetch_at",
-        "refresh_gaps",
+        *_PREF_HEARD_COLUMNS,
+        "field_failures",
     ]
     placeholders = ", ".join("?" for _ in cols)
     col_sql = ", ".join(cols)
@@ -1997,28 +1910,34 @@ def record_poll(
             status_at="ota_status" in ota_groups,
             ls_at="ota_ls" in ota_groups,
         )
-    for group, col in (
-        ("repeat", "repeat_at"),
-        ("path_hash", "path_hash_at"),
-        ("dutycycle", "dutycycle_at"),
-        ("powersaving", "powersaving_at"),
-        ("hop_retry", "hop_retry_at"),
-        ("hop_retry_ms", "hop_retry_ms_at"),
-        ("fem_rxgain", "fem_rxgain_at"),
-        ("agc_reset_interval", "agc_reset_interval_at"),
-        ("rxgain", "rxgain_at"),
-        ("ota_autofetch", "ota_autofetch_at"),
-    ):
+    audit_heard = getattr(res, "audit_heard", None) or {}
+    _AUDIT_GROUP_AT = (
+        ("repeat", "repeat_at", "repeat"),
+        ("path_hash", "path_hash_at", "path_hash"),
+        ("dutycycle", "dutycycle_at", "dutycycle"),
+        ("powersaving", "powersaving_at", "powersaving"),
+        ("hop_retry", "hop_retry_at", "hop_retry"),
+        ("hop_retry_ms", "hop_retry_ms_at", "hop_retry_ms"),
+        ("fem_rxgain", "fem_rxgain_at", "fem_rxgain"),
+        ("agc_reset_interval", "agc_reset_interval_at", "agc_reset_interval"),
+        ("rxgain", "rxgain_at", "rxgain"),
+        ("ota_autofetch", "ota_autofetch_at", "ota_autofetch"),
+    )
+    for group, at_col, field in _AUDIT_GROUP_AT:
         if group in groups:
-            fields[col] = now
+            fields[at_col] = now
+            heard_val = audit_heard.get(field)
+            if heard_val is not None:
+                fields[f"{field}_heard"] = heard_val
     if groups:
+        from envybot.field_state import parse_field_failures
+
         seen_row = get_last_seen(conn, unit) or {}
-        gaps = parse_refresh_gaps(seen_row.get("refresh_gaps"))
-        if gaps:
+        fails = parse_field_failures(seen_row.get("field_failures"))
+        if fails:
             for group in groups:
-                if group in gaps:
-                    gaps.remove(group)
-            fields["refresh_gaps"] = json.dumps(gaps) if gaps else None
+                fails.pop(group, None)
+            fields["field_failures"] = json.dumps(fails) if fails else None
     _upsert_last_seen(conn, unit, fields)
     conn.commit()
 

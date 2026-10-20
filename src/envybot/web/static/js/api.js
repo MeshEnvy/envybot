@@ -99,6 +99,20 @@ export function fullUnit(key) {
   return postManualJob(key, 'full')
 }
 
+/** @param {string} key @param {string[]} targets @param {{ replace?: boolean }} [opts] */
+export async function refreshUnit(key, targets, opts = {}) {
+  const res = await fetch(`/api/unit/${encodeURIComponent(key)}/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targets, replace: !!opts.replace }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error || `refresh ${res.status}`)
+  }
+  return res.json()
+}
+
 /** @param {string} key @param {string | number} selector catalog index or hex mid */
 export async function stageUnit(key, selector) {
   const res = await fetch(`/api/stage/${encodeURIComponent(key)}`, {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import sqlite3
 import time
 import webbrowser
@@ -146,6 +147,21 @@ class MonitorWeb:
     def set_worker_active(self, active: bool) -> None:
         self._accepting = active
 
+    def _scheduler_max_attempts(self) -> int:
+        if self._binding is None:
+            return 10
+        return self._binding.scheduler.max_attempts or 10
+
+    def _pending_kinds_for(self, key: str) -> set[str]:
+        if self._binding is None:
+            return set()
+        return self._binding.scheduler.pending_kinds_for(key)
+
+    def _on_cooldown_for(self, key: str) -> bool:
+        if self._binding is None:
+            return False
+        return self._binding.scheduler.is_on_cooldown(key)
+
     def sync_worker_state(
         self,
         *,
@@ -222,13 +238,80 @@ class MonitorWeb:
             discover_wait=binding.discover_wait,
             stage_mid=stage_selector,
             seen=get_last_seen(binding.conn, key) if binding.conn else None,
+            conn=binding.conn,
+            node=node,
+            sites=binding.sites,
+            doc=binding.doc,
+            keys=binding.keys,
         )
         if job == "stage" and not jobs:
             return 400, "missing catalog index or mid for stage"
-        status, err = binding.scheduler.enqueue_manual(target, job, jobs)
+        status, err = binding.scheduler.enqueue_refresh(
+            target, jobs, manual_job=job, replace=True
+        )
         binding.manual_keys.add(key)
         self._session_states[key] = in_flight_session(
             manual_job=job,
+            job_kind="login",
+            queued=True,
+        )
+        return status, err
+
+    async def enqueue_target_refresh(
+        self,
+        key: str,
+        targets: list[str],
+        *,
+        replace: bool = False,
+    ) -> tuple[int, str | None]:
+        from envybot.poll import in_flight_session
+        from envybot.refresh_registry import build_refresh_jobs
+
+        key = key.lower()
+        if not targets:
+            return 400, "missing refresh targets"
+        if not self.unit_visible(key):
+            return 404, "unknown unit"
+        if not self._accepting or self._binding is None:
+            return 409, "fleet worker not accepting manual jobs"
+        doc = load_nodes_doc(self.nodes_path)
+        nodes = doc.get("nodes") or {}
+        node = nodes.get(key)
+        if not isinstance(node, dict) or is_decommissioned(node) or not is_meshcore_platform(node):
+            return 404, "unknown unit"
+        loaded = load_targets(
+            self.nodes_path,
+            deployed_only=False,
+            include={key},
+            skip=self._skip,
+        )
+        if not loaded:
+            return 404, "unknown unit"
+        target = loaded[0]
+        binding = self._binding
+        jobs = build_refresh_jobs(
+            target,
+            targets,
+            conn=binding.conn,
+            unit=key,
+            node=node,
+            sites=binding.sites,
+            doc=binding.doc,
+            keys=binding.keys,
+            seen=get_last_seen(binding.conn, key) if binding.conn else None,
+            do_apply=binding.do_apply,
+            do_poll=binding.do_poll,
+            skip_discover=binding.skip_discover,
+            discover_wait=binding.discover_wait,
+        )
+        if not jobs:
+            return 400, "nothing to refresh"
+        status, err = binding.scheduler.enqueue_refresh(
+            target, jobs, manual_job="refresh", replace=replace
+        )
+        binding.manual_keys.add(key)
+        self._session_states[key] = in_flight_session(
+            manual_job="refresh",
             job_kind="login",
             queued=True,
         )
@@ -566,6 +649,9 @@ class MonitorWeb:
             conn=self._fleet_conn(),
             include=self._include,
             skip=self._skip,
+            pending_kinds_for=self._pending_kinds_for,
+            on_cooldown_for=self._on_cooldown_for,
+            max_attempts=self._scheduler_max_attempts(),
         )
         snap["edges"] = build_neighbor_edges(snap["units"])
         _attach_ingestor(snap, self.nodes_path)
@@ -600,6 +686,9 @@ class MonitorWeb:
             conn=self._fleet_conn(),
             include=self._include,
             skip=self._skip,
+            pending_kinds_for=self._pending_kinds_for,
+            on_cooldown_for=self._on_cooldown_for,
+            max_attempts=self._scheduler_max_attempts(),
         )
         snap["edges"] = build_neighbor_edges(snap["units"])
         _attach_ingestor(snap, self.nodes_path)
@@ -914,6 +1003,42 @@ async def _handle_manual_job(request: web.Request, job: str) -> web.Response:
     return web.json_response(unit)
 
 
+async def _handle_unit_refresh(request: web.Request) -> web.Response:
+    key = request.match_info["key"].lower()
+    web_ctx: MonitorWeb = request.app["web_ctx"]
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": "invalid json"}, status=400)
+    targets = body.get("targets")
+    if not isinstance(targets, list) or not targets:
+        return web.json_response({"error": "missing targets"}, status=400)
+    replace = bool(body.get("replace"))
+    status, err = await web_ctx.enqueue_target_refresh(
+        key, [str(t) for t in targets], replace=replace
+    )
+    if status == 404:
+        return web.json_response({"error": err}, status=404)
+    if status == 409:
+        return web.json_response({"error": err}, status=409)
+    if status == 400:
+        return web.json_response({"error": err}, status=400)
+    session = dict(web_ctx._session_states.get(key) or {})
+    prev = ((web_ctx.hub.snapshot or {}).get("units") or {}).get(key) or {"key": key}
+    unit = dict(prev)
+    unit["session"] = session
+    asyncio.create_task(
+        web_ctx.publish_unit(
+            key,
+            session=session,
+            session_states=web_ctx._session_states,
+            companion=web_ctx._companion,
+            poll=web_ctx._poll_state,
+        )
+    )
+    return web.json_response(unit)
+
+
 async def _handle_unit_edit(request: web.Request) -> web.Response:
     key = request.match_info["key"].lower()
     web_ctx: MonitorWeb = request.app["web_ctx"]
@@ -990,24 +1115,6 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
             node["notes"] = notes
         else:
             node.pop("notes", None)
-    if "full_sync_interval" in body:
-        from envybot.web.profile_edit import apply_profile_field_edit
-        from envybot.position import load_sites_doc as _load_sites_doc
-
-        sites_doc = _load_sites_doc(web_ctx.sites_path)
-        sites_map = sites_doc.get("sites") or {}
-        err = apply_profile_field_edit(
-            key,
-            node,
-            doc,
-            sites_doc,
-            sites_map,
-            "full_sync_interval",
-            body.get("full_sync_interval"),
-        )
-        if err:
-            return web.json_response({"error": err}, status=400)
-        write_sites_doc(web_ctx.sites_path, sites_doc)
     if "profile" in body or ("profile_field" in body and "profile_value" in body):
         from envybot.web.profile_edit import apply_profile_patch_body
 
@@ -1262,6 +1369,7 @@ def make_app(web_ctx: MonitorWeb) -> web.Application:
     app.router.add_get("/api/fleet", _handle_fleet)
     app.router.add_post("/api/bench", _handle_bench)
     app.router.add_post("/api/unit/{key}", _handle_unit_edit)
+    app.router.add_post("/api/unit/{key}/refresh", _handle_unit_refresh)
     app.router.add_post("/api/unit/{key}/path", _handle_unit_path_set)
     app.router.add_delete("/api/unit/{key}/path", _handle_unit_path_clear)
     app.router.add_post("/api/sync/{key}", lambda r: _handle_manual_job(r, "sync"))

@@ -549,7 +549,6 @@ class SeedAutoWorkTests(unittest.TestCase):
             "admin_password": "AdminOneStrong1",
             "guest_password": "GuestOneStrong1",
             "identity_pubkey": "aa" * 32,
-            "full_sync_interval": "off",
         }
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
@@ -602,9 +601,6 @@ class SeedAutoWorkTests(unittest.TestCase):
                 ),
                 ts=now - 300,
             )
-            from envybot.full_sync import stamp_full_sync
-
-            stamp_full_sync(conn, "me0001", ts=now - 300)
             sched = FleetScheduler()
             session_states: dict[str, dict] = {}
             seeded = _seed_auto_work(

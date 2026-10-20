@@ -3,6 +3,8 @@
 Fleet CLI for MeshEnvy radios. Read [`MEMORY.md`](MEMORY.md) first.
 Greenfield (unshipped): [`.cursor/rules/greenfield.mdc`](.cursor/rules/greenfield.mdc).
 No builtin migrations, dual-read, or leftover book keys.
+Plans: [`.cursor/rules/planning.mdc`](.cursor/rules/planning.mdc) (debt cleanup +
+greenfield migration every time).
 
 ```bash
 uv sync

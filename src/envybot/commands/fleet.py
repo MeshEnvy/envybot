@@ -57,6 +57,7 @@ from envybot.poll import (
     poll_summary,
 )
 from envybot.position import site_loc_for_unit
+from envybot.field_state import record_job_outcome
 from envybot.silence_bail import BAIL_PAYLOAD, apply_silence_outcome
 from envybot.radio import (
     DEFAULT_MIN_POLL_INTERVAL,
@@ -132,21 +133,11 @@ def _seed_auto_work(
     bypass_cooldown: bool = False,
 ) -> int:
     """Queue due GET/apply. Busy units keep their GET lane; apply is spliced in."""
-    from envybot.full_sync import full_sync_is_due
-    from envybot.history import get_last_seen
-    from envybot.poll import full_due_groups, lead_neighbors, omit_unsupported_ota
-
     queued = 0
     for target in auto_targets:
         if not bypass_cooldown and scheduler.is_on_cooldown(target.key):
             continue
-        node_row = nodes.get(target.key) or {}
-        apply_after_poll = False
-        if do_poll and full_sync_is_due(conn, target.key, node_row, now=now):
-            seen = get_last_seen(conn, target.key)
-            due = lead_neighbors(omit_unsupported_ota(full_due_groups(), seen))
-            apply_after_poll = True
-        elif do_poll:
+        if do_poll:
             due = due_groups(conn, target.key, policy=policy, now=now)
         else:
             due = []
@@ -184,15 +175,11 @@ def _seed_auto_work(
             force_apply=force,
             skip_discover=skip_discover,
             discover_wait=discover_wait,
-            apply_after_poll=apply_after_poll,
+            apply_after_poll=False,
         )
         if not jobs:
             continue
         scheduler.enqueue_jobs(target, jobs)
-        if apply_after_poll:
-            uq = scheduler.units.get(target.key)
-            if uq is not None:
-                uq.session_extra["stamp_full_sync_on_ok"] = True
         if session_states is not None:
             session_states[target.key] = in_flight_session(
                 manual_job=None,
@@ -724,12 +711,6 @@ async def run(args: argparse.Namespace) -> int:
                     else:
                         print(f"  OK {poll_summary(res)}")
             uq.session_extra.pop("dropped_jobs", None)
-            if uq.session_extra.pop("stamp_full_sync", None) or uq.session_extra.pop(
-                "stamp_full_sync_on_ok", None
-            ):
-                from envybot.full_sync import stamp_full_sync
-
-                stamp_full_sync(conn, target.key)
             if uq.manual_job not in ("console", "path"):
                 manual_keys.discard(target.key)
 
@@ -779,7 +760,7 @@ async def run(args: argparse.Namespace) -> int:
         if worker_ctx.force_path is not None and "forced_path" not in uq.session_extra:
             uq.session_extra["forced_path"] = worker_ctx.force_path.to_extra()
         outcome, payload = await execute_job(job, uq, worker_ctx)
-        return apply_silence_outcome(
+        outcome, payload = apply_silence_outcome(
             uq,
             job,
             outcome,
@@ -788,6 +769,8 @@ async def run(args: argparse.Namespace) -> int:
             unit=uq.target.key,
             log=log,
         )
+        record_job_outcome(conn, uq.target.key, job, outcome, payload)
+        return outcome, payload
 
     async def pause_watch() -> None:
         while not scheduler._stop:

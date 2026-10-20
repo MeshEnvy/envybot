@@ -46,6 +46,7 @@ from envybot.history import (
     record_poll,
     stamp_apply,
 )
+from envybot.radio_confirmation import normalize_pull_value
 from envybot.jobs import (
     INVENTORY_GROUPS,
     JobOutcome,
@@ -226,6 +227,7 @@ class PollAccumulator:
     heard_acl: list[dict[str, Any]] | None = None
     ota: dict[str, Any] | None = None
     ota_partial: dict[str, Any] = field(default_factory=dict)
+    audit_heard: dict[str, str] = field(default_factory=dict)
 
     def to_result(self, key: str, *, ok: bool = True, error: str | None = None) -> PollResult:
         position = None
@@ -258,6 +260,7 @@ class PollAccumulator:
             ota=self.ota,
             polled_groups=frozenset(self.polled_groups),
             stat_errors=list(self.stat_errors),
+            audit_heard=dict(self.audit_heard),
         )
 
     def record_group(self, ctx: WorkerContext, unit: str, group: str) -> None:
@@ -394,6 +397,18 @@ def _needs_login(uq: UnitQueue, ctx: WorkerContext) -> bool:
     return False
 
 
+def build_apply_jobs_for_fields(unit_key: str, fields: frozenset[str]) -> list[RadioJob]:
+    if not fields:
+        return []
+    jobs: list[RadioJob] = []
+    for field in APPLY_FIELD_ORDER:
+        if field in fields:
+            jobs.append(RadioJob(kind=f"apply:{field}", unit_key=unit_key))
+    jobs.append(RadioJob(kind="apply:clock", unit_key=unit_key))
+    jobs.append(RadioJob(kind="apply:push_advert", unit_key=unit_key))
+    return jobs
+
+
 def build_poll_jobs(
     target: RouterTarget,
     due_groups: list[str],
@@ -404,6 +419,7 @@ def build_poll_jobs(
     skip_discover: bool,
     discover_wait: float = NEIGHBOR_DISCOVER_WAIT_S,
     apply_after_poll: bool = False,
+    apply_fields_only: frozenset[str] | None = None,
 ) -> list[RadioJob]:
     jobs: list[RadioJob] = []
     jobs.append(RadioJob(kind="login", unit_key=target.key))
@@ -414,7 +430,10 @@ def build_poll_jobs(
         )
     if do_apply and apply_due and not apply_after_poll:
         # SET before GET so a long/retrying poll cannot starve profile apply.
-        jobs.extend(build_apply_jobs(target.key, force=force_apply))
+        if apply_fields_only is not None:
+            jobs.extend(build_apply_jobs_for_fields(target.key, apply_fields_only))
+        else:
+            jobs.extend(build_apply_jobs(target.key, force=force_apply))
     for group in due_groups:
         if group not in GET_GROUPS:
             continue
@@ -438,7 +457,10 @@ def build_poll_jobs(
             cap = AUDIT_GET_ATTEMPTS if group in AUDIT_GET_GROUPS else None
             jobs.append(RadioJob(kind=f"get:{group}", unit_key=target.key, attempt_cap=cap))
     if do_apply and apply_due and apply_after_poll:
-        jobs.extend(build_apply_jobs(target.key, force=force_apply))
+        if apply_fields_only is not None:
+            jobs.extend(build_apply_jobs_for_fields(target.key, apply_fields_only))
+        else:
+            jobs.extend(build_apply_jobs(target.key, force=force_apply))
     return jobs
 
 
@@ -501,6 +523,11 @@ def build_manual_jobs(
     discover_wait: float = NEIGHBOR_DISCOVER_WAIT_S,
     stage_mid: str | None = None,
     seen: dict[str, Any] | None = None,
+    conn: Any | None = None,
+    node: dict[str, Any] | None = None,
+    sites: dict[str, Any] | None = None,
+    doc: dict[str, Any] | None = None,
+    keys: dict[str, list[str]] | None = None,
 ) -> list[RadioJob]:
     if manual_job == "stage":
         if not stage_mid:
@@ -508,23 +535,27 @@ def build_manual_jobs(
         return build_stage_jobs(target, stage_mid)
     if manual_job == "install":
         return build_install_jobs(target)
-    due: list[str] = []
-    if do_poll:
-        if manual_job == "full":
-            due = lead_neighbors(omit_unsupported_ota(full_due_groups(), seen))
-        elif manual_job == "sync":
-            due = sync_due_groups()
-    apply_after = manual_job in ("sync", "full")
-    return build_poll_jobs(
-        target,
-        due,
-        do_apply=do_apply,
-        apply_due=apply_due or manual_job in ("sync", "full"),
-        force_apply=False,
-        skip_discover=skip_discover,
-        discover_wait=discover_wait,
-        apply_after_poll=apply_after,
-    )
+    if manual_job in ("sync", "full"):
+        from envybot.refresh_registry import REFRESH_ALL, REFRESH_SYNC, build_refresh_jobs
+
+        target_ids = [REFRESH_ALL if manual_job == "full" else REFRESH_SYNC]
+        return build_refresh_jobs(
+            target,
+            target_ids,
+            conn=conn,
+            unit=target.key,
+            node=node or {},
+            sites=sites,
+            doc=doc,
+            keys=keys,
+            seen=seen,
+            do_apply=do_apply,
+            do_poll=do_poll,
+            skip_discover=skip_discover,
+            discover_wait=discover_wait,
+            force_apply_pass=apply_due,
+        )
+    return []
 
 
 def seed_auto_unit(
@@ -777,11 +808,13 @@ def _apply_cli_poll_reply(
     if group == "repeat":
         text = (parse_get_value(raw) or "").strip().lower()
         heard = text in ("on", "1", "true", "yes")
+        acc.audit_heard["repeat"] = normalize_pull_value("repeat", heard)
         acc.record_group(ctx, target.key, "repeat")
         _reconcile_audit_group("repeat", heard, ctx=ctx, target=target, node=node)
         return True
     if group == "path_hash":
         mode = parse_int_get_value(raw)
+        acc.audit_heard["path_hash"] = normalize_pull_value("path_hash", mode)
         acc.record_group(ctx, target.key, "path_hash")
         _reconcile_audit_group("path_hash", mode, ctx=ctx, target=target, node=node)
         return True
@@ -789,44 +822,54 @@ def _apply_cli_poll_reply(
         from envybot.radio import parse_dutycycle
 
         dc = parse_dutycycle(raw)
+        acc.audit_heard["dutycycle"] = normalize_pull_value("dutycycle", dc)
         acc.record_group(ctx, target.key, "dutycycle")
         _reconcile_audit_group("dutycycle", dc, ctx=ctx, target=target, node=node)
         return True
     if group == "powersaving":
         text = (parse_get_value(raw) or "").strip().lower()
         heard = text in ("on", "1", "true", "yes")
+        acc.audit_heard["powersaving"] = normalize_pull_value("powersaving", heard)
         acc.record_group(ctx, target.key, "powersaving")
         _reconcile_audit_group("powersaving", heard, ctx=ctx, target=target, node=node)
         return True
     if group == "hop_retry":
         val = parse_int_get_value(raw)
+        acc.audit_heard["hop_retry"] = normalize_pull_value("hop_retry", val)
         acc.record_group(ctx, target.key, "hop_retry")
         _reconcile_audit_group("hop_retry", val, ctx=ctx, target=target, node=node)
         return True
     if group == "hop_retry_ms":
         val = parse_int_get_value(raw)
+        acc.audit_heard["hop_retry_ms"] = normalize_pull_value("hop_retry_ms", val)
         acc.record_group(ctx, target.key, "hop_retry_ms")
         _reconcile_audit_group("hop_retry_ms", val, ctx=ctx, target=target, node=node)
         return True
     if group == "fem_rxgain":
         text = (parse_get_value(raw) or "").strip().lower()
         heard = text in ("on", "1", "true", "yes")
+        acc.audit_heard["fem_rxgain"] = normalize_pull_value("fem_rxgain", heard)
         acc.record_group(ctx, target.key, "fem_rxgain")
         _reconcile_audit_group("fem_rxgain", heard, ctx=ctx, target=target, node=node)
         return True
     if group == "agc_reset_interval":
         val = parse_int_get_value(raw)
+        acc.audit_heard["agc_reset_interval"] = normalize_pull_value(
+            "agc_reset_interval", val
+        )
         acc.record_group(ctx, target.key, "agc_reset_interval")
         _reconcile_audit_group("agc_reset_interval", val, ctx=ctx, target=target, node=node)
         return True
     if group == "rxgain":
         text = (parse_get_value(raw) or "").strip().lower()
         heard = text in ("on", "1", "true", "yes")
+        acc.audit_heard["rxgain"] = normalize_pull_value("rxgain", heard)
         acc.record_group(ctx, target.key, "rxgain")
         _reconcile_audit_group("rxgain", heard, ctx=ctx, target=target, node=node)
         return True
     if group == "ota_autofetch":
         text = (parse_get_value(raw) or "").strip().lower()
+        acc.audit_heard["ota_autofetch"] = normalize_pull_value("ota_autofetch", text)
         acc.record_group(ctx, target.key, "ota_autofetch")
         _reconcile_audit_group("ota_autofetch", text, ctx=ctx, target=target, node=node)
         return True

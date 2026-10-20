@@ -64,7 +64,6 @@ NODES_YAML_HEADER = (
     "#   Otherwise on when site-bound, off when bench.\n"
     "# owner_info: optional per-node override of public_advert.owner_info.\n"
     "# name: optional on-air name when the unit is not site-bound.\n"
-    "# full_sync_interval: 24h | 7d | 30d | off (default 7d). Auto Full sync cadence.\n"
     "# bench_loc: ingestor GPS (map pin, sun/history backfill). Fleet UI may update it.\n"
     "# Per-node loc: [lat, lon] for mobile/bag map pins when unbound. Not pushed to radio.\n"
     "# Site loc wins when the unit is linked in sites.yaml.\n"

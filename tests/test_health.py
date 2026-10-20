@@ -52,7 +52,7 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(health["summary"], "Healthy — all checks pass")
         self.assertEqual(health["issues"], [])
 
-    def test_refresh_gaps_warn(self) -> None:
+    def test_field_failures_not_in_card_health(self) -> None:
         health = compute_health(
             freshness="fresh",
             session={"state": "ok"},
@@ -71,12 +71,11 @@ class HealthTests(unittest.TestCase):
                 {"ts": 1, "battery_mv": 4200, "uptime_secs": 1000},
             ],
             reboot_count=0,
-            refresh_gaps=["hop_retry_ms", "fem_rxgain"],
         )
-        self.assertEqual(health["headline"], "attention")
-        refresh = next(c for c in health["checks"] if c["name"] == "Refresh")
-        self.assertEqual(refresh["status"], "warn")
-        self.assertIn("hop_retry_ms", refresh["reason"] or "")
+        self.assertEqual(health["headline"], "healthy")
+        names = {c["name"] for c in health["issues"]}
+        self.assertNotIn("Firmware", names)
+        self.assertNotIn("Login", names)
 
     def test_config_due_is_not_attention(self) -> None:
         health = compute_health(

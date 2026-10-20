@@ -636,6 +636,7 @@ class PollResult:
     ota: dict[str, Any] | None = None
     polled_groups: frozenset[str] = frozenset()
     stat_errors: list[str] = field(default_factory=list)
+    audit_heard: dict[str, str] = field(default_factory=dict)
 
 
 def load_targets(
