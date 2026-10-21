@@ -6,13 +6,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ## [Unreleased]
 
+### Fixed
+
+- USB repeater open no longer sends Ctrl+C before the first CLI command.
+  That byte could prefix ``ver`` on nRF52 and make port probe report
+  ``Unknown command`` while the MeshCore config app worked.
+
 ### Added
 
 - Fleet UI **Profile** book SETs queue **console-priority** CLI on save (same
   interrupt as the fleet console); bench notes/alias/paused stay book-only.
-- ``envybot reonboard --unit KEY`` — push an existing book row onto USB
-  (`identity_secret`, passwords, profile, ACL, stamp). ``--force`` re-SETs
-  profile fields even when GET already matches. Manual:
+- ``envybot reonboard --unit KEY`` — adopt blank book fields from USB,
+  flash EnvyOS bench bootloader/firmware when behind, push profile
+  (fuzzed GPS when site-bound), ACL, stamp. ``--no-flash`` reconcile
+  only. ``--force`` re-SETs matching GETs. Manual:
   [docs/commands/reonboard.md](docs/commands/reonboard.md).
 - ``envybot seed`` sends ``ota announce`` on the tag after ``ota folder on`` and
   every 60s by default (``--announce-interval``), since seed owns the USB port.

@@ -12,7 +12,8 @@ text CLI, not the companion protocol.
 ## What it does
 
 **First bind** over USB (not the same as [`reonboard`](reonboard.md), which
-pushes an existing row onto the radio):
+adopts blank book fields, flashes when bench is ahead, and pushes an existing
+row):
 
 1. Open the DUT USB modem (path or autodetection).
 2. Match an existing book row by pubkey, or `--unit`, or allocate the next

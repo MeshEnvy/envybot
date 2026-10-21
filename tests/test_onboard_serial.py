@@ -17,6 +17,7 @@ from envybot.commands.onboard import (
     wait_usb_gone,
 )
 from envybot.onboard_book import (
+    flash_target_from_board,
     ensure_onboard_unit,
     ensure_reonboard_unit,
     register,
@@ -273,11 +274,10 @@ class FleetIdentityTests(unittest.TestCase):
         node = {"unit_id": "ME0057"}
         self.assertTrue(should_mint_fleet_identity(node, "c" * 64, created=False))
 
-    def test_reonboard_requires_secret(self) -> None:
+    def test_reonboard_allows_missing_secret(self) -> None:
         nodes = {"me0057": {"unit_id": "ME0057", "identity_pubkey": "a" * 64}}
-        with self.assertRaises(SystemExit) as err:
-            ensure_reonboard_unit(nodes, unit="me0057")
-        self.assertIn("identity_secret", str(err.exception))
+        key, node = ensure_reonboard_unit(nodes, unit="me0057")
+        self.assertEqual(key, "me0057")
 
     def test_reonboard_accepts_complete_row(self) -> None:
         nodes = {

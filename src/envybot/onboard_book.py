@@ -54,6 +54,19 @@ def stored_guest_password(node: dict[str, Any] | None) -> str | None:
     return str(val)
 
 
+BOARD_TO_FLASH_TARGET: dict[str, str] = {
+    "rak4631": "rak4631-repeater-slim",
+    "heltec-t096": "sensecap-p1pro-repeater-slim",
+    "t096": "sensecap-p1pro-repeater-slim",
+}
+
+
+def flash_target_from_board(board: str | None) -> str | None:
+    if not board:
+        return None
+    return BOARD_TO_FLASH_TARGET.get(str(board).strip().lower())
+
+
 def board_token_from_flash_target(slug: str | None) -> str | None:
     if not slug:
         return None
@@ -240,10 +253,9 @@ def ensure_reonboard_unit(
         raise SystemExit(f"{key}: no such row in nodes.yaml")
     if is_decommissioned(node):
         raise SystemExit(f"{key}: decommissioned")
-    if not str(node.get("identity_secret") or "").strip():
-        raise SystemExit(f"{key}: missing identity_secret (cannot restore book identity)")
-    if not str(node.get("identity_pubkey") or "").strip():
-        raise SystemExit(f"{key}: missing identity_pubkey")
+    platform = str(node.get("firmware_platform") or "meshcore").strip().lower()
+    if platform == "meshtastic":
+        raise SystemExit(f"{key}: meshtastic row (envybot skips USB reonboard)")
     return key, node
 
 

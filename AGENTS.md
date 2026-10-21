@@ -12,6 +12,7 @@ export ENVYBOT_HOME=/path/to/book
 ./envybot fleet
 ./envybot fleet --web-only   # browse book without radio
 ./envybot onboard
+./envybot reonboard --unit me0024
 ./envybot flash firmware --target xiao-nrf52-repeater-slim
 ./envybot seed build/otatest
 ```

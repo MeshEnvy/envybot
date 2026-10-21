@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""USB-serial re-onboard: push an existing book row onto the radio under test."""
+"""USB reonboard: adopt blank book fields, flash when behind bench, push profile."""
 
 from __future__ import annotations
 
@@ -11,17 +11,17 @@ from envybot.commands.onboard import (
     onboard,
     stamp_fleet_ready,
 )
-from envybot.onboard_usb_session import add_common_usb_args, run_usb_onboard_session
+from envybot.onboard_usb_session import add_reonboard_usb_args, run_usb_onboard_session
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    add_common_usb_args(parser)
+    add_reonboard_usb_args(parser)
     parser.add_argument(
         "--unit",
         metavar="me0041",
         required=True,
-        help="Book row to restore onto USB (identity, passwords, profile)",
+        help="Book row to reconcile with USB (adopt, flash if stale, push profile)",
     )
     parser.add_argument(
         "--force",

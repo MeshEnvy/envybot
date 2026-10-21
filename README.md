@@ -29,7 +29,7 @@ Agents: [`.cursor/skills/fleet/SKILL.md`](.cursor/skills/fleet/SKILL.md).
 | [`trust`](docs/commands/trust.md) | [docs/commands/trust.md](docs/commands/trust.md) | Companion contacts, `channels.yaml` grants, plus `keys.yaml` / fleet ACL grant. |
 | [`cmd`](docs/commands/cmd.md) | [docs/commands/cmd.md](docs/commands/cmd.md) | Run remote MeshCore CLI on one unit (one-shot or REPL). |
 | [`onboard`](docs/commands/onboard.md) | [docs/commands/onboard.md](docs/commands/onboard.md) | USB first bind (mints fleet identity). |
-| [`reonboard`](docs/commands/reonboard.md) | [docs/commands/reonboard.md](docs/commands/reonboard.md) | Push an existing book row onto USB. |
+| [`reonboard`](docs/commands/reonboard.md) | [docs/commands/reonboard.md](docs/commands/reonboard.md) | Adopt blanks, flash if behind bench, push book onto USB. |
 | [`seed`](docs/commands/seed.md) | [docs/commands/seed.md](docs/commands/seed.md) | USB OTA seeder — relay a folder of `.mota` to a repeater. |
 | [`weather`](docs/commands/weather.md) | [docs/commands/weather.md](docs/commands/weather.md) | One-time Open-Meteo cache backfill for poll history. |
 | [`range`](docs/commands/range.md) | [docs/commands/range.md](docs/commands/range.md) | USB shootout of two repeaters. Side-by-side discover SNR. |

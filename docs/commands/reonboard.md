@@ -1,45 +1,74 @@
 # `envybot reonboard`
 
-USB-serial **re-onboard**: the book row is source of truth. Pushes
-`identity_secret`, passwords, radio, and fleet-profile fields onto the radio
-under test. Use after misconfig, reflash, or bench rework when the unit must
-keep the same mesh identity (`ME####` / pubkey) as yaml.
+USB-serial **re-onboard** for an existing MeshCore row: adopt blank book
+fields from the radio, flash EnvyOS bench artifacts when bootloader or
+firmware is behind, then push the book (fuzzed site GPS, passwords,
+profile, ACL) and stamp sqlite so fleet is not apply-due.
 
-Same transport and post-steps as [`onboard`](onboard.md) (reboot, discover,
-`nodes.yaml`, ACL, profile stamp). Does not mint a new keypair.
+Not first bind — use [`onboard`](onboard.md) for that. Not companion/mesh.
 
 ```
-./envybot [--book DIR] reonboard --unit me0057 [port] [flags]
+./envybot [--book DIR] reonboard --unit me0024 [port] [flags]
 ```
+
+## What it does
+
+1. Open the DUT USB repeater CLI.
+2. **Adopt** blank yaml from USB (serial-only secrets), write `nodes.yaml`
+   immediately when anything was adopted:
+   - blank `identity_pubkey` / `identity_secret` from `get public.key` /
+     `get prv.key`
+   - missing `guest_password` key from `get guest.password` (explicit `''`
+     in yaml is kept)
+   - optional node `trust:` from heard ACL keys that match `keys.yaml`
+     people (full override includes book admins such as `ben`)
+   - never overwrites a present book pubkey, admin password, or explicit
+     guest blank
+3. Read `ver` and `get bootloader.ver`, compare to the newest EnvyOS bench
+   zip for the board (`board:` → flash target, or `--target`).
+4. **Flash** only when behind: bootloader recovery zip (then firmware, app
+   wiped) or firmware zip alone when bootloader is current.
+5. **Push** profile once (same SET path as onboard / fleet apply), including
+   **fuzzed lat/lon** for site-bound units from `public_advert`.
+6. Reboot, optional neighbor discover, register yaml + ACL + profile stamp.
+
+Admin password cannot be read from USB; blank yaml gets a new strong password
+on push (same as onboard).
 
 ## Requirements
 
 - `--unit` is **required**.
-- Row must have `identity_pubkey` and `identity_secret` in `nodes.yaml`.
-- If USB pubkey already matches the book, identity restore is skipped; profile
-  SETs still run.
+- Row must exist, be MeshCore, and not be `decommissioned`.
+- USB `get public.key` must match book `identity_pubkey` when the book
+  already has one.
 
 ## Flags
 
-Shares discover and write flags with [`onboard`](onboard.md). Flash flags
-exist for parity but are unusual here (reflash first, then reonboard).
-
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--unit KEY` | (required) | Book row to restore |
+| `--unit KEY` | (required) | Book row to reconcile |
 | `--force` | off | Re-SET profile fields even when GET already matches |
+| `--no-flash` | off | Skip bench version check and DFU |
 | `--no-write` | off | Skip yaml, ACL, and sqlite stamp |
+| `--target SLUG` | from `board:` | EnvyOS flash slug when bench check runs |
+| `--envyos DIR` | `../envyos` | Bench artifact root |
+| `--no-discover` | off | Skip neighbor rounds |
+
+Shares discover, reboot, and serial flags with [`onboard`](onboard.md).
+**Do not** pass `--with-flash-bootloader` / `--with-flash-firmware` (onboard
+only). Reonboard decides flash from version compare.
 
 ## Examples
 
 ```bash
-./envybot reonboard --unit me0057
-./envybot reonboard --unit me0057 --force --verbose
+./envybot reonboard --unit me0024
+./envybot reonboard --unit me0024 --no-flash --force
 ```
 
 ## When not to use this
 
-- **First bind** of a blank or newly flashed board → [`onboard`](onboard.md)
-  (mints a new fleet identity unless USB pubkey already matches the row).
-- Pubkey on USB registered to a **different** row → fix the book before
-  reonboard.
+- **First bind** → [`onboard`](onboard.md).
+- USB pubkey registered to a **different** row → fix the book first.
+
+If bench zips are missing, adopt still saves; push runs; exit code is `1`
+with the usual EnvyOS build hint.

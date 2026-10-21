@@ -78,3 +78,7 @@ reset; `flash` waits up to `--wait` seconds (default 120).
 Order: bootloader recovery zip, firmware zip, then the normal USB CLI
 onboard. `--with-flash-bootloader` alone stops after the bootloader (app
 wiped) and tells you to add `--with-flash-firmware`.
+
+For an **existing** book row, [`reonboard`](reonboard.md) compares
+`ver` / `get bootloader.ver` to the newest bench zip and flashes only when
+behind (no `--with-flash-*` on reonboard).

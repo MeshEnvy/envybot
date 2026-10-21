@@ -86,7 +86,7 @@ COMMANDS: dict[str, tuple[str, Command]] = {
     "fleet": ("Localhost fleet manager (map, poll, apply)", cmd_fleet),
     "trust": ("Companion contacts and keys.yaml ACL grant", cmd_trust),
     "onboard": ("USB-serial first bind (mints identity)", cmd_onboard),
-    "reonboard": ("USB push book row onto radio", cmd_reonboard),
+    "reonboard": ("USB adopt, flash if stale, push book row", cmd_reonboard),
     "cmd": ("Run remote MeshCore CLI on one unit", cmd_cmd),
     "seed": ("USB-serial OTA seeder (.mota folder relay)", cmd_seed),
     "flash": ("USB flash EnvyOS bootloader or firmware", cmd_flash),

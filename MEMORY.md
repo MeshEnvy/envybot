@@ -43,7 +43,10 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 | `src/envybot/bench_flash.py` | Shared bench DFU for onboard flash flags |
 | `src/envybot/onboard_usb_session.py` | Shared USB onboard / reonboard orchestration |
 | `src/envybot/commands/onboard.py` | First bind: mint identity, profile SETs, discover, register, ACL, stamp |
-| `src/envybot/commands/reonboard.py` | Book → USB restore for an existing `--unit` row (`--force` re-SET) |
+| `src/envybot/onboard_adopt.py` | Reonboard: adopt blank book fields from USB |
+| `src/envybot/bench_versions.py` | Bench zip label compare for reonboard flash |
+| `src/envybot/reonboard_flash.py` | Plan bootloader/firmware DFU when behind bench |
+| `src/envybot/commands/reonboard.py` | USB adopt, flash-if-stale, push for `--unit` (`--force`, `--no-flash`) |
 | `src/envybot/flash_program.py` | Bench artifact discovery, 1200 touch, nrfutil serial DFU (injectable runner). USB IDs: Xiao, RAK4631 slim, SenseCAP P1-Pro slim. |
 | `src/envybot/commands/flash.py` | `flash bootloader|firmware --target` |
 | `src/envybot/mota.py` | Light `.mota` parse for USB seeder catalog |
@@ -199,6 +202,11 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   (no first mesh apply). Onboard always reboots (`set radio` is
   prefs-only until reboot) unless `--no-reboot`. `get radio` matching is
   not evidence the radio is live.
+- **`reonboard --unit`:** adopt blank yaml from USB (`identity_secret`,
+  guest when key absent, ACL people into node `trust:`), write yaml,
+  compare bl/fw to newest EnvyOS bench zip (`board:` → target), flash
+  only when behind, one profile push (fuzzed site GPS when bound), then
+  reboot/discover/stamp. `--no-flash` skips DFU. No `--with-flash-*`.
 - Do not copy passwords or keypairs into this repo.
 - Not mesh-api. Not the sidecar mux (`mesh-sidecar-daemon`).
 - Daemon (`envybot serve`, N-radio mux) is later.

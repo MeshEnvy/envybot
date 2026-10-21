@@ -59,8 +59,8 @@ class RepeaterSerial:
         self.ser.open()
         time.sleep(SETTLE_S)
         self.ser.reset_input_buffer()
-        self._write_raw(b"\x03")
-        time.sleep(0.15)
+        # Do not send Ctrl+C (0x03) on open. On nRF52 USB it can prefix the
+        # next CLI line so ``ver`` fails with ``Unknown command``.
         self._drain()
         return self
 

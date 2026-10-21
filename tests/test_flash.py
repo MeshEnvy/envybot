@@ -254,15 +254,15 @@ class OnboardFlashOrderTests(unittest.TestCase):
             return port, "usb-id"
 
         with mock.patch(
-            "envybot.commands.onboard.run_bench_flash",
+            "envybot.onboard_usb_session.run_bench_flash",
             side_effect=fake_bench_flash,
         ), mock.patch(
-            "envybot.commands.onboard.pick_port",
+            "envybot.onboard_usb_session.pick_port",
             side_effect=pick_port_ok,
         ), mock.patch(
-            "envybot.commands.onboard.open_repeater",
+            "envybot.onboard_usb_session.open_repeater",
             side_effect=CliError("stop"),
-        ), mock.patch("envybot.commands.onboard.time.sleep"):
+        ):
             from envybot.commands import onboard
 
             rc = onboard.main(

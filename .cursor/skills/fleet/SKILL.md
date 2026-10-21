@@ -33,8 +33,8 @@ cd /path/to/envybot
 
 | Command | Use when |
 |---------|----------|
-| `onboard` | First bind: mints a new fleet keypair (unless USB pubkey already matches the row). `--unit` with pubkey mismatch → error. |
-| `reonboard --unit KEY` | Book → USB: restore `identity_secret`, passwords, profile. `--force` re-SETs matching GETs. |
+| `onboard` | First bind: mints a new fleet keypair (unless USB pubkey already matches the row). `--unit` with pubkey mismatch → error. Optional `--with-flash-*` before CLI. |
+| `reonboard --unit KEY` | Existing row: adopt blank book fields from USB, flash when bench bl/fw is behind, push profile (fuzzed GPS when site-bound). `--no-flash` reconcile only. `--force` re-SETs matching GETs. |
 
 Manuals: [onboard.md](../../../docs/commands/onboard.md), [reonboard.md](../../../docs/commands/reonboard.md). Not companion/mesh — USB text CLI on the DUT.
 
