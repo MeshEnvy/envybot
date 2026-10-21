@@ -192,14 +192,28 @@ class ConsoleManager:
         target: RouterTarget,
         session: FleetSession | None = None,
         skip_login: bool = False,
+        stage: bool = False,
     ) -> asyncio.Future[dict[str, Any]] | None:
         sess = self._tabs.get(tab_id)
         if sess is None or sess.key != target.key:
             raise RuntimeError("console tab not open")
-        if sess.state in ("sending", "failed"):
+        if sess.state == "sending" or (stage and sess.state == "failed"):
             sess.pending.append(PendingCmd(id=uuid.uuid4().hex[:12], cmd=cmd))
             await self._emit(sess)
             return None
+        if sess.state == "failed":
+            # Parked timeout stays in history. This line takes the radio now,
+            # ahead of fleet work and ahead of lines already staged.
+            scheduler.cancel_console_jobs(sess.key, sess.tab_id)
+            if sess.cmd:
+                self._append_history(
+                    sess, cmd=sess.cmd, reply=sess.reply, error=sess.error
+                )
+            sess.state = "ready"
+            sess.attempt = 0
+            sess.cmd = None
+            sess.reply = None
+            sess.error = None
         return await self._start_cmd(
             sess,
             cmd,

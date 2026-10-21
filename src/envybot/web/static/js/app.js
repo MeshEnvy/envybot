@@ -33,7 +33,7 @@ import {
   patchConsolePending as apiPatchPending,
   deleteConsolePending as apiDeletePending,
   clearConsoleHistory as apiClearHistory,
-} from "./api.js";
+} from "./api.js?v=2";
 import {
   clearHistories,
   fleetStore,
@@ -1198,7 +1198,7 @@ const App = {
             if (t.failed) await apiParkConsole(t.tab_id, t.failed, t.error);
             else if (t.inflight) await apiSendConsole(t.tab_id, t.inflight);
             for (const p of t.pending || []) {
-              if (p?.cmd) await apiSendConsole(t.tab_id, p.cmd);
+              if (p?.cmd) await apiSendConsole(t.tab_id, p.cmd, { stage: true });
             }
           } catch (err) {
             console.error(err);

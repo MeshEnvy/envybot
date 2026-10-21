@@ -179,6 +179,8 @@ Companion flags match `cmd`: `--ble`, `--serial`, `--tcp`, `--timeout`, `--login
 | **Sync** | neighbors, then status, telemetry | dirty fields only |
 | **Full sync** | all GET groups (audit reconciles) | dirty fields only |
 
+Console CLI jumps the radio until heard, cancelled, or `--attempts` timeouts, then parks. A new line typed while parked archives that failure and jumps again (ahead of fleet work and lines already staged). Lines typed while a command is still sending stay staged.
+
 `paused: true` skips auto poll/apply; manual Sync/Full still work. Node card **Profile** section edits the book; dirty rows until Sync.
 
 ## Stores (do not confuse)

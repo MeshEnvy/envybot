@@ -233,9 +233,10 @@ companions skip. Not re-run on BLE recover.
   authed, or if a login job is already queued). Login timeout clears
   cached auth. Failed login drops remaining console CLI. Timeout retries
   `--attempts` (default 10) on that unit, then parks
-  (Retry beside the error; Continue if queued). Per-tab Cancel while
-  sending (Retry only after the line has stopped, not during attempts).
-  Busy send stages the next line. Hide
+  (Retry beside the error; Continue if queued). A new line typed while
+  parked archives that failure and jumps the radio again. Per-tab Cancel
+  while sending (Retry only after the line has stopped, not during
+  attempts). Busy send stages the next line. Hide
   keeps running. Dashboard card click opens detail. Map pin opens detail
   and flies. Sidebar: first click selects + flies; second opens detail over
   the map (map stays open; Esc / backdrop closes the card first). Per-tab up/down command recall (survives Clear history).

@@ -496,7 +496,7 @@ class MonitorWeb:
         return 200, None, sess.to_event()
 
     async def send_console(
-        self, tab_id: str, cmd: str
+        self, tab_id: str, cmd: str, *, stage: bool = False
     ) -> tuple[int, str | None, dict[str, Any] | None]:
         cmd = cmd.strip()
         if not cmd:
@@ -524,6 +524,7 @@ class MonitorWeb:
             target=target,
             session=getattr(self, "_fleet_session", None),
             skip_login=skip_login,
+            stage=stage,
         )
         if fut is None:
             live = self.console.get(tab_id)
@@ -1315,7 +1316,9 @@ async def _handle_console_send(request: web.Request) -> web.Response:
     cmd = body.get("cmd")
     if not isinstance(cmd, str) or not cmd.strip():
         return web.json_response({"error": "cmd required"}, status=400)
-    status, err, payload = await web_ctx.send_console(tab_id, cmd)
+    status, err, payload = await web_ctx.send_console(
+        tab_id, cmd, stage=bool(body.get("stage"))
+    )
     if status == 400:
         return web.json_response({"error": err}, status=400)
     if status == 409:

@@ -137,7 +137,51 @@ class ConsoleManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sess.state, "failed")
         self.assertEqual([p.cmd for p in sess.pending], ["next"])
 
-    async def test_send_while_failed_stages(self) -> None:
+    async def test_send_while_failed_jumps_radio(self) -> None:
+        await self.mgr.open(key="me0001", tab_id="t1")
+        self.sched.enqueue_jobs(
+            self.target, [RadioJob(kind="get:status", unit_key="me0001")]
+        )
+        await self.mgr.enqueue_send(
+            tab_id="t1",
+            cmd="ver",
+            scheduler=self.sched,
+            target=self.target,
+            skip_login=True,
+        )
+        await self.mgr.enqueue_send(
+            tab_id="t1",
+            cmd="ota stats",
+            scheduler=self.sched,
+            target=self.target,
+            skip_login=True,
+        )
+        self.sched.cancel_console_jobs("me0001", "t1")
+        await self.mgr.on_cli_done(
+            "t1", ok=False, reply=None, error="command timeout", drain=False
+        )
+        started = await self.mgr.enqueue_send(
+            tab_id="t1",
+            cmd="get name",
+            scheduler=self.sched,
+            target=self.target,
+            skip_login=True,
+        )
+        self.assertIsNotNone(started)
+        sess = self.mgr.get("t1")
+        assert sess is not None
+        self.assertEqual(sess.state, "sending")
+        self.assertEqual(sess.cmd, "get name")
+        self.assertIsNone(sess.error)
+        self.assertEqual(sess.history[-1]["cmd"], "ver")
+        self.assertEqual(sess.history[-1]["error"], "command timeout")
+        self.assertEqual([p.cmd for p in sess.pending], ["ota stats"])
+        jobs = list(self.sched.units["me0001"].jobs)
+        self.assertEqual(jobs[0].kind, "console:cli")
+        self.assertEqual(jobs[0].extra.get("cmd"), "get name")
+        self.assertIn("get:status", [j.kind for j in jobs])
+
+    async def test_stage_while_failed_stays_queued(self) -> None:
         await self.mgr.open(key="me0001", tab_id="t1")
         await self.mgr.enqueue_send(
             tab_id="t1", cmd="ver", scheduler=self.sched, target=self.target
@@ -146,7 +190,11 @@ class ConsoleManagerTests(unittest.IsolatedAsyncioTestCase):
             "t1", ok=False, reply=None, error="command timeout", drain=False
         )
         staged = await self.mgr.enqueue_send(
-            tab_id="t1", cmd="get name", scheduler=self.sched, target=self.target
+            tab_id="t1",
+            cmd="get name",
+            scheduler=self.sched,
+            target=self.target,
+            stage=True,
         )
         self.assertIsNone(staged)
         sess = self.mgr.get("t1")

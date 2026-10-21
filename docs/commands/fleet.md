@@ -212,12 +212,14 @@ console. The header icon also toggles.
 - That command jumps to the front of the radio until heard, cancelled, or
   `--attempts` timeouts (default 10, same unit, no rotate). **Cancel** is
   per tab and starts the next staged line. After the last timeout or a
-  hard fail, the line parks (queue stays): **Retry** sits next to the
-  stopped error, including cancelled or timeout rows already in history.
-  Retry is hidden while that line is still sending. **Continue** (only if
-  the queue is nonempty) archives it and starts the next staged cmd.
-  Further lines stage behind the current or parked line and can be edited
-  or deleted.
+  hard fail, the line parks: **Retry** sits next to the stopped error,
+  including cancelled or timeout rows already in history. Retry is hidden
+  while that line is still sending. **Continue** (only if the queue is
+  nonempty) archives it and starts the next staged cmd. A new line typed
+  while parked archives the failed command and jumps the radio again,
+  ahead of fleet work and ahead of lines already staged. Lines typed
+  while a command is still sending stay staged and can be edited or
+  deleted.
 - An in-flight poll/apply wait finishes, then the console head runs.
 - Refresh / Pull / Deploy stay available. They sit behind queued console
   sends on the same unit.
