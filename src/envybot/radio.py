@@ -104,6 +104,8 @@ ADMIN_PASSWORD_NOW_RE = re.compile(r"^password now:\s*(.*)\s*$", re.I)
 #   Log drift before sending.
 #   If the node is ahead, skip: firmware will not set backwards. A
 #   "cannot go backwards" reply is a valid heard result, not a gap.
+# - Reply waits: flood uses meshcore-open 1.5×+3 capped by CLI; direct/path use
+#   firmware est_timeout (+2s margin) or calcDirectTimeoutMillisFor from routing.py.
 # - One retry cap for every send that expects a reply (login, CLI, binary,
 #   clock set). Default 10 via --attempts. Do not add per-command caps.
 # - Late replies after the wait unsubscribes are otherwise dropped. A
@@ -1620,7 +1622,7 @@ async def pull_repeater_status(
     session: FleetSession | None = None,
 ) -> dict[str, Any] | None:
     """Binary GET_STATUS (packets, airtime, RSSI, uptime, …). Requires ACL session."""
-    wait_cap = mesh_wait_seconds(6000, cap=cmd_timeout)
+    wait_cap = mesh_reply_wait_for_target(client, target, 6000, global_cap=cmd_timeout)
 
     async def fetch(dest_wait: float) -> dict[str, Any] | None:
         return await client.commands.req_status_sync(
@@ -2266,6 +2268,24 @@ def mesh_wait_seconds(suggested_ms: int, *, cap: float, floor: float = 8) -> flo
     return wait
 
 
+def mesh_reply_wait_for_target(
+    client: MeshCore,
+    target: RouterTarget,
+    suggested_ms: int,
+    *,
+    global_cap: float,
+) -> float:
+    from envybot.routing import route_reply_wait_seconds
+
+    path = audit_path_at_send(client, target)
+    return route_reply_wait_seconds(
+        suggested_ms,
+        path,
+        policy=target.routing,
+        global_cap=global_cap,
+    )
+
+
 def parse_cli_contact_msg(event: Any, *, prefix_token: str) -> str | None:
     txt_type = int(event.payload.get("txt_type", 0))
     text = str(event.payload.get("text") or "")
@@ -2635,7 +2655,9 @@ async def admin_login(
                 continue
             suggested_ms = sent.payload.get("suggested_timeout", 60000)
 
-        wait_s = mesh_wait_seconds(suggested_ms, cap=login_timeout)
+        wait_s = mesh_reply_wait_for_target(
+            client, target, suggested_ms, global_cap=login_timeout
+        )
         if session is not None:
             wait_s = session.stretch_wait(wait_s, target.unit_id, cap=login_timeout)
         n_of = attempt_label(attempt, attempts)
@@ -2651,7 +2673,7 @@ async def admin_login(
         log.substep(f"send login 0x1a {n_of} (≤{wait_s:.0f}s, no echo id) …")
         log.detail(
             f"login {n_of}: dst={prefix}…, "
-            f"wait={wait_s:.0f}s (suggested={suggested_ms}ms)"
+            f"wait={wait_s:.0f}s (suggested={suggested_ms}ms, path={path})"
         )
 
         exp = None
@@ -2757,7 +2779,9 @@ async def admin_login_attempt(
             return False, str(err), None
         suggested_ms = sent.payload.get("suggested_timeout", 60000)
 
-    wait_s = mesh_wait_seconds(suggested_ms, cap=login_timeout)
+    wait_s = mesh_reply_wait_for_target(
+        client, target, suggested_ms, global_cap=login_timeout
+    )
     if session is not None:
         wait_s = session.stretch_wait(wait_s, target.unit_id, cap=login_timeout)
     cap = attempt_cap if attempt_cap else 0
@@ -2965,7 +2989,9 @@ async def send_cmd_sync(
                 continue
             suggested_ms = sent.payload.get("suggested_timeout", 60000)
 
-        wait_s = mesh_wait_seconds(suggested_ms, cap=timeout)
+        wait_s = mesh_reply_wait_for_target(
+            client, target, suggested_ms, global_cap=timeout
+        )
         slack0 = 0.0
         if session is not None:
             slack0 = session.dest_slack(target.unit_id)
@@ -3137,11 +3163,18 @@ async def retry_binary_req(
             await prepare_send_route(client, target, log=log, route_extra=route_extra)
             log_contact_path(client, target, log=log)
         n_of = attempt_label(attempt, label_cap)
-        dest_wait = wait_s
         path = "flood"
-        if session is not None and target is not None:
-            dest_wait = session.stretch_wait(wait_s, target.unit_id, cap=cap or 0.0)
+        dest_wait = wait_s
+        if target is not None:
             path = audit_path_at_send(client, target)
+            global_cap = cap if cap > 0 else (wait_s if wait_s > 0 else 30.0)
+            dest_wait = mesh_reply_wait_for_target(
+                client, target, 6000, global_cap=global_cap
+            )
+            if session is not None:
+                dest_wait = session.stretch_wait(dest_wait, target.unit_id, cap=global_cap)
+        elif session is not None and wait_s > 0:
+            dest_wait = session.stretch_wait(wait_s, "", cap=cap or 0.0)
         log.step(f"send binary {label} {n_of} (≤{dest_wait:.0f}s) …")
         audit_id = _audit_begin(
             session,

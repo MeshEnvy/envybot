@@ -27,6 +27,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- Fleet mesh reply waits: **direct/path** use companion ``est_timeout`` (+2s)
+  or MeshCore ``calcDirectTimeoutMillisFor``; **flood** keeps 1.5×+3 capped
+  by ``--timeout`` / ``--login-timeout``.
 - ``envybot onboard`` mints a new mesh keypair on first bind (``set prv.key`` +
   reboot) instead of copying the chip's factory key into the book. Re-plug the
   same radio (pubkey already in yaml) skips minting. ``--unit`` with book pubkey

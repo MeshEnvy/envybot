@@ -38,6 +38,8 @@ cd /path/to/envybot
 
 Manuals: [onboard.md](../../../docs/commands/onboard.md), [reonboard.md](../../../docs/commands/reonboard.md). Not companion/mesh — USB text CLI on the DUT.
 
+Mesh reply waits: **direct/path** = firmware ``est_timeout`` + 2s (or `calcDirectTimeoutMillisFor` from `routing.py`); **flood** = 1.5×+3 capped by CLI flags.
+
 ## "Nothing is happening" / Fleet idle
 
 | Symptom | Cause | Fix |

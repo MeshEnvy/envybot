@@ -1,6 +1,7 @@
 import unittest
 
 from envybot.routing import (
+    firmware_direct_timeout_ms,
     forced_path_from_extra,
     live_route_from_audit_path,
     live_route_from_contact,
@@ -8,9 +9,57 @@ from envybot.routing import (
     parse_path_paste,
     parse_routing_value,
     resolve_routing,
+    route_reply_wait_seconds,
     RouteSession,
     RoutingMode,
 )
+
+
+class RouteReplyWaitTests(unittest.TestCase):
+    def test_direct_uses_firmware_est_plus_margin(self) -> None:
+        # Companion est_timeout for ~80 B login at SF7 / 62.5 kHz (order ~2.4s).
+        wait = route_reply_wait_seconds(
+            2412,
+            "direct",
+            policy=RoutingMode.DIRECT,
+            global_cap=45.0,
+        )
+        self.assertAlmostEqual(wait, 4.412, places=2)
+
+    def test_direct_physics_when_suggested_missing(self) -> None:
+        wait = route_reply_wait_seconds(
+            60000,
+            "direct",
+            policy=RoutingMode.DIRECT,
+            global_cap=45.0,
+        )
+        self.assertAlmostEqual(
+            wait,
+            firmware_direct_timeout_ms(0) / 1000.0 + 2.0,
+            places=2,
+        )
+
+    def test_flood_keeps_legacy_scale(self) -> None:
+        wait = route_reply_wait_seconds(
+            4980,
+            "flood",
+            policy=RoutingMode.FLOOD,
+            global_cap=45.0,
+        )
+        self.assertAlmostEqual(wait, 10.47, places=2)
+
+    def test_two_hop_path_scales(self) -> None:
+        wait = route_reply_wait_seconds(
+            6000,
+            "a52f fe3b",
+            policy=RoutingMode.AUTO,
+            global_cap=120.0,
+        )
+        self.assertAlmostEqual(
+            wait,
+            firmware_direct_timeout_ms(2) / 1000.0 + 2.0,
+            places=2,
+        )
 
 
 class RoutingPolicyTests(unittest.TestCase):

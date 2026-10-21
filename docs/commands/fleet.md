@@ -129,6 +129,10 @@ Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
   Login uses book routing policy (default auto). Later GET/CLI/binary in that
   session use the cached route when auto mode has one
   (`mesh_audit.path` = hop string, `direct`, or `flood` on discover/retry).
+  Reply waits: **direct** / cached path use companion ``est_timeout`` (+2s
+  margin), or firmware `500 + (6×airtime+250)×(hops+1)` ms when missing;
+  **flood** uses meshcore-open 1.5×+3 capped by ``--timeout`` /
+  ``--login-timeout``.
   Auto flood-discovers when cache is empty. Three consecutive timeouts on
   a cached path discard the cache and re-flood. Locked **path** re-applies
   book `route:` every send.

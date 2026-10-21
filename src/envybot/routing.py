@@ -10,6 +10,17 @@ from typing import Any
 PATH_DISCARD_AFTER = 3
 FLEET_PATH_HASH_MODE = 1
 
+# Mesh reply waits — companion_radio MyMesh.cpp (US field: SF7, BW 62.5, CR 4/5).
+SEND_TIMEOUT_BASE_MS = 500
+DIRECT_AIRTIME_FACTOR = 6
+DIRECT_PER_LEG_MS = 250
+FLOOD_AIRTIME_FACTOR = 16
+# ~80-byte login/REQ on-air at SF7 / 62.5 kHz (order-of-magnitude; firmware uses live getEstAirtimeFor).
+MESH_DEFAULT_AIRTIME_MS = 280
+MESH_REPLY_MARGIN_S = 2.0  # host scheduling + BLE after firmware est_timeout
+MESH_WAIT_FLOOR_S = 3.0
+SUGGESTED_TIMEOUT_SUSPECT_MS = 50_000  # Python fallback when est_timeout missing (60s)
+
 
 class RoutingMode(str, Enum):
     AUTO = "auto"
@@ -93,6 +104,79 @@ def contact_route_audit_label(contact: dict[str, Any] | None) -> str:
     if hops:
         return hops
     return "flood"
+
+
+def route_hop_count(audit_path: str) -> int | None:
+    """Hop count for wait budget. ``None`` = flood (unknown). ``0`` = direct."""
+    label = (audit_path or "").strip().lower()
+    if label == "flood":
+        return None
+    if label == "direct":
+        return 0
+    tokens = [t for t in label.split() if t]
+    return len(tokens) if tokens else None
+
+
+def firmware_direct_timeout_ms(
+    hops: int,
+    *,
+    airtime_ms: int = MESH_DEFAULT_AIRTIME_MS,
+) -> int:
+    """``calcDirectTimeoutMillisFor`` with ``path_hash_count = hops`` (0 = zero-hop direct)."""
+    n = max(hops, 0)
+    leg = airtime_ms * DIRECT_AIRTIME_FACTOR + DIRECT_PER_LEG_MS
+    return SEND_TIMEOUT_BASE_MS + leg * (n + 1)
+
+
+def firmware_flood_timeout_ms(*, airtime_ms: int = MESH_DEFAULT_AIRTIME_MS) -> int:
+    return SEND_TIMEOUT_BASE_MS + FLOOD_AIRTIME_FACTOR * airtime_ms
+
+
+def route_uses_flood_wait(audit_path: str, policy: RoutingMode) -> bool:
+    if policy is RoutingMode.FLOOD:
+        return True
+    return (audit_path or "").strip().lower() == "flood"
+
+
+def _flood_mesh_wait_seconds(suggested_ms: int, *, global_cap: float) -> float:
+    """Legacy meshcore-open scale for flood (airtime × 16 can be large)."""
+    est = suggested_ms / 1000 * 1.5 + 3
+    wait = max(est, MESH_WAIT_FLOOR_S)
+    if global_cap > 0:
+        wait = min(wait, global_cap)
+    return wait
+
+
+def route_reply_wait_seconds(
+    suggested_ms: int,
+    audit_path: str,
+    *,
+    policy: RoutingMode,
+    global_cap: float,
+) -> float:
+    """Reply wait for login/CLI/binary. Direct/path trust firmware ``est_timeout`` + margin."""
+    if global_cap <= 0:
+        return global_cap
+    if route_uses_flood_wait(audit_path, policy):
+        return _flood_mesh_wait_seconds(suggested_ms, global_cap=global_cap)
+    hops = route_hop_count(audit_path)
+    if policy is RoutingMode.DIRECT:
+        hops = 0
+    elif hops is None:
+        return _flood_mesh_wait_seconds(suggested_ms, global_cap=global_cap)
+    # Trust companion est_timeout (~1–20s direct). Ignore 6s/60s host placeholders.
+    if (
+        0 < suggested_ms < SUGGESTED_TIMEOUT_SUSPECT_MS
+        and suggested_ms not in (6000, 60000)
+    ):
+        budget_s = suggested_ms / 1000.0
+    else:
+        budget_s = firmware_direct_timeout_ms(hops) / 1000.0
+    wait = budget_s + MESH_REPLY_MARGIN_S
+    wait = max(wait, MESH_WAIT_FLOOR_S)
+    if global_cap > 0:
+        wait = min(wait, global_cap)
+    return wait
 
 
 def live_route_from_contact(
