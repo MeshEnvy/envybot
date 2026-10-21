@@ -41,6 +41,7 @@ class ConsoleState:
     _scheduler: FleetScheduler | None = field(default=None, repr=False)
     _target: RouterTarget | None = field(default=None, repr=False)
     _session: FleetSession | None = field(default=None, repr=False)
+    skip_login: bool = False
 
     def to_event(self) -> dict[str, Any]:
         return {
@@ -138,6 +139,7 @@ class ConsoleManager:
         scheduler: FleetScheduler,
         target: RouterTarget,
         session: FleetSession | None,
+        skip_login: bool = False,
     ) -> asyncio.Future[dict[str, Any]]:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[dict[str, Any]] = loop.create_future()
@@ -157,7 +159,7 @@ class ConsoleManager:
         login_queued = bool(
             uq and any(j.kind in ("login", "console:login") for j in uq.jobs)
         )
-        if session is None or not session.is_authed(target.key) or login_queued:
+        if not skip_login and not login_queued:
             jobs.append(
                 RadioJob(
                     kind="console:login",
@@ -189,6 +191,7 @@ class ConsoleManager:
         scheduler: FleetScheduler,
         target: RouterTarget,
         session: FleetSession | None = None,
+        skip_login: bool = False,
     ) -> asyncio.Future[dict[str, Any]] | None:
         sess = self._tabs.get(tab_id)
         if sess is None or sess.key != target.key:
@@ -198,7 +201,12 @@ class ConsoleManager:
             await self._emit(sess)
             return None
         return await self._start_cmd(
-            sess, cmd, scheduler=scheduler, target=target, session=session
+            sess,
+            cmd,
+            scheduler=scheduler,
+            target=target,
+            session=session,
+            skip_login=skip_login,
         )
 
     async def _drain_pending(self, sess: ConsoleState) -> None:
@@ -215,6 +223,7 @@ class ConsoleManager:
             scheduler=scheduler,
             target=target,
             session=sess._session,
+            skip_login=sess.skip_login,
         )
 
     def patch_pending(self, tab_id: str, pending_id: str, cmd: str) -> ConsoleState | None:

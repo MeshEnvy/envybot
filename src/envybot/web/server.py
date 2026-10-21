@@ -204,10 +204,15 @@ class MonitorWeb:
         )
         if not cmds:
             return
-        session = getattr(self, "_fleet_session", None)
-        authed = bool(session and session.is_authed(key))
+        from envybot.keys_doc import companion_in_desired_acl
+
         binding.scheduler.enqueue_cli_commands(
-            target, cmds, session_authed=authed, source="profile"
+            target,
+            cmds,
+            skip_login=companion_in_desired_acl(
+                doc, node, self._companion, binding.keys
+            ),
+            source="profile",
         )
         binding.manual_keys.add(key)
         self._session_states[key] = in_flight_session(
@@ -298,6 +303,7 @@ class MonitorWeb:
             sites=binding.sites,
             doc=binding.doc,
             keys=binding.keys,
+            companion=self._companion,
         )
         if job == "stage" and not jobs:
             return 400, "missing catalog index or mid for stage"
@@ -305,9 +311,10 @@ class MonitorWeb:
             target, jobs, manual_job=job, replace=True
         )
         binding.manual_keys.add(key)
+        head_kind = jobs[0].kind if jobs else "login"
         self._session_states[key] = in_flight_session(
             manual_job=job,
-            job_kind="login",
+            job_kind=head_kind,
             queued=True,
         )
         return status, err
@@ -358,6 +365,7 @@ class MonitorWeb:
             do_poll=binding.do_poll,
             skip_discover=binding.skip_discover,
             discover_wait=binding.discover_wait,
+            companion=self._companion,
         )
         if not jobs:
             return 400, "nothing to refresh"
@@ -365,9 +373,10 @@ class MonitorWeb:
             target, jobs, manual_job="refresh", replace=replace
         )
         binding.manual_keys.add(key)
+        head_kind = jobs[0].kind if jobs else "login"
         self._session_states[key] = in_flight_session(
             manual_job="refresh",
-            job_kind="login",
+            job_kind=head_kind,
             queued=True,
         )
         return status, err
@@ -498,12 +507,23 @@ class MonitorWeb:
         status, err, target = self._load_target(sess.key)
         if status != 200 or target is None or self._binding is None:
             return status, err, None
+        from envybot.keys_doc import companion_in_desired_acl
+
+        node = (self._binding.doc.get("nodes") or {}).get(sess.key) or {}
+        skip_login = companion_in_desired_acl(
+            self._binding.doc,
+            node if isinstance(node, dict) else {},
+            self._companion,
+            self._binding.keys,
+        )
+        sess.skip_login = skip_login
         fut = await self.console.enqueue_send(
             tab_id=tab_id,
             cmd=cmd,
             scheduler=self._binding.scheduler,
             target=target,
             session=getattr(self, "_fleet_session", None),
+            skip_login=skip_login,
         )
         if fut is None:
             live = self.console.get(tab_id)
@@ -1438,6 +1458,7 @@ def make_app(web_ctx: MonitorWeb) -> web.Application:
     app.router.add_delete("/api/unit/{key}/path", _handle_unit_path_clear)
     app.router.add_post("/api/sync/{key}", lambda r: _handle_manual_job(r, "sync"))
     app.router.add_post("/api/full/{key}", lambda r: _handle_manual_job(r, "full"))
+    app.router.add_post("/api/login/{key}", lambda r: _handle_manual_job(r, "login"))
     app.router.add_post("/api/stage/{key}", _handle_stage_job)
     app.router.add_post("/api/install/{key}", _handle_install_job)
     app.router.add_post("/api/console/open", _handle_console_open)

@@ -131,6 +131,7 @@ def _seed_auto_work(
     discover_wait: float = 12.0,
     session_states: dict[str, dict[str, Any]] | None = None,
     bypass_cooldown: bool = False,
+    companion: str | None = None,
 ) -> int:
     """Queue due GET/apply. Busy units keep their GET lane; apply is spliced in."""
     queued = 0
@@ -167,6 +168,7 @@ def _seed_auto_work(
             continue
         if not due and not apply_due:
             continue
+        node = nodes.get(target.key) or {}
         jobs = build_poll_jobs(
             target,
             due,
@@ -176,6 +178,10 @@ def _seed_auto_work(
             skip_discover=skip_discover,
             discover_wait=discover_wait,
             apply_after_poll=False,
+            doc=doc,
+            node=node if isinstance(node, dict) else {},
+            keys=keys,
+            companion=companion,
         )
         if not jobs:
             continue
@@ -183,7 +189,7 @@ def _seed_auto_work(
         if session_states is not None:
             session_states[target.key] = in_flight_session(
                 manual_job=None,
-                job_kind="login",
+                job_kind=jobs[0].kind,
                 due_groups=list(due),
                 apply=apply_due,
                 queued=True,
@@ -319,6 +325,20 @@ async def run(args: argparse.Namespace) -> int:
     for target in paused_targets:
         session_states[target.key] = {"state": "paused"}
 
+    if web_ctx:
+        web_ctx.set_worker_active(True)
+        web_ctx.console.bind_publish(web_ctx.hub.publish_console)
+
+    log = PollLog(progress=not args.quiet, verbose=args.verbose)
+    session = FleetSession()
+    session.conn = conn
+    client = await connect(args)
+    companion_label = companion_identity(client)
+    companion_short = companion_label[:12] if companion_label else None
+    session.bind_companion(client)
+    session.attach_orphan_watch(client, log)
+    session.enable_companion_recovery(client, all_targets)
+
     if not args.no_auto_update:
         _seed_auto_work(
             scheduler,
@@ -337,12 +357,13 @@ async def run(args: argparse.Namespace) -> int:
             discover_wait=args.discover_wait,
             session_states=session_states,
             bypass_cooldown=bypass_cooldown,
+            companion=companion_short,
         )
+        initial_units = scheduler.active_unit_count()
+    else:
+        initial_units = scheduler.active_unit_count()
 
-    initial_units = scheduler.active_unit_count()
     if web_ctx:
-        web_ctx.set_worker_active(True)
-        web_ctx.console.bind_publish(web_ctx.hub.publish_console)
         await web_ctx.refresh_snapshot(
             session_states=session_states,
             poll={
@@ -352,6 +373,7 @@ async def run(args: argparse.Namespace) -> int:
                 "total": len(all_targets),
                 "accepting": True,
             },
+            companion=companion_short,
         )
 
     if initial_units == 0 and args.once:
@@ -375,16 +397,6 @@ async def run(args: argparse.Namespace) -> int:
         )
     elif not args.once:
         print("Fleet idle — Refresh, Pull, or Deploy units in the UI or Ctrl+C to exit.")
-
-    log = PollLog(progress=not args.quiet, verbose=args.verbose)
-    session = FleetSession()
-    session.conn = conn
-    client = await connect(args)
-    companion_label = companion_identity(client)
-    companion_short = companion_label[:12] if companion_label else None
-    session.bind_companion(client)
-    session.attach_orphan_watch(client, log)
-    session.enable_companion_recovery(client, all_targets)
 
     force_path = None
     if args.force_path:
@@ -831,6 +843,7 @@ async def run(args: argparse.Namespace) -> int:
                         skip_discover=args.no_discover,
                         discover_wait=args.discover_wait,
                         session_states=session_states,
+                        companion=companion_short,
                     )
                 if scheduler.pending_count() == 0:
                     continue
@@ -886,6 +899,7 @@ async def run(args: argparse.Namespace) -> int:
                     skip_discover=args.no_discover,
                     discover_wait=args.discover_wait,
                     session_states=session_states,
+                    companion=companion_short,
                 )
             if seeded:
                 new_units = [

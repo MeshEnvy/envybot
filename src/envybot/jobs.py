@@ -368,7 +368,7 @@ class FleetScheduler:
         target: RouterTarget,
         commands: list[str],
         *,
-        session_authed: bool = False,
+        skip_login: bool = False,
         source: str = "profile",
     ) -> None:
         """Profile book SETs as console:cli jobs (no open console tab)."""
@@ -378,7 +378,7 @@ class FleetScheduler:
         uq = self.get_or_create(target)
         extra_base: dict[str, Any] = {"source": source}
         jobs: list[RadioJob] = []
-        if not session_authed:
+        if not skip_login:
             jobs.append(
                 RadioJob(
                     kind="console:login",

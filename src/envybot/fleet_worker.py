@@ -55,7 +55,14 @@ from envybot.jobs import (
     drop_ota_poll_jobs,
 )
 from envybot.silence_bail import GET_REPLY_UNPARSED
-from envybot.keys_doc import UnknownPerson, parse_serial_acl, resolve_node_acl
+from envybot.history import append_companion_acl_snapshot
+from envybot.keys_doc import (
+    UnknownPerson,
+    companion_in_desired_acl,
+    note_companion_admin_after_mesh_login,
+    parse_serial_acl,
+    resolve_node_acl,
+)
 from envybot.passwords import normalize_password, password_is_strong
 from envybot.poll import (
     GET_GROUP_ORDER,
@@ -112,7 +119,9 @@ from envybot.radio import (
     prepare_pinned_path,
     publish_live_route,
     pull_repeater_status,
+    refresh_path_after_login,
     reset_to_flood,
+    resolve_companion_acl_prefix,
     send_cmd_once,
     set_book_coord,
     set_dutycycle_policy,
@@ -391,10 +400,69 @@ def _poll_acc(uq: UnitQueue) -> PollAccumulator:
     return acc
 
 
-def _needs_login(uq: UnitQueue, ctx: WorkerContext) -> bool:
-    if not ctx.session.is_authed(uq.target.key):
-        return True
-    return False
+def companion_grant_id(ctx: WorkerContext) -> str | None:
+    cap = ctx.session.companion_acl_prefix
+    if cap:
+        return cap
+    cid = ctx.session.companion_id
+    if cid and len(cid) >= 12:
+        return cid[:12]
+    return resolve_companion_acl_prefix(ctx.client, session=ctx.session)
+
+
+def companion_full_pubkey(ctx: WorkerContext) -> str | None:
+    cid = ctx.session.companion_id
+    if cid and len(cid) >= 64:
+        return cid.strip().lower()
+    cap = companion_grant_id(ctx)
+    if not cap:
+        return None
+    for pks in ctx.keys.values():
+        for pk in pks:
+            if pk.startswith(cap[:12].lower()):
+                return pk.lower()
+    return cap.lower()
+
+
+def prepend_login_if_unconfirmed(
+    jobs: list[RadioJob],
+    target: RouterTarget,
+    *,
+    doc: dict[str, Any],
+    node: dict[str, Any] | None,
+    keys: dict[str, list[str]],
+    companion: str | None,
+    force: bool = False,
+) -> None:
+    if force or not companion_in_desired_acl(doc, node or {}, companion, keys):
+        jobs.insert(0, RadioJob(kind="login", unit_key=target.key))
+
+
+def record_mesh_login_grant(ctx: WorkerContext, target: RouterTarget) -> None:
+    pk = companion_full_pubkey(ctx)
+    if not pk:
+        return
+    node = ctx.nodes.get(target.key) or {}
+    note_companion_admin_after_mesh_login(
+        ctx.doc,
+        node if isinstance(node, dict) else {},
+        pk,
+        ctx.keys,
+        ctx.nodes_path,
+        log=ctx.log,
+    )
+    if ctx.conn is not None:
+        append_companion_acl_snapshot(ctx.conn, target.key, pk, perm=3)
+
+
+async def refresh_path_after_flood(
+    ctx: WorkerContext,
+    target: RouterTarget,
+    route_extra: dict[str, Any] | None,
+) -> None:
+    await refresh_path_after_login(
+        ctx.client, target, log=ctx.log, route_extra=route_extra
+    )
 
 
 def build_apply_jobs_for_fields(unit_key: str, fields: frozenset[str]) -> list[RadioJob]:
@@ -420,9 +488,13 @@ def build_poll_jobs(
     discover_wait: float = NEIGHBOR_DISCOVER_WAIT_S,
     apply_after_poll: bool = False,
     apply_fields_only: frozenset[str] | None = None,
+    doc: dict[str, Any] | None = None,
+    node: dict[str, Any] | None = None,
+    keys: dict[str, list[str]] | None = None,
+    companion: str | None = None,
+    force_login: bool = False,
 ) -> list[RadioJob]:
     jobs: list[RadioJob] = []
-    jobs.append(RadioJob(kind="login", unit_key=target.key))
     neighbors_lead = "neighbors" in due_groups
     if neighbors_lead:
         _extend_neighbor_jobs(
@@ -461,6 +533,15 @@ def build_poll_jobs(
             jobs.extend(build_apply_jobs_for_fields(target.key, apply_fields_only))
         else:
             jobs.extend(build_apply_jobs(target.key, force=force_apply))
+    prepend_login_if_unconfirmed(
+        jobs,
+        target,
+        doc=doc or {},
+        node=node,
+        keys=keys or {},
+        companion=companion,
+        force=force_login,
+    )
     return jobs
 
 
@@ -528,13 +609,36 @@ def build_manual_jobs(
     sites: dict[str, Any] | None = None,
     doc: dict[str, Any] | None = None,
     keys: dict[str, list[str]] | None = None,
+    companion: str | None = None,
 ) -> list[RadioJob]:
+    if manual_job == "login":
+        return [
+            RadioJob(
+                kind="login",
+                unit_key=target.key,
+                manual=True,
+                manual_job="login",
+            )
+        ]
     if manual_job == "stage":
         if not stage_mid:
             return []
-        return build_stage_jobs(target, stage_mid)
+        return build_stage_jobs(
+            target,
+            stage_mid,
+            doc=doc,
+            node=node,
+            keys=keys,
+            companion=companion,
+        )
     if manual_job == "install":
-        return build_install_jobs(target)
+        return build_install_jobs(
+            target,
+            doc=doc,
+            node=node,
+            keys=keys,
+            companion=companion,
+        )
     if manual_job in ("sync", "full"):
         from envybot.refresh_registry import REFRESH_ALL, REFRESH_SYNC, build_refresh_jobs
 
@@ -554,6 +658,7 @@ def build_manual_jobs(
             skip_discover=skip_discover,
             discover_wait=discover_wait,
             force_apply_pass=apply_due,
+            companion=companion,
         )
     return []
 
@@ -571,6 +676,7 @@ def seed_auto_unit(
         return
     if not due_groups and not apply_due:
         return
+    node = ctx.nodes.get(target.key) or {}
     jobs = build_poll_jobs(
         target,
         due_groups,
@@ -578,6 +684,10 @@ def seed_auto_unit(
         apply_due=apply_due,
         force_apply=False,
         skip_discover=ctx.skip_discover,
+        doc=ctx.doc,
+        node=node if isinstance(node, dict) else {},
+        keys=ctx.keys,
+        companion=companion_grant_id(ctx),
     )
     uq.jobs.extend(jobs)
     uq.has_inventory_gap = any(
@@ -585,11 +695,18 @@ def seed_auto_unit(
     )
 
 
-def build_stage_jobs(target: RouterTarget, mid: str) -> list[RadioJob]:
+def build_stage_jobs(
+    target: RouterTarget,
+    mid: str,
+    *,
+    doc: dict[str, Any] | None = None,
+    node: dict[str, Any] | None = None,
+    keys: dict[str, list[str]] | None = None,
+    companion: str | None = None,
+) -> list[RadioJob]:
     """Manual stage: `ota pull <mid> flash`, wait, refresh status."""
     mid = mid.strip().lower()
     jobs: list[RadioJob] = [
-        RadioJob(kind="login", unit_key=target.key),
         RadioJob(kind="cmd:ota_pull", unit_key=target.key, extra={"mid": mid}),
         RadioJob(
             kind="get:ota_ls_wait",
@@ -598,13 +715,27 @@ def build_stage_jobs(target: RouterTarget, mid: str) -> list[RadioJob]:
         ),
         RadioJob(kind="get:ota_status", unit_key=target.key),
     ]
+    prepend_login_if_unconfirmed(
+        jobs,
+        target,
+        doc=doc or {},
+        node=node,
+        keys=keys or {},
+        companion=companion,
+    )
     return jobs
 
 
-def build_install_jobs(target: RouterTarget) -> list[RadioJob]:
+def build_install_jobs(
+    target: RouterTarget,
+    *,
+    doc: dict[str, Any] | None = None,
+    node: dict[str, Any] | None = None,
+    keys: dict[str, list[str]] | None = None,
+    companion: str | None = None,
+) -> list[RadioJob]:
     """Manual install: `ota install`, wait for reboot, liveness GET."""
-    return [
-        RadioJob(kind="login", unit_key=target.key),
+    jobs = [
         RadioJob(kind="cmd:ota_install", unit_key=target.key),
         RadioJob(
             kind="get:post_install_wait",
@@ -614,6 +745,15 @@ def build_install_jobs(target: RouterTarget) -> list[RadioJob]:
         RadioJob(kind="get:firmware", unit_key=target.key),
         RadioJob(kind="get:ota_status", unit_key=target.key),
     ]
+    prepend_login_if_unconfirmed(
+        jobs,
+        target,
+        doc=doc or {},
+        node=node,
+        keys=keys or {},
+        companion=companion,
+    )
+    return jobs
 
 
 def _console_insert_command(
@@ -909,19 +1049,6 @@ async def _execute_console_cli(
         return JobOutcome.HARD_FAIL, "empty command"
     cancel_gen = int(job.extra.get("cancel_gen") or 0)
     tab_id = str(job.extra.get("tab_id") or "")
-    if not ctx.session.is_authed(target.key):
-        if not uq.jobs or uq.jobs[0].kind != "console:login":
-            uq.jobs.insert(
-                0,
-                RadioJob(
-                    kind="console:login",
-                    unit_key=target.key,
-                    manual=True,
-                    manual_job="console",
-                    extra={"cancel_gen": cancel_gen, "tab_id": tab_id},
-                ),
-            )
-        return JobOutcome.TIMEOUT, "not authed"
     manager = uq.session_extra.get("console_manager")
 
     def cancel_check() -> bool:
@@ -952,17 +1079,6 @@ async def _execute_console_cli(
         return JobOutcome.TIMEOUT, "command timeout"
     if cli_suggests_auth_failure(raw):
         ctx.session.clear_auth(target.key)
-        if not uq.jobs or uq.jobs[0].kind != "console:login":
-            uq.jobs.insert(
-                0,
-                RadioJob(
-                    kind="console:login",
-                    unit_key=target.key,
-                    manual=True,
-                    manual_job="console",
-                    extra={"cancel_gen": cancel_gen, "tab_id": tab_id},
-                ),
-            )
         return JobOutcome.TIMEOUT, "auth"
     ok = not (cli_error_reply(raw) or raw.strip().upper().startswith("ERR"))
     _console_insert_command(ctx, target, cmd, raw, ok=ok)
@@ -1017,6 +1133,7 @@ async def execute_job(
         if ok:
             acc.node_clock = clock
             uq.session_extra["login_clock"] = clock
+            record_mesh_login_grant(ctx, target)
             return JobOutcome.HEARD, clock
         if err and "rejected" in str(err).lower():
             return JobOutcome.HARD_FAIL, err
@@ -1046,6 +1163,7 @@ async def execute_job(
         if ok:
             acc.node_clock = clock
             uq.session_extra["login_clock"] = clock
+            record_mesh_login_grant(ctx, target)
             return JobOutcome.HEARD, clock
         if err and "cancelled" in str(err).lower():
             return JobOutcome.CANCELLED, err
@@ -1092,9 +1210,6 @@ async def execute_job(
         await asyncio.sleep(wait_s)
         return JobOutcome.TIMER_DONE, None
 
-    if not ctx.session.is_authed(target.key):
-        return JobOutcome.HARD_FAIL, "not authed"
-
     if job.kind == "get:neighbors_discover":
         ok = await trigger_neighbor_discover_once(
             ctx.client,
@@ -1140,6 +1255,7 @@ async def execute_job(
         if telem is not None:
             acc.telemetry = telem if isinstance(telem, list) else None
             acc.record_group(ctx, target.key, "telemetry")
+            await refresh_path_after_flood(ctx, target, route_extra)
             return JobOutcome.HEARD, telem
         return JobOutcome.TIMEOUT, None
 
@@ -1169,6 +1285,7 @@ async def execute_job(
             _reconcile_audit_group(
                 "acl", acl, ctx=ctx, target=target, node=ctx.nodes.get(target.key) or {}
             )
+            await refresh_path_after_flood(ctx, target, route_extra)
             return JobOutcome.HEARD, acl
         return JobOutcome.TIMEOUT, None
 
@@ -1193,6 +1310,7 @@ async def execute_job(
         if neighbors is not None:
             acc.neighbors = neighbors
             acc.record_group(ctx, target.key, "neighbors")
+            await refresh_path_after_flood(ctx, target, route_extra)
             return JobOutcome.HEARD, neighbors
         return JobOutcome.TIMEOUT, None
 
@@ -1292,7 +1410,10 @@ async def pull_repeater_status_once(
     )
     from envybot.radio import normalize_status_payload
 
-    return normalize_status_payload(raw)
+    status = normalize_status_payload(raw)
+    if status is not None:
+        await refresh_path_after_flood(ctx, target, route_extra)
+    return status
 
 
 async def _execute_ota_status(

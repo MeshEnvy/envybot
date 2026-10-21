@@ -90,6 +90,27 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual([g.pubkey for g in grants], [BEN])
 
 
+class MeshLoginGrantTests(unittest.TestCase):
+    def test_note_companion_adds_book_admin(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from envybot.nodes_doc import load_nodes_doc, write_nodes_doc
+        from envybot.keys_doc import note_companion_admin_after_mesh_login
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "nodes.yaml"
+            doc = {"next_unit": 2, "nodes": {"me0001": {"unit_id": "ME0001"}}}
+            write_nodes_doc(path, doc)
+            node = doc["nodes"]["me0001"]
+            changed = note_companion_admin_after_mesh_login(
+                doc, node, BEN, {"ben": [BEN]}, path
+            )
+            self.assertTrue(changed)
+            reloaded = load_nodes_doc(path)
+            self.assertEqual(reloaded["trust"]["admin"], ["ben"])
+
+
 class CompanionSkipTests(unittest.TestCase):
     def test_admin_key_matches(self) -> None:
         doc = {"trust": {"admin": ["ben"]}}

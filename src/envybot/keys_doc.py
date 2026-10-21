@@ -215,6 +215,37 @@ def resolve_node_acl(
     return out
 
 
+def note_companion_admin_after_mesh_login(
+    doc: dict[str, Any],
+    node: dict[str, Any],
+    companion_pubkey: str,
+    keys: dict[str, list[str]],
+    nodes_path: Path | None,
+    *,
+    log: Any | None = None,
+) -> bool:
+    """Book trust after a successful mesh login (repeater granted this pubkey)."""
+    pk = companion_pubkey.strip().lower()
+    if len(pk) < 12:
+        return False
+    person = find_person_for_pubkey(keys, pk)
+    if not person:
+        if log is not None:
+            log.step("login OK: companion not in keys.yaml; ACL snapshot only")
+        return False
+    trust = node.get("trust") if isinstance(node, dict) else None
+    has_admin_override = isinstance(trust, dict) and "admin" in trust
+    if has_admin_override:
+        changed = apply_node_override(doc, node, person, "admin")
+    else:
+        changed = add_book_role(doc, person, "admin")
+    if changed and nodes_path is not None:
+        from envybot.nodes_doc import write_nodes_doc
+
+        write_nodes_doc(nodes_path, doc)
+    return changed
+
+
 def companion_in_desired_acl(
     doc: dict[str, Any],
     node: dict[str, Any],

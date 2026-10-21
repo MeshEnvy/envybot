@@ -661,10 +661,8 @@ class SeedAutoWorkTests(unittest.TestCase):
 
 
 class BuildPollJobsTests(unittest.TestCase):
-    def test_apply_runs_after_login_before_get(self) -> None:
-        from envybot.fleet_worker import build_poll_jobs
-
-        target = RouterTarget(
+    def _target(self) -> RouterTarget:
+        return RouterTarget(
             key="me0001",
             unit_id="ME0001",
             name="Test",
@@ -672,8 +670,12 @@ class BuildPollJobsTests(unittest.TestCase):
             pubkey_hex="a" * 64,
             admin_password="secret",
         )
+
+    def test_apply_runs_after_login_before_get(self) -> None:
+        from envybot.fleet_worker import build_poll_jobs
+
         jobs = build_poll_jobs(
-            target,
+            self._target(),
             ["status", "telemetry"],
             do_apply=True,
             apply_due=True,
@@ -686,19 +688,31 @@ class BuildPollJobsTests(unittest.TestCase):
         self.assertLess(kinds.index("apply:name"), kinds.index("get:status"))
         self.assertLess(kinds.index("apply:clock"), kinds.index("get:status"))
 
+    def test_skips_login_when_companion_in_book_acl(self) -> None:
+        from envybot.fleet_worker import build_poll_jobs
+
+        ben = "bb" * 32
+        jobs = build_poll_jobs(
+            self._target(),
+            ["status"],
+            do_apply=False,
+            apply_due=False,
+            force_apply=False,
+            skip_discover=True,
+            doc={"trust": {"admin": ["ben"]}},
+            node={},
+            keys={"ben": [ben]},
+            companion=ben[:12],
+        )
+        kinds = [j.kind for j in jobs]
+        self.assertNotIn("login", kinds)
+        self.assertEqual(kinds[0], "get:status")
+
     def test_empty_neighbors_run_right_after_login(self) -> None:
         from envybot.fleet_worker import build_poll_jobs
 
-        target = RouterTarget(
-            key="me0001",
-            unit_id="ME0001",
-            name="Test",
-            site=None,
-            pubkey_hex="a" * 64,
-            admin_password="secret",
-        )
         jobs = build_poll_jobs(
-            target,
+            self._target(),
             ["neighbors", "firmware", "status"],
             do_apply=True,
             apply_due=True,

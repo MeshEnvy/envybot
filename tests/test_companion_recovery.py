@@ -59,7 +59,7 @@ class RecoverCompanionTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(ok)
         client.connection_manager.connect.assert_awaited()
 
-    async def test_reconnects_and_clears_auth(self) -> None:
+    async def test_reconnects_without_clearing_auth(self) -> None:
         client = MagicMock()
         client.is_connected = False
         client.dispatcher.running = True
@@ -94,7 +94,7 @@ class RecoverCompanionTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(ok)
         sync.assert_awaited_once()
-        self.assertEqual(session.authed_units, set())
+        self.assertEqual(session.authed_units, {"me0001"})
         client.commands.send_appstart.assert_awaited_once()
 
     async def test_hard_reset_drops_stale_ble_device(self) -> None:

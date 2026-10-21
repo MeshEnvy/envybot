@@ -82,7 +82,7 @@ export async function patchUnit(key, body) {
   return res.json()
 }
 
-/** @param {string} key @param {'sync' | 'full'} job */
+/** @param {string} key @param {'sync' | 'full' | 'login'} job */
 async function postManualJob(key, job) {
   const res = await fetch(`/api/${job}/${encodeURIComponent(key)}`, { method: 'POST' })
   if (!res.ok) throw new Error(`${job} ${res.status}`)
@@ -97,6 +97,11 @@ export function syncUnit(key) {
 /** @param {string} key */
 export function fullUnit(key) {
   return postManualJob(key, 'full')
+}
+
+/** @param {string} key */
+export function loginUnit(key) {
+  return postManualJob(key, 'login')
 }
 
 /** @param {string} key @param {string[]} targets @param {{ replace?: boolean }} [opts] */

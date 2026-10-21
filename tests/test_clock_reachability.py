@@ -95,7 +95,11 @@ class MaybeSyncRepeaterClockTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AdminAccessTests(unittest.IsolatedAsyncioTestCase):
-    async def test_maybe_admin_access_always_password_logins(self) -> None:
+    async def test_maybe_admin_access_skips_when_book_admin(self) -> None:
+        from envybot.radio import FleetSession
+
+        session = FleetSession()
+        session.companion_acl_prefix = ("bb" * 32)[:12]
         with patch(
             "envybot.radio.admin_login",
             new=AsyncMock(return_value=(True, None, 1_700_000_000)),
@@ -108,11 +112,32 @@ class AdminAccessTests(unittest.IsolatedAsyncioTestCase):
                 login_timeout=8,
                 cmd_timeout=8,
                 attempts=1,
+                session=session,
+                log=PollLog(progress=False),
+                keys={"ben": ["bb" * 32]},
+            )
+        login.assert_not_awaited()
+        self.assertTrue(ok)
+        self.assertIsNone(err)
+        self.assertIsNone(clock)
+
+    async def test_maybe_admin_access_logins_when_not_in_book_acl(self) -> None:
+        with patch(
+            "envybot.radio.admin_login",
+            new=AsyncMock(return_value=(True, None, 1_700_000_000)),
+        ) as login:
+            ok, err, clock = await maybe_admin_access(
+                MagicMock(),
+                _target(),
+                node={},
+                doc={"trust": {"admin": []}},
+                login_timeout=8,
+                cmd_timeout=8,
+                attempts=1,
                 session=None,
                 log=PollLog(progress=False),
                 keys={"ben": ["bb" * 32]},
             )
         login.assert_awaited_once()
         self.assertTrue(ok)
-        self.assertIsNone(err)
         self.assertEqual(clock, 1_700_000_000)

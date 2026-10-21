@@ -11,8 +11,8 @@ Default: UI at `http://127.0.0.1:8787/` (`?unit=me0032` restores the open
 card; `?map=1` reopens the map modal) plus live GET (status/telemetry),
 fw/bl/`ota self` every 7 days, and apply when the profile hash misses.
 OTA session (`ota status` + delayed `ota ls`) stays on a 24h auto cadence.
-Neighbors share the 1h live interval with status/telemetry and run right
-after login. Neighbor GET
+Neighbors share the 1h live interval with status/telemetry and run first
+in the GET batch when due. Neighbor GET
 sends remote `discover.neighbors`, waits 12s, then reads the table. Heard
 rows show approximate miles (book display GPS for fleet peers,
 `mesh_peers` advert GPS for off-book peers). Polls every
@@ -55,7 +55,7 @@ sites until names are shortened.
 
 | Mode | Groups | When |
 |------|--------|------|
-| periodic | `status`, `telemetry`, `neighbors` | `--min-interval` (default 1h). Neighbors first after login |
+| periodic | `status`, `telemetry`, `neighbors` | `--min-interval` (default 1h). Neighbors lead when due |
 | periodic | `ota_status`, `ota_ls` | 24h (`ota status` + delayed `ota ls`). Skip after `Unknown command` until firmware changes |
 | inventory | `firmware`, `bootloader`, `ota` | 7d (`ver`, bootloader, `ota self` base hash) |
 | audit | `name`, `lat`, `lon`, `advert`, `flood_advert`, `acl` | weekly when stamped; **Pull** or `--group` forces now (3 attempts max) |
@@ -77,7 +77,7 @@ A long-running `fleet` (not `--once`) re-checks due groups about every 60s
 while idle, and after each swim-lane batch so a missing profile can SET
 while other units are still GETting. No extra radio traffic unless
 status/telemetry/neighbors are ≥1h stale, OTA ≥24h, or apply is due.
-Sync always fetches neighbors right after login. UI freshness stays 24h.
+UI freshness stays 24h.
 
 Default runs never GET sticky identity fields unless the weekly audit
 interval elapsed. Profile rows show **Book** (desired) vs **On radio**
@@ -110,7 +110,8 @@ auto shows live companion cache.
 Fleet work is a **swim-lane round-robin dispatcher** (`jobs.py` +
 `fleet_worker.py`):
 
-- Each unit owns a FIFO deque: login, due SET fields, then due GET groups
+- Each unit owns a FIFO deque: optional login (only when this companion is
+  not already a book admin grant), due SET fields, then due GET groups
   (one exchange each). Neighbors = `discover.neighbors`, a **timer job** (default
   12s, background sleep, radio idle), then `GET_NEIGHBOURS`. If a unit is
   already GETting and the profile stamp is due, SET jobs splice in after the
@@ -204,10 +205,10 @@ console. The header icon also toggles.
 
 - **+** opens another tab. The same unit can have more than one session
   (labels `Ophir`, `Ophir 2`). Tab `×` cancels that session only.
-- Typed lines are MeshCore CLI (`ota status`, `get name`, …). Login floods
-  deployed units once; later lines in that session use the learned path.
-  Login runs on the first send if that unit is not already authed
-  (same `--attempts` cap as GET/SET).
+- Typed lines are MeshCore CLI (`ota status`, `get name`, …). No login when
+  this companion is already a book admin grant; otherwise one login is queued
+  before the first line (same `--attempts` cap as GET/SET). Use the unit
+  **Login** control for a manual flood login (return-path repair).
 - That command jumps to the front of the radio until heard, cancelled, or
   `--attempts` timeouts (default 10, same unit, no rotate). **Cancel** is
   per tab and starts the next staged line. After the last timeout or a
@@ -258,7 +259,7 @@ rolled and written back to the book. `public: true` pushes site name (or
 Always also SETs `path.hash.mode` (default 1 = 2-byte), `dutycycle`
 (default 50, stock MeshCore), `ota config autofetch` (default `off`; missing CLI stamps
 done), optional `powersaving`, `hop_retry`, and `hop_retry_ms` when set in the book.
-RF sensitivity SETs run first after login: `radio.fem.rxgain` (default on),
+RF sensitivity SETs run first in the apply batch: `radio.fem.rxgain` (default on),
 `agc.reset.interval` (default 4), optional `radio.rxgain` when the book sets it
 (`board: heltec-t096`), then optional `powersaving off/on`, `set hop.retry`, and
 `set hop.retry.ms` before identity or OTA SETs. Missing CLI stamps done.
@@ -266,9 +267,11 @@ Temporary off is firmware `try`. Also SETs a strong book admin
 via `password`, and clock if unset
 or behind (`time` uses the same `--attempts` lane as other SETs; a clock
 give-up still sends the identity advert). After apply finishes, if name or GPS changed this pass, fleet sends
-`advert` (flood) so the mesh hears the new identity. Password-login every unit before GET or SET (login establishes
-the repeater session and refreshes mesh paths). Live clock comes from
-the login timestamp or `clock` CLI afterward.
+`advert` (flood) so the mesh hears the new identity. Mesh login runs only when
+this companion is not already listed as admin in the book; a successful login
+writes trust and an ACL snapshot row. Live clock for `apply:clock` comes from
+a login timestamp on that pass or the `clock` CLI afterward. Flood GET replies
+(status, telemetry, …) refresh the companion hop cache; CLI replies do not.
 
 Apply is due when any SET field stamp misses the book desired value
 (stored in sqlite `applies` per field: name, lat, lon, advert, flood,

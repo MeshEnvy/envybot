@@ -639,7 +639,7 @@ class EnqueueCliCommandsTests(unittest.TestCase):
                 RadioJob(kind="get:status", unit_key=target.key),
             ],
         )
-        sched.enqueue_cli_commands(target, ["powersaving on"], session_authed=True, source="profile")
+        sched.enqueue_cli_commands(target, ["powersaving on"], skip_login=True, source="profile")
         uq = sched.units[target.key]
         kinds = [j.kind for j in uq.jobs]
         self.assertEqual(kinds[0], "console:cli")

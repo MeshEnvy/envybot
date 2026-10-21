@@ -1452,6 +1452,57 @@ def neighbors_history(
     return _reverse_limit(chronological, limit)
 
 
+def append_companion_acl_snapshot(
+    conn: sqlite3.Connection,
+    unit: str,
+    pubkey: str,
+    *,
+    perm: int = 3,
+) -> None:
+    """Append admin grant for companion pubkey onto latest acl snapshot row."""
+    pk = pubkey.strip().lower()
+    if len(pk) < 12:
+        return
+    now = int(time.time())
+    _ts, prev = latest_acl_snapshot(conn, unit)
+    rows: list[dict[str, Any]] = []
+    if prev:
+        for entry in prev:
+            if isinstance(entry, dict):
+                rows.append(dict(entry))
+    prefix = pk[:12]
+    for entry in rows:
+        key = str(entry.get("key") or entry.get("pubkey") or "").strip().lower()
+        if len(key) < 12:
+            continue
+        if key.startswith(prefix) or prefix.startswith(key[:12]):
+            if _heard_perm(entry) == perm:
+                return
+            entry["perm"] = perm
+            if len(pk) >= 64:
+                entry["key"] = pk
+            conn.execute(
+                "INSERT INTO acl_snapshots (ts, unit, payload) VALUES (?, ?, ?)",
+                (now, unit, json.dumps(rows, default=str)),
+            )
+            conn.commit()
+            return
+    rows.append({"key": pk if len(pk) >= 64 else prefix, "perm": perm})
+    conn.execute(
+        "INSERT INTO acl_snapshots (ts, unit, payload) VALUES (?, ?, ?)",
+        (now, unit, json.dumps(rows, default=str)),
+    )
+    conn.commit()
+
+
+def _heard_perm(entry: dict[str, Any]) -> int | None:
+    val = entry.get("perm", entry.get("permissions"))
+    try:
+        return int(val) if val is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 def latest_acl_snapshot(
     conn: sqlite3.Connection,
     unit: str,

@@ -20,6 +20,7 @@ import {
   postBenchLoc,
   syncUnit,
   fullUnit,
+  loginUnit,
   refreshUnit,
   stageUnit,
   openConsole as apiOpenConsole,
@@ -1334,7 +1335,7 @@ const App = {
       return typeof row.index === "number" || typeof row.index === "string";
     }
 
-    /** @param {Record<string, unknown>} unit @param {'sync' | 'full' | 'stage' | 'install'} job */
+    /** @param {Record<string, unknown>} unit @param {'sync' | 'full' | 'stage' | 'install' | 'login'} job */
     function markOptimistic(unit, job) {
       const key = String(unit.key);
       const prev = fleet.units[key] || unit;
@@ -1343,6 +1344,7 @@ const App = {
         full: "full_syncing",
         stage: "staging",
         install: "installing",
+        login: "logging_in",
       };
       const state = stateMap[job] || "polling";
       fleet.units[key] = {
@@ -1360,13 +1362,14 @@ const App = {
       };
     }
 
-    /** @param {Record<string, unknown>} unit @param {'sync' | 'full'} job @param {Event} [ev] */
+    /** @param {Record<string, unknown>} unit @param {'sync' | 'full' | 'login'} job @param {Event} [ev] */
     async function runManualJob(unit, job, ev) {
       ev?.stopPropagation?.();
       if (!canManualUnit(unit, job)) return;
       markOptimistic(unit, job);
       pushMap();
-      const fn = job === "full" ? fullUnit : syncUnit;
+      const fn =
+        job === "full" ? fullUnit : job === "login" ? loginUnit : syncUnit;
       try {
         const updated = await fn(String(unit.key));
         applyUnit(updated);
@@ -3474,6 +3477,17 @@ const App = {
                 @click.stop="runManualJob(unit, 'sync', $event)"
               >
                 <span class="unit-refresh-icon" aria-hidden="true">{{ syncGlyph(unit) }}</span>
+              </button>
+              <button
+                v-if="manualAccepting"
+                type="button"
+                class="unit-refresh unit-login"
+                :disabled="!canManualUnit(unit, 'login')"
+                title="Flood login (path repair)"
+                aria-label="Flood login"
+                @click.stop="runManualJob(unit, 'login', $event)"
+              >
+                <span class="unit-refresh-icon" aria-hidden="true">🔑</span>
               </button>
             </div>
           </div>

@@ -186,7 +186,7 @@ class ReplyExpect:
 
 @dataclass
 class FleetSession:
-    """Per-run poll state. Login is always sent; this tracks companion + auth drops."""
+    """Per-run poll state: companion identity and optional login bookkeeping."""
 
     authed_units: set[str] = field(default_factory=set)
     companion_id: str | None = None
@@ -2212,7 +2212,6 @@ async def recover_companion(
             await client.ensure_contacts(follow=True)
             if targets:
                 await sync_fleet_contacts(client, targets, log=log)
-            session.authed_units.clear()
             session.bind_companion(client)
             if client.is_connected:
                 log.step("companion reconnected")
@@ -2705,7 +2704,6 @@ async def admin_login(
             log.detail(f"LOGIN_SUCCESS {event.payload if event else ''}")
             if session is not None:
                 session.mark_authed(target.key)
-            await refresh_path_after_login(client, target, log=log, route_extra=route_extra)
             await handle_path_success(client, target, route_extra)
             return True, None, node_clock
         if status == "failed":
@@ -2832,7 +2830,6 @@ async def admin_login_attempt(
             log.substep("login OK")
         if session is not None:
             session.mark_authed(target.key)
-        await refresh_path_after_login(client, target, log=log, route_extra=route_extra)
         await handle_path_success(client, target, route_extra)
         return True, None, node_clock
     if status == "failed":
@@ -2891,8 +2888,20 @@ async def maybe_admin_access(
     fetch_clock: bool = True,
     keys: dict[str, list[str]] | None = None,
 ) -> tuple[bool, str | None, int | None]:
-    """Password login. ``node``/``doc``/``keys``/``fetch_clock`` kept for callers."""
-    _ = (node, doc, keys, fetch_clock, cmd_timeout)
+    """Mesh login when the companion is not already a book admin grant."""
+    from envybot.keys_doc import companion_in_desired_acl
+
+    cap = None
+    if session is not None:
+        cap = session.companion_acl_prefix or (
+            session.companion_id[:12] if session.companion_id and len(session.companion_id) >= 12 else None
+        )
+    if cap is None:
+        cap = companion_acl_prefix(client)
+    if companion_in_desired_acl(doc or {}, node, cap, keys):
+        if session is not None:
+            session.mark_authed(target.key)
+        return True, None, None
     return await admin_login(
         client,
         target,

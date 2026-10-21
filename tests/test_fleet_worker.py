@@ -56,6 +56,30 @@ class BuildPollJobsTests(unittest.TestCase):
         self.assertEqual(jobs[0].kind, "login")
         self.assertIsNone(jobs[0].attempt_cap)
 
+    def test_known_companion_omits_login(self) -> None:
+        ben = "cc" * 32
+        target = RouterTarget(
+            key="me0001",
+            unit_id="ME0001",
+            name="Test",
+            site=None,
+            pubkey_hex="aa" * 32,
+            admin_password="secret",
+        )
+        jobs = build_poll_jobs(
+            target,
+            ["status"],
+            do_apply=False,
+            apply_due=False,
+            force_apply=False,
+            skip_discover=True,
+            doc={"trust": {"admin": ["ben"]}},
+            node={},
+            keys={"ben": [ben]},
+            companion=ben[:12],
+        )
+        self.assertEqual([j.kind for j in jobs], ["get:status"])
+
 
 class RecordGroupTests(unittest.TestCase):
     def test_later_group_does_not_replay_status(self) -> None:

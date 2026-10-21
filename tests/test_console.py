@@ -213,7 +213,7 @@ class ConsoleManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sess.cmd, "ota stats")
         self.assertEqual(sess.pending, [])
 
-    async def test_stale_auth_logs_in_when_refresh_login_queued(self) -> None:
+    async def test_console_skips_login_when_fleet_login_queued(self) -> None:
         await self.mgr.open(key="me0001", tab_id="t1")
         self.sched.enqueue_manual(
             self.target, "refresh", [RadioJob(kind="login", unit_key="me0001")]
@@ -228,8 +228,8 @@ class ConsoleManagerTests(unittest.IsolatedAsyncioTestCase):
             session=session,
         )
         kinds = [j.kind for j in self.sched.units["me0001"].jobs]
-        self.assertEqual(kinds[0], "console:login")
-        self.assertIn("console:cli", kinds)
+        self.assertEqual(kinds[0], "console:cli")
+        self.assertNotIn("console:login", kinds)
         self.assertIn("login", kinds)
 
     async def test_fail_sending_drops_pending(self) -> None:

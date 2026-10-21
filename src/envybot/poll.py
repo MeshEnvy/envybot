@@ -60,7 +60,7 @@ PERIODIC_GROUPS = tuple(g for g in GET_GROUP_ORDER if GET_GROUPS[g].mode == "per
 LIVE_GROUPS = tuple(g for g in PERIODIC_GROUPS if GET_GROUPS[g].interval is None)
 DAILY_GROUPS = tuple(g for g in PERIODIC_GROUPS if GET_GROUPS[g].interval is not None)
 OTA_CLI_GROUPS = frozenset({"ota", "ota_status", "ota_ls"})
-MANUAL_JOBS = frozenset({"sync", "full", "stage", "install"})
+MANUAL_JOBS = frozenset({"sync", "full", "stage", "install", "login"})
 IN_FLIGHT_STATES = frozenset(
     {
         "queued",
@@ -68,6 +68,7 @@ IN_FLIGHT_STATES = frozenset(
         "full_syncing",
         "staging",
         "installing",
+        "logging_in",
         "polling",
         "console",
         "pinning",

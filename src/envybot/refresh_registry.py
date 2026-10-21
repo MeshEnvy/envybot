@@ -157,7 +157,7 @@ def _job_kinds_for_target(target_id: str) -> set[str]:
     spec = REFRESH_TARGETS.get(target_id)
     if spec is None:
         return set()
-    kinds: set[str] = {"login"}
+    kinds: set[str] = set()
     if spec.kind == "apply":
         for f in spec.apply_fields:
             kinds.add(f"apply:{f}")
@@ -322,6 +322,7 @@ def build_refresh_jobs(
     skip_discover: bool,
     discover_wait: float,
     force_apply_pass: bool = False,
+    companion: str | None = None,
 ) -> list[RadioJob]:
     from envybot.fleet_worker import build_poll_jobs
 
@@ -357,4 +358,8 @@ def build_refresh_jobs(
         discover_wait=discover_wait,
         apply_after_poll=apply_after,
         apply_fields_only=fields_only,
+        doc=doc,
+        node=node,
+        keys=keys,
+        companion=companion,
     )
