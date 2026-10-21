@@ -335,19 +335,14 @@ class FleetScheduler:
             return False
         return bool(drop_console_jobs(uq, tab_id))
 
-    def enqueue_console(
-        self,
-        target: RouterTarget,
-        jobs: list[RadioJob],
-    ) -> None:
-        """FIFO among console:* on this unit, still in front of poll/apply."""
-        uq = self.get_or_create(target)
+    def _prepend_console_jobs(self, uq: UnitQueue, jobs: list[RadioJob]) -> None:
+        """Console / profile CLI: keep console tail, prepend new jobs, poll/apply after."""
         uq.apply_aborted = False
         uq.succeeded = False
         for job in jobs:
             job.manual = True
             job.manual_job = "console"
-            job.unit_key = target.key
+            job.unit_key = uq.target.key
         existing = list(uq.jobs)
         console_jobs = [job for job in existing if is_console_job(job)]
         other = [job for job in existing if not is_console_job(job)]
@@ -358,6 +353,51 @@ class FleetScheduler:
         uq.backoff_until = 0.0
         self.clear_cooldown(uq)
         self._wake_idle()
+
+    def enqueue_console(
+        self,
+        target: RouterTarget,
+        jobs: list[RadioJob],
+    ) -> None:
+        """FIFO among console:* on this unit, still in front of poll/apply."""
+        uq = self.get_or_create(target)
+        self._prepend_console_jobs(uq, jobs)
+
+    def enqueue_cli_commands(
+        self,
+        target: RouterTarget,
+        commands: list[str],
+        *,
+        session_authed: bool = False,
+        source: str = "profile",
+    ) -> None:
+        """Profile book SETs as console:cli jobs (no open console tab)."""
+        cmds = [c.strip() for c in commands if c and c.strip()]
+        if not cmds:
+            return
+        uq = self.get_or_create(target)
+        extra_base: dict[str, Any] = {"source": source}
+        jobs: list[RadioJob] = []
+        if not session_authed:
+            jobs.append(
+                RadioJob(
+                    kind="console:login",
+                    unit_key=target.key,
+                    extra=dict(extra_base),
+                )
+            )
+        for cmd in cmds:
+            jobs.append(
+                RadioJob(
+                    kind="console:cli",
+                    unit_key=target.key,
+                    extra={**extra_base, "cmd": cmd},
+                )
+            )
+        uq.manual = True
+        uq.manual_job = "console"
+        uq.manual_bump = True
+        self._prepend_console_jobs(uq, jobs)
 
     def set_unit_forced_path(
         self,

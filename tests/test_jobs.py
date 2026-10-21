@@ -628,6 +628,26 @@ class LaneHeadingTests(unittest.TestCase):
             self.assertFalse(uq.manual_bump)
 
 
+class EnqueueCliCommandsTests(unittest.TestCase):
+    def test_profile_cli_splices_before_poll(self) -> None:
+        sched = FleetScheduler(max_attempts=10, retry_delay=0.0)
+        target = _target()
+        sched.enqueue_jobs(
+            target,
+            [
+                RadioJob(kind="login", unit_key=target.key),
+                RadioJob(kind="get:status", unit_key=target.key),
+            ],
+        )
+        sched.enqueue_cli_commands(target, ["powersaving on"], session_authed=True, source="profile")
+        uq = sched.units[target.key]
+        kinds = [j.kind for j in uq.jobs]
+        self.assertEqual(kinds[0], "console:cli")
+        self.assertEqual(uq.jobs[0].extra.get("cmd"), "powersaving on")
+        self.assertIn("login", kinds[1:])
+        self.assertIn("get:status", kinds)
+
+
 class DropOtaPollJobsTests(unittest.TestCase):
     def test_keeps_head_and_non_ota(self) -> None:
         uq = UnitQueue(target=_target())

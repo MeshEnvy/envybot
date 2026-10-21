@@ -77,7 +77,7 @@ If all fields synced: `apply skip: all` and `--apply-only` queues nothing.
 
 ## Profile: Book vs On radio
 
-Detail **Profile** is two columns: **Book** (editable desired) and **On radio** (last **confirmed** value only).
+Detail **Profile** is two columns: **Book** (editable desired) and **On radio** (last **confirmed** value only). Book SET rows queue **console-priority** CLI on save when `./envybot fleet` is running (`profile_cli.py` → `enqueue_cli_commands`); notes/alias/paused stay YAML-only.
 
 | Confirmation | Source |
 |--------------|--------|

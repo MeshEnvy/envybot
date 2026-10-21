@@ -192,7 +192,7 @@ While the companion worker is live:
 | **Sync** | neighbors, then status, telemetry | SET fields whose book desired differs from on-radio confirmation |
 | **Full sync** | all GET groups (incl. OTA, neighbors, profile audit) | SET dirty fields after reconcile |
 
-Unit detail: **Active** (auto poll/apply), **Sync**, **Full sync** (marks every GET group due now, then pulls and SETs dirty fields). **Profile** edits radio prefs and credentials in the book; **ACL** is a read-only table (2-byte prefix, role, person) with per-row status vs last `get acl` (✓ in sync, ⚠ book-only, ! unknown on radio). Edit `nodes.yaml` trust and `keys.yaml` offline, then Sync when `acl` is dirty. CLI `--full-sync` forces inventory/periodic GET policy on a headless run (not the 7-day audit groups).
+Unit detail: **Active** (auto poll/apply), **Sync**, **Full sync** (marks every GET group due now, then pulls and SETs dirty fields). **Profile** Book edits save to YAML immediately; rows that SET the radio also enqueue **console-priority** CLI (same queue slot as the fleet console) so you do not wait for Sync. Bench **notes**, **alias**, and **paused** are book-only. **ACL** table is read-only (2-byte prefix, role, person) with per-row status vs last `get acl` (✓ in sync, ⚠ book-only, ! unknown on radio). Trust edits in the book queue `setperm` like console. CLI `--full-sync` forces inventory/periodic GET policy on a headless run (not the 7-day audit groups).
 
 ### Console (header)
 

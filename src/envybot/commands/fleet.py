@@ -452,8 +452,11 @@ async def run(args: argparse.Namespace) -> int:
         target = uq.target
         uq.session_extra["console_manager"] = web_ctx.console if web_ctx else None
         if is_console_job(job):
-            session.audit_source = "console"
-        elif session.audit_source == "console":
+            if job.extra.get("source") == "profile":
+                session.audit_source = "profile"
+            else:
+                session.audit_source = "console"
+        elif session.audit_source in ("console", "profile"):
             session.audit_source = None
         tab_id = str(job.extra.get("tab_id") or "")
         if web_ctx and tab_id and is_console_job(job):

@@ -162,6 +162,61 @@ class MonitorWeb:
             return False
         return self._binding.scheduler.is_on_cooldown(key)
 
+    def enqueue_profile_radio_sets(self, key: str, profile_patch_keys: frozenset[str]) -> None:
+        """Queue console-priority CLI for profile book SETs (no-op when worker idle)."""
+        from envybot.history import get_last_seen
+        from envybot.poll import in_flight_session
+        from envybot.profile_cli import (
+            cli_commands_for_apply_fields,
+            profile_patch_keys_to_apply_fields,
+        )
+
+        key = key.lower()
+        if not profile_patch_keys or not self._accepting or self._binding is None:
+            return
+        binding = self._binding
+        if not binding.do_apply:
+            return
+        fields = profile_patch_keys_to_apply_fields(profile_patch_keys)
+        if not fields:
+            return
+        status, err, target = self._load_target(key)
+        if status != 200 or target is None:
+            return
+        doc = load_nodes_doc(self.nodes_path)
+        nodes = doc.get("nodes") or {}
+        node = nodes.get(key)
+        if not isinstance(node, dict):
+            return
+        binding.nodes = nodes
+        binding.doc = doc
+        sites = load_sites_for_book(self.nodes_path)
+        seen = get_last_seen(binding.conn, key) if binding.conn else None
+        fw = (seen or {}).get("firmware_version") or node.get("firmware_version")
+        cmds = cli_commands_for_apply_fields(
+            fields,
+            unit_key=key,
+            node=node,
+            sites=sites,
+            doc=doc,
+            keys=binding.keys,
+            firmware_version=str(fw) if fw else None,
+        )
+        if not cmds:
+            return
+        session = getattr(self, "_fleet_session", None)
+        authed = bool(session and session.is_authed(key))
+        binding.scheduler.enqueue_cli_commands(
+            target, cmds, session_authed=authed, source="profile"
+        )
+        binding.manual_keys.add(key)
+        self._session_states[key] = in_flight_session(
+            manual_job="console",
+            job_kind="console:cli",
+            queued=True,
+            apply=True,
+        )
+
     def sync_worker_state(
         self,
         *,
@@ -1145,6 +1200,15 @@ async def _handle_unit_edit(request: web.Request) -> web.Response:
     node.pop("lon", None)
     write_nodes_doc(web_ctx.nodes_path, doc)
     web_ctx.sync_mesh_peers_from_book()
+    profile_patch_keys: set[str] = set()
+    if isinstance(body.get("profile"), dict):
+        profile_patch_keys.update(str(k) for k in body["profile"].keys())
+    if "profile_field" in body:
+        profile_patch_keys.add(str(body["profile_field"]))
+    if body.get("owner_info_default") is True:
+        profile_patch_keys.add("owner_info_default")
+    if profile_patch_keys:
+        web_ctx.enqueue_profile_radio_sets(key, frozenset(profile_patch_keys))
     snap = await web_ctx.refresh_snapshot()
     unit = snap["units"].get(key) or {}
     return web.json_response(unit)

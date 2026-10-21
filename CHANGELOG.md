@@ -8,6 +8,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- Fleet UI **Profile** book SETs queue **console-priority** CLI on save (same
+  interrupt as the fleet console); bench notes/alias/paused stay book-only.
 - ``envybot reonboard --unit KEY`` — push an existing book row onto USB
   (`identity_secret`, passwords, profile, ACL, stamp). ``--force`` re-SETs
   profile fields even when GET already matches. Manual:
