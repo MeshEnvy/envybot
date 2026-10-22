@@ -476,32 +476,6 @@ def stamp_profile_after_onboard(
     return profile_id(node, sites, doc=doc, keys=keys, key=unit)
 
 
-def stamp_profile_after_trust(
-    conn: sqlite3.Connection,
-    unit: str,
-    node: dict[str, Any],
-    sites: dict[str, dict[str, Any]] | None,
-    *,
-    pre_apply_hash: str | None,
-    doc: dict[str, Any] | None = None,
-    keys: dict[str, list[str]] | None = None,
-    doc_before: dict[str, Any] | None = None,
-    keys_before: dict[str, list[str]] | None = None,
-) -> bool:
-    """After trust updated ACL on a fully-synced unit, stamp acl only."""
-    _ = pre_apply_hash
-    before_doc = doc_before if doc_before is not None else doc
-    before_keys = keys_before if keys_before is not None else keys
-    if apply_due_fields(conn, unit, node, sites, doc=before_doc, keys=before_keys):
-        return False
-    applicable = applicable_field_desireds(node, sites, doc=doc, keys=keys, key=unit)
-    acl = applicable.get("acl")
-    if acl is None:
-        return False
-    insert_apply(conn, unit=unit, field="acl", desired=acl, ok=True)
-    return True
-
-
 SetSend = Literal["ok", "timeout", "error"]
 
 

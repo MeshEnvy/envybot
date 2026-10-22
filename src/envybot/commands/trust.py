@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -31,25 +30,20 @@ from envybot.keys_doc import (
     keys_path,
     load_keys,
     parse_trust_policy,
-    person_has_key,
     remember_person_key,
     write_keys,
 )
-from envybot.apply import profile_id, stamp_profile_after_trust
-from envybot.history import open_history
 from envybot.book_dal import load_book
 from envybot.nodes_doc import UNIT_NUM_RE, load_nodes_doc, load_sites_for_book, write_nodes_doc
-from envybot.position import lookup_site_name, public_radio_name, resolve_book_position, site_binding
+from envybot.position import public_radio_name, resolve_book_position, site_binding
 from envybot.public_advert import resolve_public_apply_position
 from envybot.radio import (
     CONTACT_FLAG_FAVORITE,
     CONTACT_TYPE_REPEATER,
     _default_out_path_fields,
-    FleetSession,
     PollLog,
     RouterTarget,
     add_companion_args,
-    admin_login,
     companion_identity,
     connect,
     ensure_companion_identity,
@@ -250,41 +244,6 @@ def persist_trust_policy(
     return key_added, key_added or changed
 
 
-async def grant_companion_acl(
-    client: MeshCore,
-    targets: list[RouterTarget],
-    *,
-    login_timeout: float,
-    attempts: int,
-    log: PollLog,
-    conn: sqlite3.Connection | None = None,
-) -> tuple[int, int, list[str]]:
-    session = FleetSession()
-    session.conn = conn
-    session.bind_companion(client)
-    session.attach_orphan_watch(client, log)
-    ok = 0
-    fail = 0
-    ok_keys: list[str] = []
-    for target in targets:
-        print(f"{target.unit_id} …", flush=True)
-        logged, err, _clock = await admin_login(
-            client,
-            target,
-            login_timeout=login_timeout,
-            attempts=attempts,
-            session=session,
-            log=log,
-        )
-        if logged:
-            ok += 1
-            ok_keys.append(target.key)
-        else:
-            fail += 1
-            log.step(err or "login failed")
-    return ok, fail, ok_keys
-
-
 async def _fetch_channel_slots(client: MeshCore, max_channels: int) -> list:
     from envybot.channels_doc import ChannelSlot
 
@@ -353,7 +312,6 @@ def resolve_channel_person(
 
 async def run(args: argparse.Namespace) -> int:
     nodes_path: Path = args.nodes
-    grant_include = {u.lower() for u in args.unit} if args.unit else None
     rows = build_trust_rows(nodes_path)
     if args.export:
         write_export(args.export, rows)
@@ -373,7 +331,7 @@ async def run(args: argparse.Namespace) -> int:
         if UNIT_NUM_RE.match(policy.person):
             print(
                 f"person name {policy.person!r} looks like a unit key. "
-                "Use --unit me0041 to scope the mesh grant.",
+                "Use a person slug (e.g. ben), not a unit id.",
                 file=sys.stderr,
             )
             return 1
@@ -412,21 +370,6 @@ async def run(args: argparse.Namespace) -> int:
             )
             return 2
         pubkey = pubkey.strip().lower()
-        keys_before = load_keys(keys_path(nodes_path))
-        already = person_has_key(keys_before, policy.person, pubkey)
-
-        grant_targets = load_targets(
-            nodes_path, deployed_only=False, include=grant_include, skip=None
-        )
-        doc_before = load_nodes_doc(nodes_path)
-        sites = load_sites_for_book(nodes_path)
-        nodes_before = doc_before.get("nodes") or {}
-        pre_hashes: dict[str, str] = {}
-        for target in grant_targets:
-            node = nodes_before.get(target.key) or {}
-            pre_hashes[target.key] = profile_id(
-                node, sites, doc=doc_before, keys=keys_before
-            )
 
         try:
             persist_trust_policy(nodes_path, policy, pubkey)
@@ -434,50 +377,11 @@ async def run(args: argparse.Namespace) -> int:
             print(str(exc), file=sys.stderr)
             return 1
         print(f"keys.yaml {policy.person} {pubkey[:12]}…")
-
-        do_login = policy.fleet_role == "admin" and (
-            args.force or not already or bool(args.unit)
-        )
-        if not do_login:
-            if policy.fleet_role != "admin":
-                print("skip ACL login (guest grant; run fleet apply from an admin tag)")
-            else:
-                print("skip ACL login (key already in keys.yaml)")
-            return 0 if contact_ok and channel_ok else 2
-
-        if not grant_targets:
-            print("No pollable MeshCore units for ACL login.", file=sys.stderr)
-            return 2
-        doc_after = load_nodes_doc(nodes_path)
-        keys_after = load_keys(keys_path(nodes_path))
-        conn = open_history(nodes_path.parent)
-        acl_ok, acl_fail, ok_keys = await grant_companion_acl(
-            client,
-            grant_targets,
-            login_timeout=args.login_timeout,
-            attempts=args.attempts,
-            log=log,
-            conn=conn,
-        )
-        nodes_after = doc_after.get("nodes") or {}
-        for key in ok_keys:
-            node = nodes_after.get(key) or {}
-            if stamp_profile_after_trust(
-                conn,
-                key,
-                node,
-                sites,
-                pre_apply_hash=pre_hashes.get(key),
-                doc=doc_after,
-                keys=keys_after,
-                doc_before=doc_before,
-                keys_before=keys_before,
-            ):
-                log.step(f"{key}: profile reconciled")
-        print(f"acl {acl_ok}/{acl_ok + acl_fail} login(s)")
-        if acl_fail or not contact_ok or not channel_ok:
-            return 2
-        return 0
+        if policy.fleet_role != "admin":
+            print("Remote ACL: run fleet apply from an admin tag (guest grant only in book)")
+        else:
+            print("Remote ACL: run fleet apply from a tag already on repeater ACL")
+        return 0 if contact_ok and channel_ok else 2
     finally:
         await client.stop_auto_message_fetching()
         await client.disconnect()
@@ -491,17 +395,6 @@ def main(argv: list[str] | None = None) -> int:
         "policy",
         nargs="*",
         help="person[:role] and selector:role (omit for contacts only)",
-    )
-    parser.add_argument(
-        "--unit",
-        action="append",
-        metavar="me0003",
-        help="Scope ACL login only (contacts still import the full book)",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Password-login even if this key is already in keys.yaml",
     )
     parser.add_argument("--export", type=Path, metavar="FILE", help="Write JSON contact list")
     parser.add_argument(

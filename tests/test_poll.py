@@ -252,13 +252,9 @@ class PollCadenceTests(unittest.TestCase):
             self.assertEqual(due[0], "neighbors")
 
 
-class TrustStampTests(unittest.TestCase):
-    def test_stamp_after_trust_when_reconciled(self) -> None:
-        from envybot.apply import (
-            applicable_field_desireds,
-            profile_id,
-            stamp_profile_after_trust,
-        )
+class TrustBookAclDueTests(unittest.TestCase):
+    def test_new_admin_key_leaves_only_acl_due(self) -> None:
+        from envybot.apply import applicable_field_desireds, apply_due_fields
 
         node = {
             "name": "Ophir",
@@ -273,9 +269,6 @@ class TrustStampTests(unittest.TestCase):
             "ben": ["cc" * 32],
             "bill": ["dd" * 32],
         }
-        pre = profile_id(node, None, doc=doc_before, keys=keys_before)
-        post = profile_id(node, None, doc=doc_after, keys=keys_after)
-        self.assertNotEqual(pre, post)
 
         with tempfile.TemporaryDirectory() as tmp:
             conn = open_history(Path(tmp))
@@ -285,58 +278,10 @@ class TrustStampTests(unittest.TestCase):
                 node, None, doc=doc_before, keys=keys_before, key="me0001"
             ).items():
                 insert_apply(conn, unit="me0001", field=field, desired=des, ok=True)
-            self.assertTrue(
-                stamp_profile_after_trust(
-                    conn,
-                    "me0001",
-                    node,
-                    None,
-                    pre_apply_hash=pre,
-                    doc=doc_after,
-                    keys=keys_after,
-                    doc_before=doc_before,
-                    keys_before=keys_before,
-                )
+            due = apply_due_fields(
+                conn, "me0001", node, None, doc=doc_after, keys=keys_after
             )
-            from envybot.history import last_ok_apply
-
-            post_acl = applicable_field_desireds(
-                node, None, doc=doc_after, keys=keys_after
-            )["acl"]
-            self.assertEqual(last_ok_apply(conn, "me0001", "acl"), post_acl)
-
-    def test_no_stamp_when_never_synced(self) -> None:
-        from envybot.apply import (
-            applicable_field_desireds,
-            profile_id,
-            stamp_profile_after_trust,
-        )
-
-        node = {"name": "Ophir", "guest_password": "GuestOneStrong1"}
-        doc = {"trust": {"admin": ["ben"]}}
-        keys = {"ben": ["cc" * 32]}
-        pre = profile_id(node, None, doc={"trust": {}}, keys={})
-        post = profile_id(node, None, doc=doc, keys=keys)
-
-        with tempfile.TemporaryDirectory() as tmp:
-            conn = open_history(Path(tmp))
-            self.assertFalse(
-                stamp_profile_after_trust(
-                    conn,
-                    "me0001",
-                    node,
-                    None,
-                    pre_apply_hash=pre,
-                    doc=doc,
-                    keys=keys,
-                    doc_before={"trust": {}},
-                    keys_before={},
-                )
-            )
-            from envybot.history import last_ok_apply
-
-            self.assertIsNone(last_ok_apply(conn, "me0001", "profile"))
-            self.assertNotEqual(pre, post)
+            self.assertEqual(due, ["acl"])
 
 
 def _target(key: str) -> RouterTarget:

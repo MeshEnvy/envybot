@@ -159,6 +159,6 @@ book first).
 
 Does not poll the mesh. After a successful onboard the unit is fleet
 deployment ready: privacy mask on the radio, book row, ACL, and apply
-stamps. Run [`fleet`](fleet.md) to poll. A sealed unit that needs a new
-companion key uses [`trust ben --unit me0041`](trust.md), not this
-command.
+stamps. Run [`fleet`](fleet.md) to poll. A new field companion uses
+[`trust ben`](trust.md) for contacts and book keys, then fleet apply from
+an admin tag already on the repeater ACL.

@@ -14,7 +14,6 @@ trust roles.
 ./envybot trust ben                     # this tag is ben, fleet admin
 ./envybot trust bill:guest              # this tag is bill, fleet guest
 ./envybot trust ben me0016:guest        # fleet admin, guest on that unit
-./envybot trust ben --unit me0041       # sealed unit: record + login that box
 ```
 
 Contact name is the bound site's `name` (e.g. Ophir), or `unit_id` when
@@ -25,7 +24,9 @@ picks up the book name. A replaced chip (same unit or site name, new
 pubkey) drops the old companion contact. Bare `Repeater` names are left
 alone. Reconnect the MeshCore app after trust.
 
-Does not copy admin/guest passwords or field-node secret keys.
+Does not copy admin/guest passwords or field-node secret keys. Does not
+push ACL to repeaters over the mesh; run [`fleet`](fleet.md) apply from a
+tag that is already on the repeater ACL.
 
 ## Group channels
 
@@ -49,12 +50,10 @@ not change channel grants.
 `trust.admin` / `trust.guest` name those people. A node `trust:` key
 replaces that role for that unit (including `[]` to lock it down).
 
-Firmware login always grants admin, so a guest-only registration does not
-login. Those keys land via `fleet` apply (`setperm 1`) from an admin tag.
-Admin registration password-auths pollable MeshCore units so the live
-tag is on the ACL. `--unit` scopes that mesh pass. YAML is written as
-soon as SELF_INFO has a full pubkey. On units already profile-synced,
-trust stamps sqlite so fleet does not re-push.
+Guest-only registration updates the book only. Fleet apply (`setperm`) from
+an admin tag pushes guest and admin keys onto each repeater. Admin
+registration adds this companion to `keys.yaml` and `trust.admin`; the next
+fleet apply on each unit SETs the resolved ACL when the stamp is stale.
 
 `admin1_pubkey` is Meshtastic. Trust ignores it.
 
@@ -66,5 +65,3 @@ Same companion transport flags as `fleet`.
 |------|---------|
 | `--export FILE` | Write a JSON contact list |
 | `--export-only` | Write `--export` and exit (no radio) |
-| `--unit KEY` | Scope mesh ACL login only (repeatable). Contacts still get the full book. |
-| `--force` | Password-login even if this key is already in `keys.yaml` |

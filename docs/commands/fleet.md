@@ -286,7 +286,7 @@ Each attempt (including retries) prints
 `apply need` / `apply skip` from current stamps, and `poll need` /
 `poll skip` when GET groups remain. A queued SET whose stamp already
 matches prints `field: skip (synced)` and does not go on the air. A private node still needs a guest password
-assign. Heard name/GPS/adverts do **not** trigger apply. Edit a hashed field in `nodes.yaml` (or run `trust`) and restart fleet.
+assign. Heard name/GPS/adverts do **not** trigger apply. Edit a hashed field in `nodes.yaml`, add a companion in `keys.yaml` via `trust`, and restart fleet (or Sync).
 
 When apply runs, GET ACL once to drop keys not in the book allowlist.
 Each SET is one queued command. Login is the reachability check. If a SET
@@ -298,8 +298,8 @@ path.hash, dutycycle, ota_autofetch, powersaving, hop_retry, hop_retry_ms, fem_r
 rxgain, resolved ACL (pubkey + perm). Not hashed / not pushed here:
 identity secret (`roll`), radio preset (onboard), clock.
 
-`trust ben` (admin) updates the book and radio ACL, then stamps the new hash
-on units that were already profile-synced so fleet does not re-push.
+`trust ben` (admin) updates `keys.yaml` and book trust roles only. Fleet apply
+pushes ACL (`setperm`) when the acl stamp is stale.
 
 ## Flags
 

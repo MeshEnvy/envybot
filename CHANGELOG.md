@@ -36,6 +36,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Changed
 
+- ``envybot trust`` writes the book and companion only (contacts, channels,
+  ``keys.yaml``). Remote repeater ACL is fleet apply ``setperm``, not trust
+  password-login. Removed ``--unit`` and ``--force`` on trust.
 - Fleet mesh reply waits: **direct/path** use companion ``est_timeout`` (+2s)
   or MeshCore ``calcDirectTimeoutMillisFor``; **flood** keeps 1.5×+3 capped
   by ``--timeout`` / ``--login-timeout``.

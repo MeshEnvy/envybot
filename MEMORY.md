@@ -97,10 +97,9 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   else `unit_id`. Stale advert names on the same key are removed and
   re-added. A replaced chip (same unit/site name, new pubkey) drops the
   old companion contact; bare `Repeater` names stay. `trust ben`
-  records the live tag in `keys.yaml` and password-auths onto MeshCore
-  units (`--unit` scopes that pass; contacts still import the full book).
-  On units already profile-synced, trust stamps the new hash so fleet
-  does not re-push. Guest grants do not update remotes; fleet `setperm`s.
+  records the live tag in `keys.yaml` and book trust roles (contacts still
+  import the full book). Remote ACL is fleet apply `setperm` only. Guest
+  and admin keys land on repeaters from an admin tag via fleet.
   `admin1_*` is Meshtastic, not MC ACL.
 - `channels.yaml` (channel-first) lists group name + 16-byte PSK + who
   gets it (`everyone` or person slugs). `trust` add/updates granted
