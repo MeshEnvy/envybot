@@ -3675,23 +3675,31 @@ def select_companion_by_hint(
 
 
 def pick_companion(
-    candidates: list[CompanionCandidate], *, hint: str | None = None
+    candidates: list[CompanionCandidate],
+    *,
+    hint: str | None = None,
+    always_prompt: bool = False,
 ) -> CompanionCandidate:
     """Return the sole candidate, or prompt on a TTY when several are found."""
     if not candidates:
         raise SystemExit("No companion candidates to pick from")
     if hint:
         return select_companion_by_hint(candidates, hint)
-    if len(candidates) == 1:
+    if len(candidates) == 1 and not always_prompt:
         return candidates[0]
     if not sys.stdin.isatty():
         _print_companion_candidates(
             candidates,
-            "Multiple companions — pass --companion PUBKEY_PREFIX, --ble ADDRESS, "
+            "Pass --companion PUBKEY_PREFIX, --ble ADDRESS, "
             "--serial PORT, or --tcp host:port:",
         )
         raise SystemExit(2)
-    _print_companion_candidates(candidates, "Multiple companions — pick one:")
+    header = (
+        "Pick companion:"
+        if always_prompt and len(candidates) == 1
+        else "Multiple companions — pick one:"
+    )
+    _print_companion_candidates(candidates, header)
     while True:
         try:
             raw = input(f"Pick companion [1-{len(candidates)}]: ").strip()
@@ -3876,13 +3884,22 @@ async def post_connect(client: MeshCore) -> None:
     await companion_neighbor_ping(client)
 
 
-async def connect_candidate(args: argparse.Namespace, cand: CompanionCandidate) -> MeshCore:
+async def connect_candidate(
+    args: argparse.Namespace,
+    cand: CompanionCandidate,
+    *,
+    always_prompt_companion: bool = False,
+) -> MeshCore:
     if cand.transport == "ble" and cand.ble_address is None and cand.ble_device is None:
         ble_list = await scan_ble_candidates(args.scan_timeout)
         if not ble_list:
             raise SystemExit("No BLE MeshCore companions found (NUS service scan)")
         ble_list = await probe_companion_candidates(args, ble_list)
-        cand = pick_companion(ble_list, hint=getattr(args, "companion", None))
+        cand = pick_companion(
+            ble_list,
+            hint=getattr(args, "companion", None),
+            always_prompt=always_prompt_companion,
+        )
 
     print(f"Connecting via {companion_candidate_display(cand)} …")
     client, err = await try_open_companion(
@@ -3940,10 +3957,18 @@ async def probe_only(args: argparse.Namespace) -> int:
     return 0 if any_ok else 2
 
 
-async def connect(args: argparse.Namespace) -> MeshCore:
+async def connect(
+    args: argparse.Namespace,
+    *,
+    always_prompt_companion: bool = False,
+) -> MeshCore:
     explicit = candidate_from_args(args)
     if explicit:
-        return await connect_candidate(args, explicit)
+        return await connect_candidate(
+            args,
+            explicit,
+            always_prompt_companion=always_prompt_companion,
+        )
 
     if args.transport == "tcp" and not args.tcp:
         raise SystemExit("--transport tcp requires --tcp host:port")
@@ -3956,7 +3981,11 @@ async def connect(args: argparse.Namespace) -> MeshCore:
         )
 
     candidates = await probe_companion_candidates(args, candidates)
-    cand = pick_companion(candidates, hint=getattr(args, "companion", None))
+    cand = pick_companion(
+        candidates,
+        hint=getattr(args, "companion", None),
+        always_prompt=always_prompt_companion,
+    )
     print(f"Connecting via {companion_candidate_display(cand)} …")
     client, err = await try_open_companion(
         transport=cand.transport,

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
-
-from ruamel.yaml import YAML
 
 from envybot.channels_doc import (
     PUBLIC_FIRMWARE_NAME,
@@ -14,6 +13,7 @@ from envybot.channels_doc import (
     ChannelDef,
     ChannelSlot,
     ChannelsError,
+    hashtag_secret,
     load_channels,
     plan_channel_ops,
     resolve_person_channels,
@@ -22,7 +22,7 @@ from envybot.channels_doc import (
 )
 
 SLPT_KEY = bytes.fromhex("e30372f63beb7bbc4bc7bbf06589e6ab")
-MESH_KEY = bytes.fromhex("e63afec724cc4e21f0e167ad67fd4019")
+MESHENVY_HASHTAG_KEY = hashtag_secret("#MeshEnvy")
 
 
 def _catalog_yaml() -> str:
@@ -32,13 +32,20 @@ public:
 SLPT:
   key: e30372f63beb7bbc4bc7bbf06589e6ab
   people: [ben]
-MeshEnvy:
-  key: e63afec724cc4e21f0e167ad67fd4019
-  people: [ben]
+"#MeshEnvy":
+  people: everyone
 911:
   key: bf1b29b3cde13edbcf4c2e9c15137bd9
   people: [ben, bill]
 """
+
+
+class HashtagSecretTests(unittest.TestCase):
+    def test_test_vector(self) -> None:
+        self.assertEqual(
+            hashtag_secret("#test"),
+            bytes.fromhex("9cd8fcf22a47333b591d96a2b848b73f"),
+        )
 
 
 class LoadChannelsTests(unittest.TestCase):
@@ -51,11 +58,24 @@ class LoadChannelsTests(unittest.TestCase):
             self.assertIn("SLPT", catalog)
             _people, slpt = catalog["SLPT"]
             self.assertEqual(slpt.secret, SLPT_KEY)
+            _people, mesh = catalog["#MeshEnvy"]
+            self.assertEqual(mesh.secret, MESHENVY_HASHTAG_KEY)
+            self.assertEqual(mesh.firmware_name, "#MeshEnvy")
 
     def test_missing_key_on_private(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "channels.yaml"
             path.write_text("foo:\n  people: [ben]\n", encoding="utf-8")
+            with self.assertRaises(ChannelsError):
+                load_channels(path)
+
+    def test_hashtag_rejects_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "channels.yaml"
+            path.write_text(
+                '"#foo":\n  key: e30372f63beb7bbc4bc7bbf06589e6ab\n  people: everyone\n',
+                encoding="utf-8",
+            )
             with self.assertRaises(ChannelsError):
                 load_channels(path)
 
@@ -72,22 +92,21 @@ class ResolvePersonTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls._tmp.cleanup()
 
-    def test_everyone_skips_public(self) -> None:
+    def test_everyone_gets_hashtag_not_public(self) -> None:
         names = {c.yaml_name for c in resolve_person_channels(self.catalog, None)}
-        self.assertEqual(names, set())
+        self.assertEqual(names, {"#MeshEnvy"})
 
-    def test_ben_gets_private_set(self) -> None:
+    def test_ben_gets_private_and_hashtag(self) -> None:
         names = {c.yaml_name for c in resolve_person_channels(self.catalog, "ben")}
-        self.assertEqual(names, {"SLPT", "911"})
+        self.assertEqual(names, {"SLPT", "911", "#MeshEnvy"})
 
-    def test_skips_meshenvy_and_public(self) -> None:
+    def test_skips_public(self) -> None:
         names = {c.yaml_name for c in resolve_person_channels(self.catalog, "ben")}
-        self.assertNotIn("MeshEnvy", names)
         self.assertNotIn("public", names)
 
     def test_bill_gets_911_not_slpt(self) -> None:
         names = {c.yaml_name for c in resolve_person_channels(self.catalog, "bill")}
-        self.assertEqual(names, {"911"})
+        self.assertEqual(names, {"911", "#MeshEnvy"})
 
 
 class PlanChannelOpsTests(unittest.TestCase):
@@ -123,7 +142,6 @@ class PlanChannelOpsTests(unittest.TestCase):
     def test_public_never_added_or_updated(self) -> None:
         want = [
             ChannelDef("public", PUBLIC_FIRMWARE_NAME, PUBLIC_GROUP_PSK, True),
-            ChannelDef("MeshEnvy", "MeshEnvy", MESH_KEY, False),
         ]
         heard = [
             ChannelSlot(0, "", b"\x00" * 16),
@@ -137,6 +155,29 @@ class PlanChannelOpsTests(unittest.TestCase):
         ops, failures = plan_channel_ops(want, heard_stock)
         self.assertEqual(ops, [])
         self.assertEqual(failures, [])
+
+    def test_hashtag_add_and_update(self) -> None:
+        want = [
+            ChannelDef("#MeshEnvy", "#MeshEnvy", MESHENVY_HASHTAG_KEY, False),
+        ]
+        heard = [
+            ChannelSlot(0, PUBLIC_FIRMWARE_NAME, PUBLIC_GROUP_PSK),
+            ChannelSlot(1, "", b"\x00" * 16),
+        ]
+        ops, failures = plan_channel_ops(want, heard)
+        self.assertEqual(len(ops), 1)
+        self.assertEqual(ops[0].idx, 1)
+        self.assertEqual(ops[0].name, "#MeshEnvy")
+        self.assertEqual(failures, [])
+
+        heard_wrong = [
+            ChannelSlot(0, PUBLIC_FIRMWARE_NAME, PUBLIC_GROUP_PSK),
+            ChannelSlot(3, "#MeshEnvy", b"\x01" * 16),
+        ]
+        ops, failures = plan_channel_ops(want, heard_wrong)
+        self.assertEqual(len(ops), 1)
+        self.assertEqual(ops[0].idx, 3)
+        self.assertEqual(ops[0].secret, MESHENVY_HASHTAG_KEY)
 
     def test_table_full_is_failure_not_wipe(self) -> None:
         want = [ChannelDef("SLPT", "SLPT", SLPT_KEY, False)]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,9 +15,10 @@ from envybot.keys_doc import PERSON_RE, TrustError
 
 CHANNELS_NAME = "channels.yaml"
 CHANNELS_YAML_HEADER = (
-    "# MeshEnvy group channels (private).\n"
-    "# name: {key?: 32-hex PSK, people: everyone | [person, …]}\n"
-    "# public and MeshEnvy are ignored (trust never applies them).\n"
+    "# MeshEnvy group channels (private book).\n"
+    "# Private: name: { key: 32-hex PSK, people: everyone | [person, …] }\n"
+    "# Hashtag: \"#Topic\": { people: … } — quote the #; secret = sha256(name)[:16]\n"
+    "# public row is ignored (trust never applies stock Public).\n"
     "# people: everyone grants every companion. Named people match keys.yaml.\n"
 )
 
@@ -24,7 +26,6 @@ HEX_PSK_RE = re.compile(r"^[0-9a-fA-F]{32}$")
 CHANNEL_NAME_RE = re.compile(r"^[\x20-\x7E]{1,31}$")
 EVERYONE = "everyone"
 PUBLIC_YAML_NAME = "public"
-SKIP_TRUST_NAMES = frozenset({PUBLIC_YAML_NAME, "meshenvy"})
 PUBLIC_FIRMWARE_NAME = "Public"
 PUBLIC_GROUP_PSK_B64 = "izOH6cXN6mrJ5e26oRXNcg=="
 PUBLIC_GROUP_PSK = base64.b64decode(PUBLIC_GROUP_PSK_B64)
@@ -65,6 +66,11 @@ def channels_path(book_or_nodes: Path) -> Path:
     return path / CHANNELS_NAME
 
 
+def hashtag_secret(channel_name: str) -> bytes:
+    """First 16 bytes of SHA-256 of the slot name (includes leading #)."""
+    return hashlib.sha256(channel_name.encode("utf-8")).digest()[:16]
+
+
 def _parse_people(raw: Any, channel_name: str) -> frozenset[str] | str:
     if isinstance(raw, str):
         token = raw.strip().lower()
@@ -103,6 +109,15 @@ def _parse_channel(name: str, raw: Any) -> tuple[frozenset[str] | str, ChannelDe
             secret=PUBLIC_GROUP_PSK,
             is_public=True,
         )
+    if yaml_name.startswith("#") and len(yaml_name) > 1:
+        if raw.get("key") is not None:
+            raise ChannelsError(f"{yaml_name}: hashtag channels must not have key")
+        return people, ChannelDef(
+            yaml_name=yaml_name,
+            firmware_name=yaml_name,
+            secret=hashtag_secret(yaml_name),
+            is_public=False,
+        )
     key_raw = raw.get("key")
     if not isinstance(key_raw, str):
         raise ChannelsError(f"{yaml_name}: key is required (32 hex)")
@@ -133,8 +148,8 @@ def load_channels(path: Path) -> dict[str, tuple[frozenset[str] | str, ChannelDe
 
 
 def skip_trust_channel(ch: ChannelDef) -> bool:
-    """Public and MeshEnvy are never SET during trust."""
-    return ch.is_public or ch.yaml_name.lower() in SKIP_TRUST_NAMES
+    """Stock public row is never SET during trust."""
+    return ch.is_public
 
 
 def resolve_person_channels(
@@ -166,12 +181,8 @@ def slot_is_empty(slot: ChannelSlot) -> bool:
     return not _slot_name(slot.name) and all(b == 0 for b in slot.secret)
 
 
-def names_match(slot_name: str, firmware_name: str, *, is_public: bool) -> bool:
-    left = _slot_name(slot_name)
-    right = firmware_name.strip()
-    if is_public:
-        return left.lower() == right.lower()
-    return left == right
+def names_match(slot_name: str, firmware_name: str) -> bool:
+    return _slot_name(slot_name) == firmware_name.strip()
 
 
 def secrets_match(have: bytes, want: bytes) -> bool:
@@ -182,12 +193,11 @@ def find_first_empty(
     heard: list[ChannelSlot],
     *,
     used: set[int],
-    allow_slot_0: bool,
 ) -> int | None:
     for slot in heard:
         if slot.idx in used:
             continue
-        if not allow_slot_0 and slot.idx == 0:
+        if slot.idx == 0:
             continue
         if slot_is_empty(slot):
             return slot.idx
@@ -198,7 +208,7 @@ def plan_channel_ops(
     want: list[ChannelDef],
     heard: list[ChannelSlot],
 ) -> tuple[list[ChannelOp], list[str]]:
-    """Add/update only. Extras on the tag are left alone. Public/MeshEnvy never SET."""
+    """Add/update only. Extras on the tag are left alone. Public row never SET."""
     ops: list[ChannelOp] = []
     failures: list[str] = []
     used: set[int] = set()
@@ -208,14 +218,12 @@ def plan_channel_ops(
             continue
         existing: ChannelSlot | None = None
         for slot in heard:
-            if names_match(slot.name, ch.firmware_name, is_public=ch.is_public):
+            if names_match(slot.name, ch.firmware_name):
                 existing = slot
                 break
 
         if existing is not None:
             if secrets_match(existing.secret, ch.secret):
-                continue
-            if ch.is_public and existing.idx == 0 and not slot_is_empty(existing):
                 continue
             ops.append(
                 ChannelOp(
@@ -228,11 +236,7 @@ def plan_channel_ops(
             used.add(existing.idx)
             continue
 
-        empty_idx = find_first_empty(
-            heard,
-            used=used,
-            allow_slot_0=ch.is_public,
-        )
+        empty_idx = find_first_empty(heard, used=used)
         if empty_idx is None:
             failures.append(ch.yaml_name)
             continue

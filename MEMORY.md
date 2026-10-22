@@ -101,10 +101,11 @@ Observed last-seen lives in the book's SQLite, not in YAML.
   import the full book). Remote ACL is fleet apply `setperm` only. Guest
   and admin keys land on repeaters from an admin tag via fleet.
   `admin1_*` is Meshtastic, not MC ACL.
-- `channels.yaml` (channel-first) lists group name + 16-byte PSK + who
-  gets it (`everyone` or person slugs). `trust` add/updates granted
-  channels on the companion; extras on the tag are left alone. `public`
-  and `MeshEnvy` are never applied. Missing file skips channel work.
+- `channels.yaml` lists private channels (name + 32-hex PSK) and hashtag
+  channels (quoted `#Topic`, derived secret) with who gets them
+  (`everyone` or person slugs). `trust` add/updates granted channels on
+  the companion; extras on the tag are left alone. A `public` row is
+  never applied. Missing file skips channel work.
 - On-air name: site public advert when bound, else `unit_id` (bench/bag).
   Display name is site `name` when bound, else book `alias`, else `unit_id`.
   Alias is UI/selector only (not pushed to radio).
@@ -213,8 +214,10 @@ Observed last-seen lives in the book's SQLite, not in YAML.
 
 ## Desk radios
 
-BLE companion for `fleet` / `trust` / `cmd`. Multiple BLE tags: brief probe for
-pubkey prefix, TTY `Pick companion [1-N]:`; headless needs `--ble ADDRESS`.
+BLE companion for `fleet` / `trust` / `cmd`. Brief probe lists pubkey prefix
+(and `keys.yaml` person when known). TTY `Pick companion [1-N]:` when several
+tags (`fleet` / `cmd`) or always for `trust` (even one tag). Headless needs
+`--companion`, `--ble`, `--serial`, or `--tcp`.
 USB DUT for `onboard`.
 Separate USB OTA repeater for `envybot seed` (see `docs/commands/seed.md`).
 On connect (`post_connect`): zero-hop `NODE_DISCOVER_REQ` ping (10s listen);

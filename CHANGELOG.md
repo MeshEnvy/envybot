@@ -14,6 +14,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions match
 
 ### Added
 
+- `trust` grants hashtag channels from `channels.yaml` (quoted `#Topic`,
+  SHA-256-derived secret, same `people:` grants as private channels).
+
+- `trust` always prompts to pick a companion on a TTY (even when only one
+  BLE/USB candidate is found).
+
 - Fleet UI **Profile** book SETs queue **console-priority** CLI on save (same
   interrupt as the fleet console); bench notes/alias/paused stay book-only.
 - ``envybot reonboard --unit KEY`` — adopt blank book fields from USB,

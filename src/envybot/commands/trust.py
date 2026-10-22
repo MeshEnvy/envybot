@@ -337,7 +337,7 @@ async def run(args: argparse.Namespace) -> int:
             return 1
 
     log = PollLog(progress=not args.quiet, verbose=args.verbose)
-    client = await connect(args)
+    client = await connect(args, always_prompt_companion=True)
     try:
         n = await push_contacts(client, rows, log=log)
         print(f"trusted {n}/{len(rows)} contact(s) on companion")

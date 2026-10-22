@@ -31,9 +31,14 @@ tag that is already on the repeater ACL.
 ## Group channels
 
 `channels.yaml` lives next to `keys.yaml` in the private book. Each channel
-is defined once (name + 32-hex PSK) with a `people:` grant (`everyone` or
-a list of person slugs). `public` and `MeshEnvy` rows are ignored. Trust
-never adds or updates those slots.
+is defined once with a `people:` grant (`everyone` or a list of person
+slugs).
+
+**Private** channels use a mapping key plus `key:` (32-hex PSK). **Hashtag**
+channels use a quoted YAML key starting with `#` (for example `"#MeshEnvy":`)
+and no `key:`; trust derives the 16-byte secret as the first 16 bytes of
+SHA-256 of that name (MeshCore `#topic` convention). A `public` row is
+ignored; stock Public on slot 0 stays firmware-owned.
 
 On every companion connect, `trust` GETs channel slots and SETs any granted
 channel that is missing or has the wrong key. Add/update only: personal
@@ -56,6 +61,15 @@ registration adds this companion to `keys.yaml` and `trust.admin`; the next
 fleet apply on each unit SETs the resolved ACL when the stamp is stale.
 
 `admin1_pubkey` is Meshtastic. Trust ignores it.
+
+## Companion connection
+
+On a TTY, `trust` always lists probed BLE/USB companions and prompts
+`Pick companion [1-N]:`, even when only one tag is visible. Pass
+`--companion`, `--ble ADDRESS`, `--serial PORT`, or `--tcp host:port` to
+skip the picker (required for non-interactive runs). Explicit `--serial` /
+`--ble MAC` / `--tcp` connect without a list when the transport is fully
+specified.
 
 ## Flags
 

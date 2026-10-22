@@ -46,6 +46,20 @@ class PickCompanionTests(unittest.TestCase):
         cand = _cand("BLE tag-a (aa:bb)")
         self.assertIs(pick_companion([cand]), cand)
 
+    def test_always_prompt_single_on_tty(self) -> None:
+        cand = _cand("BLE tag-a (aa:bb)")
+        with patch("sys.stdin.isatty", return_value=True), patch(
+            "builtins.input", side_effect=["1"]
+        ):
+            self.assertIs(pick_companion([cand], always_prompt=True), cand)
+
+    def test_always_prompt_single_non_tty_exits(self) -> None:
+        cand = _cand("BLE tag-a (aa:bb)")
+        with patch("sys.stdin.isatty", return_value=False):
+            with self.assertRaises(SystemExit) as ctx:
+                pick_companion([cand], always_prompt=True)
+        self.assertEqual(ctx.exception.code, 2)
+
     def test_tty_prompts_and_returns_choice(self) -> None:
         a, b = _cand("BLE tag-a (aa:bb)"), _cand("BLE tag-b (cc:dd)")
         with patch("sys.stdin.isatty", return_value=True), patch(
